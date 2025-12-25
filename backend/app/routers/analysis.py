@@ -88,6 +88,40 @@ async def get_session(session_id: str, db: Session = Depends(get_db)):
 	return session
 
 
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(session_id: str, db: Session = Depends(get_db)):
+	"""Delete a test session and all related data."""
+	from app.models import ExecutionLog, StepAction
+	from sqlalchemy import select
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Get step IDs for this session using select()
+	step_ids_query = select(TestStep.id).where(TestStep.session_id == session_id).scalar_subquery()
+
+	# Delete step actions
+	db.query(StepAction).filter(StepAction.step_id.in_(step_ids_query)).delete(synchronize_session=False)
+
+	# Delete steps
+	db.query(TestStep).filter(TestStep.session_id == session_id).delete(synchronize_session=False)
+
+	# Delete execution logs
+	db.query(ExecutionLog).filter(ExecutionLog.session_id == session_id).delete(synchronize_session=False)
+
+	# Delete plan if exists
+	if session.plan:
+		db.query(TestPlan).filter(TestPlan.session_id == session_id).delete(synchronize_session=False)
+
+	# Expunge session to avoid stale data errors
+	db.expunge(session)
+	
+	# Delete the session itself
+	db.query(TestSession).filter(TestSession.id == session_id).delete(synchronize_session=False)
+	db.commit()
+
+
 @router.get("/sessions/{session_id}/plan", response_model=TestPlanResponse)
 async def get_session_plan(session_id: str, db: Session = Depends(get_db)):
 	"""Get the plan for a test session."""

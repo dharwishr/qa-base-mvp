@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { Plus, RefreshCw } from "lucide-react"
+import { Plus, RefreshCw, Trash2 } from "lucide-react"
 import { analysisApi } from "@/services/api"
 import type { TestSessionListItem, LlmModel } from "@/types/analysis"
 
@@ -63,6 +63,19 @@ export default function TestCases() {
             setError(e instanceof Error ? e.message : 'Failed to load sessions')
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
+        e.stopPropagation() // Prevent row click navigation
+        if (!confirm('Are you sure you want to delete this test case?')) {
+            return
+        }
+        try {
+            await analysisApi.deleteSession(sessionId)
+            setSessions(prev => prev.filter(s => s.id !== sessionId))
+        } catch (e) {
+            setError(e instanceof Error ? e.message : 'Failed to delete session')
         }
     }
 
@@ -133,6 +146,7 @@ export default function TestCases() {
                                     <th className="text-left py-3 px-4 font-medium text-sm">LLM</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Steps</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Created</th>
+                                    <th className="text-left py-3 px-4 font-medium text-sm">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -160,6 +174,15 @@ export default function TestCases() {
                                         </td>
                                         <td className="py-3 px-4 text-sm text-muted-foreground">
                                             {formatDate(session.created_at)}
+                                        </td>
+                                        <td className="py-3 px-4">
+                                            <button
+                                                onClick={(e) => handleDelete(e, session.id)}
+                                                className="inline-flex items-center justify-center rounded-md text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 h-8 w-8 transition-colors"
+                                                title="Delete test case"
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}

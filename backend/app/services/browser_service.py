@@ -224,8 +224,8 @@ class BrowserService:
 			llm = get_llm_for_model(self.session.llm_model)
 			logger.info(f"Using LLM model: {self.session.llm_model}")
 
-			# Initialize browser session (visible mode)
-			browser_session = BrowserSession(headless=False)
+			# Initialize browser session (headless mode for Docker/server)
+			browser_session = BrowserSession(headless=True)
 
 			# Create agent
 			agent = Agent(
@@ -408,8 +408,8 @@ class BrowserServiceSync:
 			llm = get_llm_for_model(self.session.llm_model)
 			logger.info(f"Using LLM model: {self.session.llm_model}")
 
-			# Initialize browser session (visible mode)
-			browser_session = BrowserSession(headless=False)
+			# Initialize browser session (headless mode for Docker/server)
+			browser_session = BrowserSession(headless=True)
 
 			# Create agent
 			agent = Agent(

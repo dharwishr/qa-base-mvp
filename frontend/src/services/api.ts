@@ -55,6 +55,19 @@ export const analysisApi = {
   },
 
   /**
+   * Delete a test session and all related data.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/analysis/sessions/${sessionId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      if (response.status === 204) return;
+      await handleResponse(response);
+    }
+  },
+
+  /**
    * Get the plan for a test session.
    */
   async getPlan(sessionId: string): Promise<TestPlan> {
