@@ -26,8 +26,8 @@ class Settings(BaseSettings):
 	LOGS_DIR: str = str(Path(__file__).parent.parent / "data" / "logs")
 
 	# Celery settings
-	CELERY_BROKER_URL: str = "redis://localhost:6385/0"
-	CELERY_RESULT_BACKEND: str = "redis://localhost:6385/0"
+	CELERY_BROKER_URL: str = "redis://redis:6379/0"
+	CELERY_RESULT_BACKEND: str = "redis://redis:6379/0"
 
 	# JWT Authentication settings
 	JWT_SECRET: str = "change-me-in-production-use-a-long-random-string"

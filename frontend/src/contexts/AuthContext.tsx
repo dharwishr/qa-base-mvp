@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { config } from '../config';
 
-const API_BASE = 'http://localhost:8005';
+const API_BASE = config.API_URL;
 
 interface AuthContextType {
     token: string | null;

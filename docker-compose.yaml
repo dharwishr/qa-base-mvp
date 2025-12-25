@@ -1,55 +1,67 @@
+# ============================================
+# QA Base - Docker Compose for Coolify Deployment
+# ============================================
+# Documentation: https://coolify.io/docs/knowledge-base/docker/compose
+
 services:
   # ============================================
   # Frontend - React/Vite served via nginx
   # ============================================
+  # Coolify: Set "Ports Exposes" to 80
+  # Coolify: Set domain to your frontend URL (e.g., qa-base.yourdomain.com)
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=${VITE_API_URL:-http://localhost:8005}
-    ports:
-      - "3005:80"
+        - VITE_API_URL=${VITE_API_URL}
+    expose:
+      - "80"
     environment:
-      - VITE_API_URL=${VITE_API_URL:-http://localhost:8005}
+      - VITE_API_URL=${VITE_API_URL}
     depends_on:
-      - backend
-    networks:
-      - qa-network
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   # ============================================
   # Backend - FastAPI Application
   # ============================================
+  # Coolify: Set "Ports Exposes" to 8000
+  # Coolify: Set domain to your backend URL (e.g., api.qa-base.yourdomain.com)
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    ports:
-      - "8005:8005"
+    expose:
+      - "8000"
     environment:
       # Application Settings
       - DEBUG=${DEBUG:-false}
       - APP_NAME=${APP_NAME:-QA Base API}
       # Database Settings
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
-      # LLM API Keys
+      # LLM API Keys (set in Coolify UI)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
-      # Celery Settings
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6385/0}
-      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6385/0}
+      # Celery Settings - use internal Redis port (6379)
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
     volumes:
       - backend_data:/app/data
       - screenshots:/app/data/screenshots
     depends_on:
       redis:
         condition: service_healthy
-    networks:
-      - qa-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -66,12 +78,12 @@ services:
     environment:
       # Database Settings
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
-      # LLM API Keys
+      # LLM API Keys (set in Coolify UI)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
-      # Celery Settings
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6385/0}
-      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6385/0}
+      # Celery Settings - use internal Redis port (6379)
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
     volumes:
       - backend_data:/app/data
       - screenshots:/app/data/screenshots
@@ -80,21 +92,21 @@ services:
         condition: service_healthy
       backend:
         condition: service_healthy
-    networks:
-      - qa-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.celery_app", "inspect", "ping", "-d", "celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # ============================================
   # Redis - Message Broker & Result Backend
   # ============================================
   redis:
     image: redis:7-alpine
-    ports:
-      - "6385:6379"
     volumes:
       - redis_data:/data
-    networks:
-      - qa-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -113,10 +125,3 @@ volumes:
     driver: local
   screenshots:
     driver: local
-
-# ============================================
-# Networks
-# ============================================
-networks:
-  qa-network:
-    driver: bridge

@@ -1,7 +1,8 @@
 import type { ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep } from '../types/analysis';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
+import { config, getWsUrl } from '../config';
 
-const API_BASE = 'http://localhost:8005';
+const API_BASE = config.API_URL;
 
 class ApiError extends Error {
   public status: number;
@@ -176,7 +177,7 @@ export const analysisApi = {
  * Get the WebSocket URL for a session.
  */
 export function getWebSocketUrl(sessionId: string): string {
-  return `ws://localhost:8005/api/analysis/ws/${sessionId}`;
+  return getWsUrl(`/api/analysis/ws/${sessionId}`);
 }
 
 /**

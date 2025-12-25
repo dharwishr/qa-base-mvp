@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Kamal secrets
+.kamal/secrets
+
 # Python
 __pycache__/
 *.py[cod]

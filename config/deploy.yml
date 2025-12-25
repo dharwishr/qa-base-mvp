@@ -1,0 +1,134 @@
+# ============================================
+# Kamal Deployment Configuration for QA Base
+# ============================================
+# Documentation: https://kamal-deploy.org/docs/configuration
+
+service: qa-base
+
+# Docker image registry
+image: your-registry/qa-base
+
+# ============================================
+# Servers Configuration
+# ============================================
+servers:
+  web:
+    hosts:
+      - your-server-ip
+    labels:
+      traefik.http.routers.qa-base-web.rule: Host(`qa-base.yourdomain.com`)
+      traefik.http.routers.qa-base-web.tls: true
+      traefik.http.routers.qa-base-web.tls.certresolver: letsencrypt
+    options:
+      network: kamal
+
+  backend:
+    hosts:
+      - your-server-ip
+    cmd: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8005"
+    labels:
+      traefik.http.routers.qa-base-backend.rule: Host(`api.qa-base.yourdomain.com`)
+      traefik.http.routers.qa-base-backend.tls: true
+      traefik.http.routers.qa-base-backend.tls.certresolver: letsencrypt
+      traefik.http.services.qa-base-backend.loadbalancer.server.port: 8005
+    options:
+      network: kamal
+    healthcheck:
+      path: /health
+      port: 8005
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  celery:
+    hosts:
+      - your-server-ip
+    cmd: celery -A app.celery_app worker --loglevel=info
+    options:
+      network: kamal
+
+# ============================================
+# Registry Configuration
+# ============================================
+registry:
+  server: ghcr.io
+  username:
+    - KAMAL_REGISTRY_USERNAME
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+# ============================================
+# Environment Variables
+# ============================================
+env:
+  clear:
+    DEBUG: false
+    APP_NAME: QA Base API
+    DATABASE_URL: sqlite:///./data/app.db
+    CELERY_BROKER_URL: redis://qa-base-redis:6385/0
+    CELERY_RESULT_BACKEND: redis://qa-base-redis:6385/0
+  secret:
+    - GEMINI_API_KEY
+    - BROWSER_USE_API_KEY
+
+# ============================================
+# Build Configuration
+# ============================================
+builder:
+  multiarch: false
+  args:
+    VITE_API_URL: https://api.qa-base.yourdomain.com
+
+# ============================================
+# Accessories (Redis)
+# ============================================
+accessories:
+  redis:
+    image: redis:7-alpine
+    host: your-server-ip
+    port: "6385:6379"
+    cmd: redis-server --appendonly yes
+    directories:
+      - data:/data
+    options:
+      network: kamal
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  - backend_data:/app/data
+  - screenshots:/app/data/screenshots
+
+# ============================================
+# Traefik Configuration
+# ============================================
+traefik:
+  options:
+    publish:
+      - "443:443"
+      - "80:80"
+    network: kamal
+  args:
+    entryPoints.web.address: ":80"
+    entryPoints.websecure.address: ":443"
+    entryPoints.web.http.redirections.entryPoint.to: websecure
+    entryPoints.web.http.redirections.entryPoint.scheme: https
+    certificatesResolvers.letsencrypt.acme.email: your-email@example.com
+    certificatesResolvers.letsencrypt.acme.storage: /letsencrypt/acme.json
+    certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint: web
+
+# ============================================
+# SSH Configuration
+# ============================================
+ssh:
+  user: root
+  # keys_only: true
+  # keys: ["~/.ssh/id_rsa"]
+
+# ============================================
+# Boot Configuration
+# ============================================
+boot:
+  limit: 10%
+  wait: 30
