@@ -138,13 +138,15 @@ class CDPElementLocator:
         cdp_client = self.page._client
 
         try:
+            # Escape quotes in xpath for JavaScript
+            escaped_xpath = xpath.replace('"', '\\"')
             # Use Runtime.evaluate to find element by XPath
             result = await cdp_client.send.Runtime.evaluate(
                 params={
                     'expression': f'''
                         (function() {{
                             const result = document.evaluate(
-                                "{xpath.replace('"', '\\"')}",
+                                "{escaped_xpath}",
                                 document,
                                 null,
                                 XPathResult.FIRST_ORDERED_NODE_TYPE,
