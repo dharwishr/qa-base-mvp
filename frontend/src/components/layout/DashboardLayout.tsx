@@ -8,6 +8,7 @@ import {
     FileText,
     Boxes
 } from "lucide-react"
+import { useAuth } from "@/contexts/AuthContext"
 
 // Sidebar Item Component
 const SidebarItem = ({
@@ -41,9 +42,10 @@ export default function DashboardLayout() {
     const navigate = useNavigate()
     const location = useLocation()
     const activePath = location.pathname
+    const { logout } = useAuth()
 
     const handleLogout = () => {
-        navigate("/")
+        logout()
     }
 
     return (

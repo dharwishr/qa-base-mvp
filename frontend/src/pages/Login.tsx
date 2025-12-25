@@ -11,20 +11,30 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Lock, Mail } from "lucide-react"
+import { Lock, Mail, AlertCircle } from "lucide-react"
+import { useAuth } from "@/contexts/AuthContext"
 
 export default function Login() {
     const navigate = useNavigate()
-    const [email, setEmail] = useState("user@example.com")
-    const [password, setPassword] = useState("password123")
+    const { login } = useAuth()
+    const [email, setEmail] = useState("tester@email.com")
+    const [password, setPassword] = useState("12345678")
+    const [error, setError] = useState<string | null>(null)
+    const [isLoading, setIsLoading] = useState(false)
 
-    const handleLogin = (e: React.FormEvent) => {
+    const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
-        // Simulate login
-        if (email === "user@example.com" && password === "password123") {
+        setError(null)
+        setIsLoading(true)
+
+        const result = await login(email, password)
+
+        setIsLoading(false)
+
+        if (result.success) {
             navigate("/dashboard")
         } else {
-            alert("Invalid credentials")
+            setError(result.error || "Login failed")
         }
     }
 
@@ -41,6 +51,12 @@ export default function Login() {
                 </CardHeader>
                 <form onSubmit={handleLogin}>
                     <CardContent className="space-y-4">
+                        {error && (
+                            <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300 flex items-center gap-2">
+                                <AlertCircle className="h-4 w-4" />
+                                <span>{error}</span>
+                            </div>
+                        )}
                         <div className="space-y-2">
                             <Label htmlFor="email">Email</Label>
                             <div className="relative">
@@ -53,6 +69,7 @@ export default function Login() {
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     required
+                                    disabled={isLoading}
                                 />
                             </div>
                         </div>
@@ -67,18 +84,19 @@ export default function Login() {
                                     onChange={(e) => setPassword(e.target.value)}
                                     className="pl-9"
                                     required
+                                    disabled={isLoading}
                                 />
                             </div>
                         </div>
                         <div className="rounded-md bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
                             <p className="font-semibold">Demo Credentials:</p>
-                            <p>Email: user@example.com</p>
-                            <p>Password: password123</p>
+                            <p>Email: tester@email.com</p>
+                            <p>Password: 12345678</p>
                         </div>
                     </CardContent>
                     <CardFooter>
-                        <Button type="submit" className="w-full">
-                            Sign in
+                        <Button type="submit" className="w-full" disabled={isLoading}>
+                            {isLoading ? "Signing in..." : "Sign in"}
                         </Button>
                     </CardFooter>
                 </form>

@@ -29,6 +29,15 @@ class Settings(BaseSettings):
 	CELERY_BROKER_URL: str = "redis://localhost:6379/0"
 	CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
 
+	# JWT Authentication settings
+	JWT_SECRET: str = "change-me-in-production-use-a-long-random-string"
+	JWT_ALGORITHM: str = "HS256"
+	JWT_EXPIRY_HOURS: int = 24
+
+	# Single test account credentials
+	AUTH_EMAIL: str = "tester@email.com"
+	AUTH_PASSWORD: str = "12345678"  # Plain password - will be hashed at runtime
+
 	@property
 	def database_path(self) -> Path:
 		"""Extract the database file path from the URL."""

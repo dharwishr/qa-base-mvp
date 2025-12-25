@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routers import analysis
+from app.routers import analysis, auth
 
 
 @asynccontextmanager
@@ -49,6 +49,7 @@ async def root():
 
 
 # Include routers
+app.include_router(auth.router)
 app.include_router(analysis.router)
 
 # Mount static files for screenshots

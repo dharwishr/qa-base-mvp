@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.deps import User, get_current_user
 from app.models import TestPlan, TestSession, TestStep
 from app.schemas import (
 	CreateSessionRequest,
@@ -28,7 +29,10 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
 @router.get("/sessions", response_model=list[TestSessionListResponse])
-async def list_sessions(db: Session = Depends(get_db)):
+async def list_sessions(
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Get all test sessions ordered by creation date (newest first)."""
 	from sqlalchemy import func
 
@@ -54,7 +58,11 @@ async def list_sessions(db: Session = Depends(get_db)):
 
 
 @router.post("/sessions", response_model=TestSessionResponse)
-async def create_session(request: CreateSessionRequest, db: Session = Depends(get_db)):
+async def create_session(
+	request: CreateSessionRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Create a new test session and generate a plan."""
 	# Create session with selected LLM model
 	session = TestSession(
@@ -80,7 +88,11 @@ async def create_session(request: CreateSessionRequest, db: Session = Depends(ge
 
 
 @router.get("/sessions/{session_id}", response_model=TestSessionDetailResponse)
-async def get_session(session_id: str, db: Session = Depends(get_db)):
+async def get_session(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Get a test session by ID with all details."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
@@ -89,7 +101,11 @@ async def get_session(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_session(session_id: str, db: Session = Depends(get_db)):
+async def delete_session(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Delete a test session and all related data."""
 	from app.models import ExecutionLog, StepAction
 	from sqlalchemy import select
@@ -123,7 +139,11 @@ async def delete_session(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/sessions/{session_id}/plan", response_model=TestPlanResponse)
-async def get_session_plan(session_id: str, db: Session = Depends(get_db)):
+async def get_session_plan(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Get the plan for a test session."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
@@ -136,7 +156,11 @@ async def get_session_plan(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/sessions/{session_id}/approve", response_model=TestSessionResponse)
-async def approve_plan(session_id: str, db: Session = Depends(get_db)):
+async def approve_plan(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Approve a plan and mark session as ready for execution."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
@@ -153,7 +177,11 @@ async def approve_plan(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/sessions/{session_id}/execute", response_model=ExecuteResponse)
-async def start_execution(session_id: str, db: Session = Depends(get_db)):
+async def start_execution(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Start test execution via Celery task."""
 	from app.tasks.analysis import run_test_analysis
 
@@ -182,6 +210,7 @@ async def get_session_logs(
 	session_id: str,
 	level: str | None = None,
 	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
 ):
 	"""Get execution logs for a session."""
 	from app.models import ExecutionLog
@@ -198,7 +227,11 @@ async def get_session_logs(
 
 
 @router.get("/sessions/{session_id}/steps", response_model=list[TestStepResponse])
-async def get_session_steps(session_id: str, db: Session = Depends(get_db)):
+async def get_session_steps(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Get all steps for a test session."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
@@ -208,7 +241,11 @@ async def get_session_steps(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/sessions/{session_id}/steps", status_code=204)
-async def clear_session_steps(session_id: str, db: Session = Depends(get_db)):
+async def clear_session_steps(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
 	"""Clear all steps for a test session."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
@@ -231,7 +268,10 @@ async def clear_session_steps(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/screenshot")
-async def get_screenshot(path: str):
+async def get_screenshot(
+	path: str,
+	current_user: User = Depends(get_current_user),
+):
 	"""Serve a screenshot file from the configured screenshots directory."""
 	from app.config import settings
 
