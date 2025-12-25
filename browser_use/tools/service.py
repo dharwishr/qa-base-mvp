@@ -56,6 +56,23 @@ from browser_use.utils import create_task_with_error_handling, sanitize_surrogat
 
 logger = logging.getLogger(__name__)
 
+# Import recording hooks for script generation
+try:
+	from app.services.recording_hooks import (
+		record_navigation,
+		record_click_element,
+		record_input_text,
+		record_select_option,
+		record_key_press,
+		record_scroll,
+		record_wait,
+		record_done_verification,
+	)
+	RECORDING_ENABLED = True
+except ImportError:
+	RECORDING_ENABLED = False
+	logger.debug("Recording hooks not available - script recording disabled")
+
 # Import EnhancedDOMTreeNode and rebuild event models that have forward references to it
 # This must be done after all imports are complete
 ClickElementEvent.model_rebuild()
@@ -168,6 +185,10 @@ class Tools(Generic[Context]):
 		)
 		async def navigate(params: NavigateAction, browser_session: BrowserSession):
 			try:
+				# Record navigation for script generation
+				if RECORDING_ENABLED:
+					record_navigation(params.url, params.new_tab)
+
 				# Dispatch navigation event
 				event = browser_session.event_bus.dispatch(NavigateToUrlEvent(url=params.url, new_tab=params.new_tab))
 				await event
@@ -179,6 +200,10 @@ class Tools(Generic[Context]):
 				else:
 					memory = f'Navigated to {params.url}'
 					msg = f'🔗 {memory}'
+
+				# Note: We don't record URL verification here because redirects are common
+				# The actual page URL may differ from the requested URL
+				# URL verification is better captured via 'done' or 'extract' actions
 
 				logger.info(msg)
 				return ActionResult(extracted_content=msg, long_term_memory=memory)
@@ -225,6 +250,10 @@ class Tools(Generic[Context]):
 
 		@self.registry.action('Wait for x seconds.')
 		async def wait(seconds: int = 3):
+			# Record wait for script generation
+			if RECORDING_ENABLED:
+				record_wait(seconds)
+
 			# Cap wait time at maximum 30 seconds
 			# Reduce the wait time by 3 seconds to account for the llm call which takes at least 3 seconds
 			# So if the model decides to wait for 5 seconds, the llm call took at least 3 seconds, so we only need to wait for 2 seconds
@@ -312,6 +341,10 @@ class Tools(Generic[Context]):
 					logger.warning(f'⚠️ {msg}')
 					return ActionResult(extracted_content=msg)
 
+				# Record click for script generation
+				if RECORDING_ENABLED:
+					record_click_element(node)
+
 				# Get description of clicked element
 				element_desc = get_click_description(node)
 
@@ -379,6 +412,10 @@ class Tools(Generic[Context]):
 				logger.warning(f'⚠️ {msg}')
 				return ActionResult(extracted_content=msg)
 
+			# Record input for script generation
+			if RECORDING_ENABLED:
+				record_input_text(node, params.text, has_sensitive_data)
+
 			# Highlight the element being typed into (truly non-blocking)
 			create_task_with_error_handling(
 				browser_session.highlight_interaction_element(node), name='highlight_type_element', suppress_exceptions=True
@@ -416,6 +453,10 @@ class Tools(Generic[Context]):
 					log_msg = f"Typed '{params.text}'"
 
 				logger.debug(log_msg)
+
+				# Note: We don't record input value verification because inputs may be
+				# cleared, modified by JS, or replaced. This would cause flaky tests.
+				# Final verification is captured via the 'done' action instead.
 
 				# Include input coordinates in metadata if available
 				return ActionResult(
@@ -773,6 +814,11 @@ You will be given a query and the markdown of a webpage that has been filtered t
 					include_extracted_content_only_once = True
 
 				logger.info(f'📄 {memory}')
+
+				# Note: We don't record extract as verification because the LLM response
+				# (e.g., "Content not found") is not actual page text and would fail verification.
+				# Final verification is captured via the 'done' action instead.
+
 				return ActionResult(
 					extracted_content=extracted_content,
 					include_extracted_content_only_once=include_extracted_content_only_once,
@@ -799,6 +845,11 @@ You will be given a query and the markdown of a webpage that has been filtered t
 						return ActionResult(error=msg)
 
 				direction = 'down' if params.down else 'up'
+
+				# Record scroll for script generation
+				if RECORDING_ENABLED:
+					scroll_amount = int(params.pages * 1000)
+					record_scroll(direction, scroll_amount)
 				target = f'element {params.index}' if params.index is not None and params.index != 0 else ''
 
 				# Get actual viewport height for more accurate scrolling
@@ -1322,6 +1373,13 @@ Validated Code (after quote fixing):
 								attachments.append(file_name)
 
 				attachments = [str(file_system.get_dir() / file_name) for file_name in attachments]
+
+				# Record done action as final verification for script replay
+				if RECORDING_ENABLED:
+					record_done_verification(
+						extracted_content=params.text,
+						success=params.success,
+					)
 
 				return ActionResult(
 					is_done=True,

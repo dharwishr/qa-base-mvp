@@ -51,3 +51,9 @@ now using browser-use i want to create a test case analysis module
 
 
     go to google maps, search for restaurants near me, verify that there exists a restaurant with a rating greater than 4.7. if not, fail the test case
+
+
+
+now i want to build a system that analyzed test cases can be run multiple times, but the problem is i dont want to run this as a browser-use task or ai assisted. which will cost more token. instead i want to run each step as a script or playwiright scirpt with live screenshots and each step result
+how should i do this? 
+keep that in mind that i want to create a auto heal system on top of this test run without ai that if the test run ffails in a step i want to cerate a system that can heal the issue and continue the test run

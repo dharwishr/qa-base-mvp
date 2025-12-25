@@ -1,0 +1,803 @@
+"""
+CDP Runner - Executes recorded scripts using Chrome DevTools Protocol via browser_use.
+
+Features:
+- Runs test scripts without LLM calls (zero token cost)
+- Self-healing with fallback selectors
+- Live screenshots at each step
+- Uses browser_use's BrowserSession for browser management
+"""
+
+import asyncio
+import base64
+import logging
+import re
+import time
+from datetime import datetime
+from typing import Any
+
+from browser_use.browser.session import BrowserSession
+from browser_use.actor.page import Page
+from browser_use.actor.element import Element
+from browser_use.actor.mouse import Mouse
+
+from app.services.script_recorder import PlaywrightStep, SelectorSet, ElementContext, AssertionConfig
+from app.services.base_runner import (
+    BaseRunner,
+    HealAttempt,
+    StepResult,
+    RunResult,
+    StepStartCallback,
+    StepCompleteCallback,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class CDPElementLocator:
+    """A locator that tries multiple selectors until one works using CDP."""
+
+    def __init__(
+        self,
+        page: Page,
+        session_id: str,
+        selectors: SelectorSet,
+        element_context: ElementContext | None = None,
+    ):
+        self.page = page
+        self.session_id = session_id
+        self.selectors = selectors
+        self.element_context = element_context
+        self.heal_attempts: list[HealAttempt] = []
+        self.successful_selector: str | None = None
+        self.located_element: Element | None = None
+
+    async def locate(self, timeout: int = 5000) -> Element | None:
+        """Try to locate the element using fallback selectors.
+
+        Args:
+            timeout: Timeout in milliseconds
+
+        Returns:
+            Element if found, None otherwise
+        """
+        all_selectors = self.selectors.all_selectors()
+        timeout_seconds = timeout / 1000
+
+        for selector in all_selectors:
+            try:
+                element = await asyncio.wait_for(
+                    self._find_element_by_selector(selector),
+                    timeout=timeout_seconds
+                )
+                if element:
+                    self.successful_selector = selector
+                    self.located_element = element
+                    self.heal_attempts.append(HealAttempt(selector=selector, success=True))
+                    return element
+            except asyncio.TimeoutError:
+                self.heal_attempts.append(HealAttempt(
+                    selector=selector,
+                    success=False,
+                    error="Timeout waiting for element"
+                ))
+            except Exception as e:
+                self.heal_attempts.append(HealAttempt(
+                    selector=selector,
+                    success=False,
+                    error=str(e)
+                ))
+
+        # Try fuzzy matching if element context is available
+        if self.element_context:
+            element = await self._try_fuzzy_match(timeout)
+            if element:
+                return element
+
+        return None
+
+    async def _find_element_by_selector(self, selector: str) -> Element | None:
+        """Find an element using a single selector.
+
+        Supports:
+        - xpath=... for XPath selectors
+        - CSS selectors (default)
+        - text=... for text-based selectors
+        - role=... for ARIA role selectors
+        """
+        cdp_client = self.page._client
+
+        if selector.startswith("xpath="):
+            xpath = selector[6:]
+            return await self._find_by_xpath(xpath)
+
+        elif selector.startswith("text="):
+            text = selector[5:]
+            return await self._find_by_text(text)
+
+        elif selector.startswith("role="):
+            role_spec = selector[5:]
+            return await self._find_by_role(role_spec)
+
+        else:
+            # CSS selector
+            return await self._find_by_css(selector)
+
+    async def _find_by_css(self, selector: str) -> Element | None:
+        """Find element by CSS selector."""
+        try:
+            elements = await self.page.get_elements_by_css_selector(selector)
+            if elements:
+                return elements[0]
+        except Exception as e:
+            logger.debug(f"CSS selector '{selector}' failed: {e}")
+        return None
+
+    async def _find_by_xpath(self, xpath: str) -> Element | None:
+        """Find element by XPath selector."""
+        cdp_client = self.page._client
+
+        try:
+            # Use Runtime.evaluate to find element by XPath
+            result = await cdp_client.send.Runtime.evaluate(
+                params={
+                    'expression': f'''
+                        (function() {{
+                            const result = document.evaluate(
+                                "{xpath.replace('"', '\\"')}",
+                                document,
+                                null,
+                                XPathResult.FIRST_ORDERED_NODE_TYPE,
+                                null
+                            );
+                            return result.singleNodeValue;
+                        }})()
+                    ''',
+                    'returnByValue': False,
+                },
+                session_id=self.session_id,
+            )
+
+            object_id = result.get('result', {}).get('objectId')
+            if object_id:
+                # Get backend node ID from the remote object
+                node_result = await cdp_client.send.DOM.describeNode(
+                    params={'objectId': object_id},
+                    session_id=self.session_id
+                )
+                backend_node_id = node_result['node']['backendNodeId']
+                return Element(self.page._browser_session, backend_node_id, self.session_id)
+
+        except Exception as e:
+            logger.debug(f"XPath '{xpath}' failed: {e}")
+
+        return None
+
+    async def _find_by_text(self, text: str) -> Element | None:
+        """Find element by text content."""
+        cdp_client = self.page._client
+
+        try:
+            # Escape text for JavaScript
+            escaped_text = text.replace("'", "\\'").replace("\n", "\\n")
+
+            result = await cdp_client.send.Runtime.evaluate(
+                params={
+                    'expression': f'''
+                        (function() {{
+                            const walker = document.createTreeWalker(
+                                document.body,
+                                NodeFilter.SHOW_ELEMENT,
+                                null,
+                                false
+                            );
+                            let node;
+                            while (node = walker.nextNode()) {{
+                                if (node.innerText && node.innerText.includes('{escaped_text}')) {{
+                                    return node;
+                                }}
+                            }}
+                            return null;
+                        }})()
+                    ''',
+                    'returnByValue': False,
+                },
+                session_id=self.session_id,
+            )
+
+            object_id = result.get('result', {}).get('objectId')
+            if object_id:
+                node_result = await cdp_client.send.DOM.describeNode(
+                    params={'objectId': object_id},
+                    session_id=self.session_id
+                )
+                backend_node_id = node_result['node']['backendNodeId']
+                return Element(self.page._browser_session, backend_node_id, self.session_id)
+
+        except Exception as e:
+            logger.debug(f"Text selector '{text}' failed: {e}")
+
+        return None
+
+    async def _find_by_role(self, role_spec: str) -> Element | None:
+        """Find element by ARIA role."""
+        # Parse role[name='...'] format
+        match = re.match(r"(\w+)\[name=['\"](.+)['\"]\]", role_spec)
+        if match:
+            role = match.group(1)
+            name = match.group(2)
+            selector = f"[role='{role}'][aria-label='{name}'], [role='{role}']:has-text('{name}')"
+        else:
+            role = role_spec
+            selector = f"[role='{role}']"
+
+        return await self._find_by_css(selector)
+
+    async def _try_fuzzy_match(self, timeout: int) -> Element | None:
+        """Try to find element using fuzzy matching based on context."""
+        ctx = self.element_context
+        if not ctx:
+            return None
+
+        fuzzy_selectors = []
+
+        # Try by text content
+        if ctx.text_content:
+            fuzzy_selectors.append(f"text={ctx.text_content}")
+
+        # Try by aria-label
+        if ctx.aria_label:
+            fuzzy_selectors.append(f"[aria-label='{ctx.aria_label}']")
+
+        # Try by placeholder
+        if ctx.placeholder:
+            fuzzy_selectors.append(f"[placeholder='{ctx.placeholder}']")
+
+        # Try by tag + classes
+        if ctx.tag_name and ctx.classes:
+            class_selector = ".".join(ctx.classes[:2])  # Use first 2 classes
+            fuzzy_selectors.append(f"{ctx.tag_name}.{class_selector}")
+
+        timeout_seconds = (timeout / 2) / 1000  # Use half timeout for fuzzy
+
+        for selector in fuzzy_selectors:
+            try:
+                element = await asyncio.wait_for(
+                    self._find_element_by_selector(selector),
+                    timeout=timeout_seconds
+                )
+                if element:
+                    self.successful_selector = f"[HEALED] {selector}"
+                    self.located_element = element
+                    self.heal_attempts.append(HealAttempt(selector=selector, success=True))
+                    return element
+            except Exception as e:
+                self.heal_attempts.append(HealAttempt(
+                    selector=selector,
+                    success=False,
+                    error=str(e)
+                ))
+
+        return None
+
+    def was_healed(self) -> bool:
+        """Check if the locator required healing (used a fallback selector)."""
+        if not self.successful_selector:
+            return False
+        primary = self.selectors.primary
+        return self.successful_selector != primary or self.successful_selector.startswith("[HEALED]")
+
+
+class CDPRunner(BaseRunner):
+    """Executes recorded scripts using CDP via browser_use."""
+
+    def __init__(
+        self,
+        headless: bool = True,
+        screenshot_dir: str = "data/screenshots/runs",
+        on_step_start: StepStartCallback | None = None,
+        on_step_complete: StepCompleteCallback | None = None,
+    ):
+        super().__init__(headless, screenshot_dir, on_step_start, on_step_complete)
+
+        self._session: BrowserSession | None = None
+        self._page: Page | None = None
+        self._session_id: str | None = None
+
+    async def __aenter__(self) -> "CDPRunner":
+        await self._setup()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        await self._teardown()
+
+    async def _setup(self):
+        """Initialize browser using BrowserSession."""
+        logger.info("Initializing CDP browser via BrowserSession...")
+
+        self._session = BrowserSession(headless=self.headless)
+        await self._session.start()
+
+        # Wait for browser to be ready and get the page
+        target_id = self._session.agent_focus_target_id
+        if not target_id:
+            raise RuntimeError("Failed to get browser target ID")
+
+        # Create Page actor
+        cdp_session = await self._session.get_or_create_cdp_session(target_id=target_id, focus=True)
+        self._session_id = cdp_session.session_id
+        self._page = Page(self._session, target_id, self._session_id)
+
+        # Set viewport size
+        await self._page.set_viewport_size(1280, 720)
+
+        logger.info("CDP browser initialized successfully")
+
+    async def _teardown(self):
+        """Clean up browser."""
+        logger.info("Cleaning up CDP browser...")
+        try:
+            if self._session:
+                await self._session.kill()
+            logger.info("CDP browser cleanup complete")
+        except Exception as e:
+            logger.error(f"Error during CDP browser cleanup: {e}")
+
+    async def run(self, steps: list[PlaywrightStep], run_id: str) -> RunResult:
+        """Execute a list of steps and return results."""
+        logger.info(f"Starting CDP run {run_id} with {len(steps)} steps")
+        result = RunResult(
+            status="running",
+            total_steps=len(steps),
+            passed_steps=0,
+            failed_steps=0,
+            healed_steps=0,
+            started_at=datetime.utcnow(),
+        )
+
+        try:
+            for step in steps:
+                logger.debug(f"Executing step {step.index}: {step.action}")
+                if self.on_step_start:
+                    await self._call_callback(self.on_step_start, step.index, step)
+
+                step_result = await self._execute_step(step, run_id)
+                result.step_results.append(step_result)
+
+                logger.debug(f"Step {step.index} result: {step_result.status}")
+
+                if step_result.status == "passed":
+                    result.passed_steps += 1
+                elif step_result.status == "healed":
+                    result.healed_steps += 1
+                elif step_result.status == "failed":
+                    result.failed_steps += 1
+                    result.error_message = step_result.error_message
+                    logger.warning(f"Step {step.index} failed: {step_result.error_message}")
+                    break
+
+                if self.on_step_complete:
+                    await self._call_callback(self.on_step_complete, step.index, step_result)
+
+            # Determine final status
+            if result.failed_steps > 0:
+                result.status = "failed"
+            elif result.healed_steps > 0:
+                result.status = "healed"
+            else:
+                result.status = "passed"
+
+            logger.info(f"CDP run {run_id} completed with status: {result.status}")
+
+        except Exception as e:
+            result.status = "failed"
+            result.error_message = str(e)
+            logger.exception(f"CDP run {run_id} failed with error: {e}")
+        finally:
+            result.completed_at = datetime.utcnow()
+
+        return result
+
+    async def _execute_step(self, step: PlaywrightStep, run_id: str) -> StepResult:
+        """Execute a single step."""
+        start_time = time.time()
+
+        try:
+            if step.action == "goto":
+                await self._execute_goto(step)
+                status = "passed"
+                heal_attempts = []
+                selector_used = None
+
+            elif step.action == "click":
+                locator_result = await self._execute_click(step)
+                status = "healed" if locator_result.was_healed() else "passed"
+                heal_attempts = locator_result.heal_attempts
+                selector_used = locator_result.successful_selector
+
+            elif step.action == "fill":
+                locator_result = await self._execute_fill(step)
+                status = "healed" if locator_result.was_healed() else "passed"
+                heal_attempts = locator_result.heal_attempts
+                selector_used = locator_result.successful_selector
+
+            elif step.action == "select":
+                locator_result = await self._execute_select(step)
+                status = "healed" if locator_result.was_healed() else "passed"
+                heal_attempts = locator_result.heal_attempts
+                selector_used = locator_result.successful_selector
+
+            elif step.action == "press":
+                await self._execute_press(step)
+                status = "passed"
+                heal_attempts = []
+                selector_used = None
+
+            elif step.action == "scroll":
+                await self._execute_scroll(step)
+                status = "passed"
+                heal_attempts = []
+                selector_used = None
+
+            elif step.action == "wait":
+                await self._execute_wait(step)
+                status = "passed"
+                heal_attempts = []
+                selector_used = None
+
+            elif step.action == "hover":
+                locator_result = await self._execute_hover(step)
+                status = "healed" if locator_result.was_healed() else "passed"
+                heal_attempts = locator_result.heal_attempts
+                selector_used = locator_result.successful_selector
+
+            elif step.action == "assert":
+                assertion_result = await self._execute_assertion(step)
+                status = "passed" if assertion_result["success"] else "failed"
+                heal_attempts = assertion_result.get("heal_attempts", [])
+                selector_used = assertion_result.get("selector_used")
+                if not assertion_result["success"]:
+                    raise AssertionError(assertion_result.get("error", "Assertion failed"))
+
+            else:
+                raise ValueError(f"Unknown action: {step.action}")
+
+            # Take screenshot after step
+            screenshot_path = await self._take_screenshot(run_id, step.index)
+
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            return StepResult(
+                step_index=step.index,
+                action=step.action,
+                status=status,
+                selector_used=selector_used,
+                screenshot_path=screenshot_path,
+                duration_ms=duration_ms,
+                heal_attempts=[HealAttempt(**ha.__dict__) for ha in heal_attempts] if heal_attempts else [],
+            )
+
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"Step {step.index} ({step.action}) failed: {e}")
+
+            screenshot_path = None
+            try:
+                screenshot_path = await self._take_screenshot(run_id, step.index, is_error=True)
+            except Exception as screenshot_error:
+                logger.warning(f"Failed to take error screenshot: {screenshot_error}")
+
+            return StepResult(
+                step_index=step.index,
+                action=step.action,
+                status="failed",
+                screenshot_path=screenshot_path,
+                duration_ms=duration_ms,
+                error_message=str(e),
+            )
+
+    async def _execute_goto(self, step: PlaywrightStep):
+        """Execute navigation."""
+        assert self._page and step.url
+        await self._page.goto(step.url)
+        # Wait for page to settle
+        await asyncio.sleep(1)
+
+    async def _execute_click(self, step: PlaywrightStep) -> CDPElementLocator:
+        """Execute click with self-healing."""
+        assert self._page and step.selectors and self._session_id
+
+        healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
+        element = await healer.locate(timeout=step.timeout)
+
+        if not element:
+            raise Exception(f"Could not find element to click. Tried selectors: {step.selectors.all_selectors()}")
+
+        await element.click()
+        await asyncio.sleep(0.1)  # Small delay after click
+        return healer
+
+    async def _execute_fill(self, step: PlaywrightStep) -> CDPElementLocator:
+        """Execute fill with self-healing."""
+        assert self._page and step.selectors and step.value is not None and self._session_id
+
+        healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
+        element = await healer.locate(timeout=step.timeout)
+
+        if not element:
+            raise Exception(f"Could not find element to fill. Tried selectors: {step.selectors.all_selectors()}")
+
+        await element.fill(step.value, clear=True)
+        return healer
+
+    async def _execute_select(self, step: PlaywrightStep) -> CDPElementLocator:
+        """Execute dropdown select with self-healing."""
+        assert self._page and step.selectors and step.value is not None and self._session_id
+
+        healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
+        element = await healer.locate(timeout=step.timeout)
+
+        if not element:
+            raise Exception(f"Could not find dropdown. Tried selectors: {step.selectors.all_selectors()}")
+
+        # Use JavaScript to set select value
+        cdp_client = self._page._client
+        object_id = await element._get_remote_object_id()
+        if object_id:
+            await cdp_client.send.Runtime.callFunctionOn(
+                params={
+                    'functionDeclaration': f'''
+                        function() {{
+                            this.value = "{step.value}";
+                            this.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        }}
+                    ''',
+                    'objectId': object_id,
+                },
+                session_id=self._session_id,
+            )
+
+        return healer
+
+    async def _execute_press(self, step: PlaywrightStep):
+        """Execute key press."""
+        assert self._page and step.key
+
+        if step.selectors and self._session_id:
+            # Focus element first if selector provided
+            healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
+            element = await healer.locate(timeout=step.timeout)
+            if element:
+                # Focus the element
+                cdp_client = self._page._client
+                await cdp_client.send.DOM.focus(
+                    params={'backendNodeId': element._backend_node_id},
+                    session_id=self._session_id
+                )
+
+        # Press the key
+        await self._page.press(step.key)
+
+    async def _execute_scroll(self, step: PlaywrightStep):
+        """Execute scroll."""
+        assert self._page and self._session_id
+
+        amount = step.amount or 500
+        if step.direction == "up":
+            delta_y = -amount
+        else:
+            delta_y = amount
+
+        mouse = Mouse(self._session, self._session_id)
+        await mouse.scroll(delta_y=delta_y)
+        await asyncio.sleep(0.3)  # Wait for scroll to complete
+
+    async def _execute_wait(self, step: PlaywrightStep):
+        """Execute wait."""
+        timeout_seconds = step.timeout / 1000 if step.timeout else 1
+        await asyncio.sleep(timeout_seconds)
+
+    async def _execute_hover(self, step: PlaywrightStep) -> CDPElementLocator:
+        """Execute hover with self-healing."""
+        assert self._page and step.selectors and self._session_id
+
+        healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
+        element = await healer.locate(timeout=step.timeout)
+
+        if not element:
+            raise Exception(f"Could not find element to hover. Tried selectors: {step.selectors.all_selectors()}")
+
+        await element.hover()
+        return healer
+
+    async def _execute_assertion(self, step: PlaywrightStep) -> dict[str, Any]:
+        """Execute an assertion step."""
+        assert self._page and step.assertion and self._session_id
+
+        assertion = step.assertion
+        result: dict[str, Any] = {"success": False, "heal_attempts": [], "selector_used": None}
+        cdp_client = self._page._client
+
+        try:
+            if assertion.assertion_type == "text_visible":
+                expected = assertion.expected_value or ""
+
+                if step.selectors:
+                    # Look for text within a specific element
+                    healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
+                    element = await healer.locate(timeout=step.timeout)
+                    result["heal_attempts"] = healer.heal_attempts
+                    result["selector_used"] = healer.successful_selector
+
+                    if element:
+                        # Check element text
+                        object_id = await element._get_remote_object_id()
+                        if object_id:
+                            text_result = await cdp_client.send.Runtime.callFunctionOn(
+                                params={
+                                    'functionDeclaration': 'function() { return this.innerText || this.textContent || ""; }',
+                                    'objectId': object_id,
+                                    'returnByValue': True,
+                                },
+                                session_id=self._session_id,
+                            )
+                            actual_text = text_result.get('result', {}).get('value', '')
+                            if assertion.partial_match:
+                                result["success"] = expected in actual_text
+                            else:
+                                result["success"] = actual_text.strip() == expected.strip()
+                            if not result["success"]:
+                                result["error"] = f"Expected '{expected}', got '{actual_text[:100]}'"
+                    else:
+                        result["error"] = f"Could not find element containing text: {expected}"
+                else:
+                    # Look for text anywhere on page
+                    eval_result = await cdp_client.send.Runtime.evaluate(
+                        params={
+                            'expression': f'document.body.innerText.includes("{expected.replace('"', '\\"')}")',
+                            'returnByValue': True,
+                        },
+                        session_id=self._session_id,
+                    )
+                    result["success"] = eval_result.get('result', {}).get('value', False)
+                    result["selector_used"] = f"text={expected}"
+                    if not result["success"]:
+                        result["error"] = f"Text '{expected}' not found on page"
+
+            elif assertion.assertion_type == "element_visible":
+                assert step.selectors
+                healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
+                element = await healer.locate(timeout=step.timeout)
+                result["heal_attempts"] = healer.heal_attempts
+                result["selector_used"] = healer.successful_selector
+
+                if element:
+                    # Check if element is visible
+                    object_id = await element._get_remote_object_id()
+                    if object_id:
+                        visibility_result = await cdp_client.send.Runtime.callFunctionOn(
+                            params={
+                                'functionDeclaration': '''
+                                    function() {
+                                        const rect = this.getBoundingClientRect();
+                                        const style = window.getComputedStyle(this);
+                                        return rect.width > 0 && rect.height > 0 &&
+                                               style.display !== 'none' &&
+                                               style.visibility !== 'hidden' &&
+                                               style.opacity !== '0';
+                                    }
+                                ''',
+                                'objectId': object_id,
+                                'returnByValue': True,
+                            },
+                            session_id=self._session_id,
+                        )
+                        result["success"] = visibility_result.get('result', {}).get('value', False)
+                        if not result["success"]:
+                            result["error"] = "Element exists but is not visible"
+                else:
+                    result["error"] = "Element not found"
+
+            elif assertion.assertion_type == "url_contains":
+                expected = assertion.expected_value or ""
+                current_url = await self._page.get_url()
+                result["success"] = expected in current_url
+                result["selector_used"] = f"url contains {expected}"
+                if not result["success"]:
+                    result["error"] = f"URL '{current_url}' does not contain '{expected}'"
+
+            elif assertion.assertion_type == "url_equals":
+                expected = assertion.expected_value or ""
+                current_url = await self._page.get_url()
+                result["success"] = current_url == expected
+                result["selector_used"] = f"url equals {expected}"
+                if not result["success"]:
+                    result["error"] = f"URL '{current_url}' does not equal '{expected}'"
+
+            elif assertion.assertion_type == "value_equals":
+                assert step.selectors
+                expected = assertion.expected_value or ""
+                healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
+                element = await healer.locate(timeout=step.timeout)
+                result["heal_attempts"] = healer.heal_attempts
+                result["selector_used"] = healer.successful_selector
+
+                if element:
+                    object_id = await element._get_remote_object_id()
+                    if object_id:
+                        value_result = await cdp_client.send.Runtime.callFunctionOn(
+                            params={
+                                'functionDeclaration': 'function() { return this.value; }',
+                                'objectId': object_id,
+                                'returnByValue': True,
+                            },
+                            session_id=self._session_id,
+                        )
+                        actual_value = value_result.get('result', {}).get('value', '')
+                        result["success"] = actual_value == expected
+                        if not result["success"]:
+                            result["error"] = f"Expected value '{expected}', got '{actual_value}'"
+                else:
+                    result["error"] = "Input element not found"
+
+            elif assertion.assertion_type == "element_count":
+                assert step.selectors and assertion.expected_count is not None
+                # For count assertion, we need to find all matching elements
+                selector = step.selectors.primary
+                if selector.startswith("xpath="):
+                    # XPath count
+                    xpath = selector[6:]
+                    eval_result = await cdp_client.send.Runtime.evaluate(
+                        params={
+                            'expression': f'''
+                                (function() {{
+                                    const result = document.evaluate(
+                                        "{xpath.replace('"', '\\"')}",
+                                        document,
+                                        null,
+                                        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+                                        null
+                                    );
+                                    return result.snapshotLength;
+                                }})()
+                            ''',
+                            'returnByValue': True,
+                        },
+                        session_id=self._session_id,
+                    )
+                    actual_count = eval_result.get('result', {}).get('value', 0)
+                else:
+                    # CSS count
+                    elements = await self._page.get_elements_by_css_selector(selector)
+                    actual_count = len(elements)
+
+                result["success"] = actual_count == assertion.expected_count
+                result["selector_used"] = selector
+                if not result["success"]:
+                    result["error"] = f"Expected {assertion.expected_count} elements, found {actual_count}"
+
+            else:
+                result["error"] = f"Unknown assertion type: {assertion.assertion_type}"
+
+        except Exception as e:
+            result["error"] = str(e)
+
+        return result
+
+    async def _take_screenshot(self, run_id: str, step_index: int, is_error: bool = False) -> str:
+        """Take a screenshot and return the path relative to base screenshots dir."""
+        assert self._page
+
+        suffix = "_error" if is_error else ""
+        filename = f"{run_id}_step_{step_index:03d}{suffix}.png"
+        filepath = self.screenshot_dir / filename
+
+        # Get base64 screenshot from CDP
+        base64_data = await self._page.screenshot(format='png')
+
+        # Save to file
+        with open(filepath, 'wb') as f:
+            f.write(base64.b64decode(base64_data))
+
+        # Return path relative to base screenshots directory
+        return f"runs/{filename}"

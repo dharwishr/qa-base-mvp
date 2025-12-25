@@ -6,7 +6,8 @@ import {
     LogOut,
     PlayCircle,
     FileText,
-    Boxes
+    Boxes,
+    Zap
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 
@@ -80,6 +81,12 @@ export default function DashboardLayout() {
                         onClick={() => navigate('/test-cases')}
                     />
                     <SidebarItem
+                        icon={Zap}
+                        label="Scripts"
+                        active={activePath.startsWith('/scripts')}
+                        onClick={() => navigate('/scripts')}
+                    />
+                    <SidebarItem
                         icon={Settings}
                         label="Settings"
                     />
@@ -98,7 +105,8 @@ export default function DashboardLayout() {
                             activePath.includes('/test-generation') ? 'Test Generation' :
                                 activePath.includes('/test-cases') ? 'Test Cases' :
                                     activePath.includes('/test-analysis') ? 'Test Analysis' :
-                                        'SmartTester'}
+                                        activePath.includes('/scripts') ? 'Test Scripts' :
+                                            'SmartTester'}
                     </h1>
                 </header>
                 <main className="flex-1 overflow-auto">

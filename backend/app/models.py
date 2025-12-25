@@ -131,3 +131,83 @@ class ExecutionLog(Base):
 
 	# Relationships
 	session: Mapped["TestSession"] = relationship("TestSession", back_populates="logs")
+
+
+class PlaywrightScript(Base):
+	"""Generated Playwright script from AI analysis - can be run without AI."""
+
+	__tablename__ = "playwright_scripts"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	session_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_sessions.id"), nullable=False
+	)
+	name: Mapped[str] = mapped_column(String(256), nullable=False)
+	description: Mapped[str | None] = mapped_column(Text, nullable=True)
+	steps_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	updated_at: Mapped[datetime] = mapped_column(
+		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+	)
+
+	# Relationships
+	session: Mapped["TestSession"] = relationship("TestSession", backref="scripts")
+	runs: Mapped[list["TestRun"]] = relationship(
+		"TestRun", back_populates="script", order_by="TestRun.created_at.desc()"
+	)
+
+
+class TestRun(Base):
+	"""A single execution of a PlaywrightScript (no AI involved)."""
+
+	__tablename__ = "test_runs"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	script_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("playwright_scripts.id"), nullable=False
+	)
+	status: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="pending"
+	)  # pending | running | passed | failed | healed
+	runner_type: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="playwright"
+	)  # playwright | cdp
+	started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	total_steps: Mapped[int] = mapped_column(Integer, default=0)
+	passed_steps: Mapped[int] = mapped_column(Integer, default=0)
+	failed_steps: Mapped[int] = mapped_column(Integer, default=0)
+	healed_steps: Mapped[int] = mapped_column(Integer, default=0)
+	error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Relationships
+	script: Mapped["PlaywrightScript"] = relationship("PlaywrightScript", back_populates="runs")
+	run_steps: Mapped[list["RunStep"]] = relationship(
+		"RunStep", back_populates="run", order_by="RunStep.step_index", cascade="all, delete-orphan"
+	)
+
+
+class RunStep(Base):
+	"""Result of each step in a TestRun."""
+
+	__tablename__ = "run_steps"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	run_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_runs.id"), nullable=False
+	)
+	step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+	action: Mapped[str] = mapped_column(String(50), nullable=False)  # goto | click | fill | etc.
+	status: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="pending"
+	)  # pending | running | passed | failed | healed | skipped
+	selector_used: Mapped[str | None] = mapped_column(Text, nullable=True)
+	screenshot_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+	duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+	heal_attempts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Relationships
+	run: Mapped["TestRun"] = relationship("TestRun", back_populates="run_steps")

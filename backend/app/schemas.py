@@ -142,3 +142,120 @@ class ExecutionLogResponse(BaseModel):
 
 	class Config:
 		from_attributes = True
+
+
+# ============================================
+# Playwright Script & Test Run Schemas
+# ============================================
+
+class CreateScriptRequest(BaseModel):
+	"""Request to create a Playwright script from a session."""
+	session_id: str = Field(..., description="ID of the test session to generate script from")
+	name: str = Field(..., min_length=1, description="Name for the script")
+	description: str | None = Field(None, description="Optional description")
+
+
+class RunStepResponse(BaseModel):
+	"""Response for a single step in a test run."""
+	id: str
+	step_index: int
+	action: str
+	status: str
+	selector_used: str | None = None
+	screenshot_path: str | None = None
+	duration_ms: int | None = None
+	error_message: str | None = None
+	heal_attempts: list[dict[str, Any]] | None = None
+	created_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class TestRunResponse(BaseModel):
+	"""Response for a test run."""
+	id: str
+	script_id: str
+	status: str
+	runner_type: str = "playwright"  # playwright | cdp
+	started_at: datetime | None = None
+	completed_at: datetime | None = None
+	total_steps: int
+	passed_steps: int
+	failed_steps: int
+	healed_steps: int
+	error_message: str | None = None
+	created_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class TestRunDetailResponse(TestRunResponse):
+	"""Detailed response for a test run with steps."""
+	run_steps: list[RunStepResponse] = []
+
+
+class PlaywrightScriptResponse(BaseModel):
+	"""Response for a Playwright script."""
+	id: str
+	session_id: str
+	name: str
+	description: str | None = None
+	steps_json: list[dict[str, Any]]
+	created_at: datetime
+	updated_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class PlaywrightScriptListResponse(BaseModel):
+	"""Response for listing scripts."""
+	id: str
+	session_id: str
+	name: str
+	description: str | None = None
+	step_count: int = 0
+	run_count: int = 0
+	last_run_status: str | None = None
+	created_at: datetime
+	updated_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class PlaywrightScriptDetailResponse(PlaywrightScriptResponse):
+	"""Detailed response for a script with runs."""
+	runs: list[TestRunResponse] = []
+
+
+class StartRunRequest(BaseModel):
+	"""Request to start a test run."""
+	headless: bool = Field(default=True, description="Run browser in headless mode")
+	runner: str = Field(default="playwright", description="Runner type: 'playwright' or 'cdp'")
+
+
+class StartRunResponse(BaseModel):
+	"""Response after starting a test run."""
+	run_id: str
+	status: str
+
+
+# WebSocket messages for test runs
+class WSRunStepStarted(WSMessage):
+	type: str = "run_step_started"
+	step_index: int
+	action: str
+	description: str | None = None
+
+
+class WSRunStepCompleted(WSMessage):
+	type: str = "run_step_completed"
+	step: RunStepResponse
+
+
+class WSRunCompleted(WSMessage):
+	type: str = "run_completed"
+	run: TestRunResponse

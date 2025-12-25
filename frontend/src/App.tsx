@@ -10,6 +10,9 @@ import Results from "./pages/test-generation/Results"
 import TestAnalysis from "./pages/TestAnalysis"
 import TestCases from "./pages/TestCases"
 import SessionDetail from "./pages/SessionDetail"
+import Scripts from "./pages/Scripts"
+import ScriptDetail from "./pages/ScriptDetail"
+import RunDetail from "./pages/RunDetail"
 
 import DashboardLayout from "./components/layout/DashboardLayout"
 
@@ -33,6 +36,9 @@ function App() {
             <Route path="/test-analysis" element={<TestAnalysis />} />
             <Route path="/test-cases" element={<TestCases />} />
             <Route path="/test-cases/:sessionId" element={<SessionDetail />} />
+            <Route path="/scripts" element={<Scripts />} />
+            <Route path="/scripts/:scriptId" element={<ScriptDetail />} />
+            <Route path="/scripts/:scriptId/runs/:runId" element={<RunDetail />} />
           </Route>
         </Routes>
       </AuthProvider>

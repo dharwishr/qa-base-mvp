@@ -1,4 +1,5 @@
 import type { ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep } from '../types/analysis';
+import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
 
@@ -201,6 +202,115 @@ export function getScreenshotUrl(screenshotPath: string): string {
   const token = getAuthToken();
   const baseUrl = `${API_BASE}/api/analysis/screenshot?path=${encodeURIComponent(screenshotPath)}`;
   return token ? `${baseUrl}&token=${encodeURIComponent(token)}` : baseUrl;
+}
+
+/**
+ * Scripts API - Playwright scripts and test runs
+ */
+export const scriptsApi = {
+  /**
+   * List all Playwright scripts.
+   */
+  async listScripts(): Promise<PlaywrightScriptListItem[]> {
+    const response = await fetch(`${API_BASE}/scripts`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<PlaywrightScriptListItem[]>(response);
+  },
+
+  /**
+   * Get a script by ID with run history.
+   */
+  async getScript(scriptId: string): Promise<PlaywrightScript> {
+    const response = await fetch(`${API_BASE}/scripts/${scriptId}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<PlaywrightScript>(response);
+  },
+
+  /**
+   * Create a new script from a completed session.
+   */
+  async createScript(request: CreateScriptRequest): Promise<PlaywrightScript> {
+    const response = await fetch(`${API_BASE}/scripts`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse<PlaywrightScript>(response);
+  },
+
+  /**
+   * Delete a script and its runs.
+   */
+  async deleteScript(scriptId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/scripts/${scriptId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) {
+      if (response.status === 204) return;
+      if (response.status === 401) {
+        handleUnauthorized();
+        throw new ApiError(401, 'Unauthorized');
+      }
+      await handleResponse(response);
+    }
+  },
+
+  /**
+   * Start a test run for a script.
+   */
+  async startRun(scriptId: string, request: StartRunRequest = {}): Promise<StartRunResponse> {
+    const response = await fetch(`${API_BASE}/scripts/${scriptId}/run`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse<StartRunResponse>(response);
+  },
+
+  /**
+   * List all runs for a script.
+   */
+  async listRuns(scriptId: string): Promise<TestRun[]> {
+    const response = await fetch(`${API_BASE}/scripts/${scriptId}/runs`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestRun[]>(response);
+  },
+};
+
+/**
+ * Runs API - Test run results
+ */
+export const runsApi = {
+  /**
+   * Get a run by ID with step results.
+   */
+  async getRun(runId: string): Promise<TestRun> {
+    const response = await fetch(`${API_BASE}/runs/${runId}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestRun>(response);
+  },
+
+  /**
+   * Get all steps for a run.
+   */
+  async getRunSteps(runId: string): Promise<RunStep[]> {
+    const response = await fetch(`${API_BASE}/runs/${runId}/steps`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<RunStep[]>(response);
+  },
+};
+
+/**
+ * Get the WebSocket URL for a test run.
+ */
+export function getRunWebSocketUrl(runId: string): string {
+  return getWsUrl(`/runs/${runId}/ws`);
 }
 
 export { ApiError };

@@ -1,5 +1,11 @@
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# Add the repo root to sys.path for local browser_use package
+_repo_root = Path(__file__).parent.parent.parent
+if str(_repo_root) not in sys.path:
+	sys.path.insert(0, str(_repo_root))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.routers import analysis, auth
+from app.routers.scripts import router as scripts_router, runs_router
 
 
 @asynccontextmanager
@@ -51,6 +58,8 @@ async def root():
 # Include routers
 app.include_router(auth.router)
 app.include_router(analysis.router)
+app.include_router(scripts_router)
+app.include_router(runs_router)
 
 # Mount static files for screenshots
 app.mount("/screenshots", StaticFiles(directory=settings.SCREENSHOTS_DIR), name="screenshots")
