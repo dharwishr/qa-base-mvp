@@ -1,7 +1,7 @@
 import type { ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep } from '../types/analysis';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'http://localhost:8005';
 
 class ApiError extends Error {
   public status: number;
@@ -176,7 +176,7 @@ export const analysisApi = {
  * Get the WebSocket URL for a session.
  */
 export function getWebSocketUrl(sessionId: string): string {
-  return `ws://localhost:8000/api/analysis/ws/${sessionId}`;
+  return `ws://localhost:8005/api/analysis/ws/${sessionId}`;
 }
 
 /**

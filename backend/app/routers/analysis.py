@@ -267,13 +267,42 @@ async def clear_session_steps(
 	db.commit()
 
 
+async def verify_token_from_query(token: str) -> User:
+	"""Verify JWT token passed as query parameter (for img src URLs)."""
+	from jose import JWTError, jwt
+	from app.config import settings
+	
+	credentials_exception = HTTPException(
+		status_code=401,
+		detail="Could not validate credentials",
+	)
+	try:
+		payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+		email: str = payload.get("sub")
+		if email is None:
+			raise credentials_exception
+	except JWTError:
+		raise credentials_exception
+	
+	if email != settings.AUTH_EMAIL:
+		raise credentials_exception
+	
+	return User(email=email)
+
+
 @router.get("/screenshot")
 async def get_screenshot(
 	path: str,
-	current_user: User = Depends(get_current_user),
+	token: str,
 ):
-	"""Serve a screenshot file from the configured screenshots directory."""
+	"""Serve a screenshot file from the configured screenshots directory.
+	
+	Token is passed as query parameter since img src URLs cannot set Authorization headers.
+	"""
 	from app.config import settings
+	
+	# Verify token from query parameter
+	await verify_token_from_query(token)
 
 	# Resolve path relative to screenshots directory
 	screenshots_dir = Path(settings.SCREENSHOTS_DIR).resolve()

@@ -7,11 +7,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8005}
     ports:
-      - "3000:80"
+      - "3005:80"
     environment:
-      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8005}
     depends_on:
       - backend
     networks:
@@ -26,7 +26,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     ports:
-      - "8000:8000"
+      - "8005:8005"
     environment:
       # Application Settings
       - DEBUG=${DEBUG:-false}
@@ -37,8 +37,8 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
       # Celery Settings
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
-      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6385/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6385/0}
     volumes:
       - backend_data:/app/data
       - screenshots:/app/data/screenshots
@@ -49,7 +49,7 @@ services:
       - qa-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -70,8 +70,8 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
       # Celery Settings
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
-      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6385/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6385/0}
     volumes:
       - backend_data:/app/data
       - screenshots:/app/data/screenshots
@@ -90,7 +90,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6385:6379"
     volumes:
       - redis_data:/data
     networks:
