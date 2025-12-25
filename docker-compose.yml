@@ -1,0 +1,122 @@
+services:
+  # ============================================
+  # Frontend - React/Vite served via nginx
+  # ============================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    depends_on:
+      - backend
+    networks:
+      - qa-network
+    restart: unless-stopped
+
+  # ============================================
+  # Backend - FastAPI Application
+  # ============================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      # Application Settings
+      - DEBUG=${DEBUG:-false}
+      - APP_NAME=${APP_NAME:-QA Base API}
+      # Database Settings
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      # LLM API Keys
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
+      # Celery Settings
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    volumes:
+      - backend_data:/app/data
+      - screenshots:/app/screenshots
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - qa-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================
+  # Celery Worker - Async Task Processing
+  # ============================================
+  celery:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: celery -A app.celery_app worker --loglevel=info
+    environment:
+      # Database Settings
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      # LLM API Keys
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
+      # Celery Settings
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    volumes:
+      - backend_data:/app/data
+      - screenshots:/app/screenshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - qa-network
+    restart: unless-stopped
+
+  # ============================================
+  # Redis - Message Broker & Result Backend
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - qa-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command: redis-server --appendonly yes
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  backend_data:
+    driver: local
+  redis_data:
+    driver: local
+  screenshots:
+    driver: local
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  qa-network:
+    driver: bridge
