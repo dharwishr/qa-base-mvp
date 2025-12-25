@@ -654,9 +654,10 @@ class CDPRunner(BaseRunner):
                         result["error"] = f"Could not find element containing text: {expected}"
                 else:
                     # Look for text anywhere on page
+                    escaped_expected = expected.replace('"', '\\"')
                     eval_result = await cdp_client.send.Runtime.evaluate(
                         params={
-                            'expression': f'document.body.innerText.includes("{expected.replace('"', '\\"')}")',
+                            'expression': f'document.body.innerText.includes("{escaped_expected}")',
                             'returnByValue': True,
                         },
                         session_id=self._session_id,
@@ -749,12 +750,13 @@ class CDPRunner(BaseRunner):
                 if selector.startswith("xpath="):
                     # XPath count
                     xpath = selector[6:]
+                    escaped_xpath = xpath.replace('"', '\\"')
                     eval_result = await cdp_client.send.Runtime.evaluate(
                         params={
                             'expression': f'''
                                 (function() {{
                                     const result = document.evaluate(
-                                        "{xpath.replace('"', '\\"')}",
+                                        "{escaped_xpath}",
                                         document,
                                         null,
                                         XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
