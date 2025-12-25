@@ -33,22 +33,13 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Create entrypoint script for runtime environment injection
-RUN cat > /docker-entrypoint.d/40-inject-env.sh << 'EOF'
-#!/bin/sh
-set -e
-
-# Default API URL if not set
-API_URL="${VITE_API_URL:-http://localhost:8005}"
-
-echo "Injecting runtime config: API_URL=${API_URL}"
-
-# Replace placeholder in config.js
-sed -i "s|__API_URL__|${API_URL}|g" /usr/share/nginx/html/config.js
-
-echo "Runtime config injected successfully"
-EOF
-
-RUN chmod +x /docker-entrypoint.d/40-inject-env.sh
+RUN echo '#!/bin/sh' > /docker-entrypoint.d/40-inject-env.sh && \
+    echo 'set -e' >> /docker-entrypoint.d/40-inject-env.sh && \
+    echo 'API_URL="${VITE_API_URL:-http://localhost:8000}"' >> /docker-entrypoint.d/40-inject-env.sh && \
+    echo 'echo "Injecting runtime config: API_URL=${API_URL}"' >> /docker-entrypoint.d/40-inject-env.sh && \
+    echo 'sed -i "s|__API_URL__|${API_URL}|g" /usr/share/nginx/html/config.js' >> /docker-entrypoint.d/40-inject-env.sh && \
+    echo 'echo "Runtime config injected successfully"' >> /docker-entrypoint.d/40-inject-env.sh && \
+    chmod +x /docker-entrypoint.d/40-inject-env.sh
 
 # Expose port
 EXPOSE 80
