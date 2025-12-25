@@ -14,6 +14,7 @@ from app.schemas import (
 	CreateSessionRequest,
 	ExecuteResponse,
 	ExecutionLogResponse,
+	StopResponse,
 	TestPlanResponse,
 	TestSessionDetailResponse,
 	TestSessionListResponse,
@@ -203,6 +204,44 @@ async def start_execution(
 	db.commit()
 
 	return ExecuteResponse(task_id=task.id, status="queued")
+
+
+@router.post("/sessions/{session_id}/stop", response_model=StopResponse)
+async def stop_execution(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Stop a running test execution by revoking the Celery task."""
+	from app.celery_app import celery_app
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Check if session is in a stoppable state
+	if session.status not in ("queued", "running"):
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot stop session in status: {session.status}"
+		)
+
+	if not session.celery_task_id:
+		raise HTTPException(status_code=400, detail="No Celery task associated with this session")
+
+	try:
+		# Revoke the Celery task with termination signal
+		celery_app.control.revoke(session.celery_task_id, terminate=True, signal="SIGTERM")
+		logger.info(f"Revoked Celery task {session.celery_task_id} for session {session_id}")
+
+		# Update session status
+		session.status = "stopped"
+		db.commit()
+
+		return StopResponse(status="stopped", message="Test execution stopped successfully")
+	except Exception as e:
+		logger.error(f"Error stopping task for session {session_id}: {e}")
+		raise HTTPException(status_code=500, detail=f"Failed to stop task: {str(e)}")
 
 
 @router.get("/sessions/{session_id}/logs", response_model=list[ExecutionLogResponse])

@@ -1,0 +1,55 @@
+# ============================================
+# QA Base Frontend - Kamal Deploy Configuration
+# ============================================
+service: qa-base-frontend
+image: ghcr.io/<your-username>/qa-base-frontend
+
+deploy_timeout: 300
+drain_timeout: 30
+readiness_delay: 5
+
+servers:
+  web:
+    hosts:
+      - <your-server-ip>
+
+proxy:
+  ssl: true
+  host: qa-base.yourdomain.com
+  app_port: 80
+  healthcheck:
+    path: /
+    interval: 10
+    timeout: 5
+
+registry:
+  server: ghcr.io
+  username:
+    - KAMAL_REGISTRY_USERNAME
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch:
+    - amd64
+  dockerfile: frontend/Dockerfile
+  context: frontend
+  args:
+    VITE_API_URL: "https://api.yourdomain.com"
+  cache:
+    type: registry
+    image: ghcr.io/<your-username>/qa-base-frontend-cache
+
+env:
+  clear:
+    VITE_API_URL: "https://api.yourdomain.com"
+
+boot:
+  limit: 1
+  wait: 5
+
+ssh:
+  user: root
+
+aliases:
+  logs: app logs

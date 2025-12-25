@@ -171,6 +171,20 @@ export const analysisApi = {
     });
     return handleResponse<ExecutionLog[]>(response);
   },
+
+  /**
+   * Stop a running test execution by revoking the Celery task.
+   */
+  async stopExecution(sessionId: string): Promise<{ status: string; message: string }> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/stop`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      }
+    );
+    return handleResponse<{ status: string; message: string }>(response);
+  },
 };
 
 /**

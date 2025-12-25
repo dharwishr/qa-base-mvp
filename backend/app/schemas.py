@@ -128,6 +128,11 @@ class ExecuteResponse(BaseModel):
 	status: str
 
 
+class StopResponse(BaseModel):
+	status: str
+	message: str
+
+
 class ExecutionLogResponse(BaseModel):
 	id: str
 	level: str

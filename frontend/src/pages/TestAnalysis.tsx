@@ -7,7 +7,7 @@ import { analysisApi, getScreenshotUrl } from "@/services/api"
 import { useAnalysisPolling } from "@/hooks/useAnalysisPolling"
 import type { TestSession, LlmModel } from "@/types/analysis"
 
-type AnalysisState = 'idle' | 'generating_plan' | 'plan_ready' | 'executing' | 'completed' | 'failed'
+type AnalysisState = 'idle' | 'generating_plan' | 'plan_ready' | 'executing' | 'completed' | 'failed' | 'stopped'
 
 export default function TestAnalysis() {
     const [prompt, setPrompt] = useState("")
@@ -22,9 +22,11 @@ export default function TestAnalysis() {
         steps: pollingSteps,
         isExecuting,
         isCompleted,
+        isStopped,
         success,
         error: pollingError,
         startExecution,
+        stopExecution,
         clear,
     } = useAnalysisPolling(session?.id ?? null)
 
@@ -59,10 +61,12 @@ export default function TestAnalysis() {
     useEffect(() => {
         if (isExecuting) {
             setAnalysisState('executing')
+        } else if (isStopped) {
+            setAnalysisState('stopped')
         } else if (isCompleted) {
             setAnalysisState(success ? 'completed' : 'failed')
         }
-    }, [isExecuting, isCompleted, success])
+    }, [isExecuting, isCompleted, isStopped, success])
 
     // Handle polling errors
     useEffect(() => {
@@ -231,9 +235,32 @@ export default function TestAnalysis() {
                     {/* Execution Status */}
                     {analysisState === 'executing' && (
                         <div className="p-4 border-b bg-yellow-50/50">
-                            <div className="text-sm font-medium text-yellow-700">
-                                Executing test... ({displaySteps.length} steps completed)
+                            <div className="flex items-center justify-between">
+                                <div className="text-sm font-medium text-yellow-700">
+                                    Executing test... ({displaySteps.length} steps completed)
+                                </div>
+                                <button
+                                    onClick={stopExecution}
+                                    className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-red-600 text-white hover:bg-red-700 h-8 px-3 py-1"
+                                >
+                                    Stop
+                                </button>
                             </div>
+                        </div>
+                    )}
+
+                    {/* Stopped Status */}
+                    {analysisState === 'stopped' && (
+                        <div className="p-4 border-b bg-orange-50/50">
+                            <div className="text-sm font-medium text-orange-700">
+                                Test execution stopped ({displaySteps.length} steps completed)
+                            </div>
+                            <button
+                                onClick={handleReset}
+                                className="mt-2 text-sm text-orange-600 underline"
+                            >
+                                Run another test
+                            </button>
                         </div>
                     )}
 

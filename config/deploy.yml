@@ -1,134 +1,93 @@
-# ============================================
-# Kamal Deployment Configuration for QA Base
-# ============================================
-# Documentation: https://kamal-deploy.org/docs/configuration
 
-service: qa-base
+service: qa-base-mvp
+image: xitester/qa-base-mvp
 
-# Docker image registry
-image: your-registry/qa-base
 
-# ============================================
-# Servers Configuration
-# ============================================
 servers:
   web:
     hosts:
-      - your-server-ip
-    labels:
-      traefik.http.routers.qa-base-web.rule: Host(`qa-base.yourdomain.com`)
-      traefik.http.routers.qa-base-web.tls: true
-      traefik.http.routers.qa-base-web.tls.certresolver: letsencrypt
-    options:
-      network: kamal
-
-  backend:
-    hosts:
-      - your-server-ip
-    cmd: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8005"
-    labels:
-      traefik.http.routers.qa-base-backend.rule: Host(`api.qa-base.yourdomain.com`)
-      traefik.http.routers.qa-base-backend.tls: true
-      traefik.http.routers.qa-base-backend.tls.certresolver: letsencrypt
-      traefik.http.services.qa-base-backend.loadbalancer.server.port: 8005
-    options:
-      network: kamal
-    healthcheck:
-      path: /health
-      port: 8005
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
+      - 143.110.250.31
+  
   celery:
     hosts:
-      - your-server-ip
+      - 143.110.250.31
     cmd: celery -A app.celery_app worker --loglevel=info
-    options:
-      network: kamal
 
-# ============================================
-# Registry Configuration
-# ============================================
+
+
+proxy: 
+  ssl: true
+  app_port: 8005
+  forward_headers: true
+  response_timeout: 3600
+  host: qa-base-mvp.qola.top
+  healthcheck:
+    interval: 3
+    timeout: 300
+
+
 registry:
-  server: ghcr.io
-  username:
-    - KAMAL_REGISTRY_USERNAME
-  password:
-    - KAMAL_REGISTRY_PASSWORD
+  server: 248189925495.dkr.ecr.ap-southeast-1.amazonaws.com
+  username: AWS
+  password: <%= %x(aws ecr get-login-password) %>
 
-# ============================================
-# Environment Variables
-# ============================================
+
+builder:
+  arch:
+    - amd64
+  dockerfile: backend/Dockerfile
+  context: .
+  args:
+    BUILDKIT_INLINE_CACHE: 1
+
+
 env:
   clear:
-    DEBUG: false
-    APP_NAME: QA Base API
-    DATABASE_URL: sqlite:///./data/app.db
-    CELERY_BROKER_URL: redis://qa-base-redis:6385/0
-    CELERY_RESULT_BACKEND: redis://qa-base-redis:6385/0
+    DEBUG: "false"
+    APP_NAME: "QA Base API"
+    DATABASE_URL: "sqlite:///./data/app.db"
+    CELERY_BROKER_URL: "redis://qa-base-redis:6379/0"
+    CELERY_RESULT_BACKEND: "redis://qa-base-redis:6379/0"
+    PYTHONUNBUFFERED: "1"
   secret:
     - GEMINI_API_KEY
     - BROWSER_USE_API_KEY
 
-# ============================================
-# Build Configuration
-# ============================================
-builder:
-  multiarch: false
-  args:
-    VITE_API_URL: https://api.qa-base.yourdomain.com
+
+volumes:
+  - qa-base-data:/app/data
+  - qa-base-screenshots:/app/data/screenshots
+
 
 # ============================================
-# Accessories (Redis)
+# Accessories
 # ============================================
 accessories:
   redis:
-    image: redis:7-alpine
-    host: your-server-ip
-    port: "6385:6379"
-    cmd: redis-server --appendonly yes
-    directories:
-      - data:/data
+    image: redis:latest
+    port: "127.0.0.1:6375:6375"
+    host: devbox.flutr.io
+    cmd: "/bin/sh -c 'redis-server --port 6375'"
+    volumes:
+      - qa-base-redis-data:/data
+
+
+  frontend: 
+    image: ghcr.io/<your-username>/qa-base-frontend
+    host: <your-server-ip>
+    port: 80:80
+    env:
+      clear:
+        VITE_API_URL: "https://api.yourdomain.com"
     options:
-      network: kamal
+      health-cmd: wget --spider -q http://localhost/
+      health-interval: 10s
 
 # ============================================
-# Volumes
+# Aliases
 # ============================================
-volumes:
-  - backend_data:/app/data
-  - screenshots:/app/data/screenshots
-
-# ============================================
-# Traefik Configuration
-# ============================================
-traefik:
-  options:
-    publish:
-      - "443:443"
-      - "80:80"
-    network: kamal
-  args:
-    entryPoints.web.address: ":80"
-    entryPoints.websecure.address: ":443"
-    entryPoints.web.http.redirections.entryPoint.to: websecure
-    entryPoints.web.http.redirections.entryPoint.scheme: https
-    certificatesResolvers.letsencrypt.acme.email: your-email@example.com
-    certificatesResolvers.letsencrypt.acme.storage: /letsencrypt/acme.json
-    certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint: web
-
-# ============================================
-# SSH Configuration
-# ============================================
-ssh:
-  user: root
-  # keys_only: true
-  # keys: ["~/.ssh/id_rsa"]
-
-# ============================================
-# Boot Configuration
-# ============================================
-boot:
-  limit: 10%
-  wait: 30
+aliases:
+  shell: app exec --interactive bash
+  logs: app logs
+  console: app exec --interactive python
+  migrate: app exec "alembic upgrade head"

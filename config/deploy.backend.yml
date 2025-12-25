@@ -1,0 +1,80 @@
+# ============================================
+# QA Base Backend - Kamal Deploy Configuration
+# ============================================
+service: qa-base-backend
+image: ghcr.io/<your-username>/qa-base-backend
+
+deploy_timeout: 600
+drain_timeout: 30
+readiness_delay: 10
+
+servers:
+  web:
+    hosts:
+      - <your-server-ip>
+  
+  celery:
+    hosts:
+      - <your-server-ip>
+    cmd: celery -A app.celery_app worker --loglevel=info
+
+proxy:
+  ssl: true
+  host: api.yourdomain.com
+  app_port: 8000
+  healthcheck:
+    path: /health
+    interval: 10
+    timeout: 5
+
+registry:
+  server: ghcr.io
+  username:
+    - KAMAL_REGISTRY_USERNAME
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch:
+    - amd64
+  dockerfile: backend/Dockerfile
+  context: .
+  cache:
+    type: registry
+    image: ghcr.io/<your-username>/qa-base-backend-cache
+
+env:
+  clear:
+    DEBUG: "false"
+    APP_NAME: "QA Base API"
+    DATABASE_URL: "sqlite:///./data/app.db"
+    CELERY_BROKER_URL: "redis://qa-base-redis:6379/0"
+    CELERY_RESULT_BACKEND: "redis://qa-base-redis:6379/0"
+  secret:
+    - GEMINI_API_KEY
+    - BROWSER_USE_API_KEY
+
+volumes:
+  - qa-base-data:/app/data
+  - qa-base-screenshots:/app/data/screenshots
+
+boot:
+  limit: 1
+  wait: 10
+
+ssh:
+  user: root
+
+accessories:
+  redis:
+    image: redis:7-alpine
+    host: <your-server-ip>
+    port: 6379
+    cmd: redis-server --appendonly yes
+    directories:
+      - data:/data
+
+aliases:
+  shell: app exec --interactive bash
+  logs: app logs
+  migrate: app exec "alembic upgrade head"

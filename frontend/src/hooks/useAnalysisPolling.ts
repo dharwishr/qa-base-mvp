@@ -7,9 +7,11 @@ interface UseAnalysisPollingReturn {
   status: SessionStatus | null;
   isExecuting: boolean;
   isCompleted: boolean;
+  isStopped: boolean;
   success: boolean | null;
   error: string | null;
   startExecution: () => Promise<void>;
+  stopExecution: () => Promise<void>;
   clear: () => Promise<void>;
   startPolling: () => void;
   stopPolling: () => void;
@@ -22,6 +24,7 @@ export function useAnalysisPolling(sessionId: string | null): UseAnalysisPolling
   const [status, setStatus] = useState<SessionStatus | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
+  const [isStopped, setIsStopped] = useState(false);
   const [success, setSuccess] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,11 +59,19 @@ export function useAnalysisPolling(sessionId: string | null): UseAnalysisPolling
       if (session.status === 'running' || session.status === 'queued') {
         setIsExecuting(true);
         setIsCompleted(false);
+        setIsStopped(false);
       } else if (session.status === 'completed') {
         setIsExecuting(false);
         setIsCompleted(true);
+        setIsStopped(false);
         setSuccess(true);
         stopPolling(); // Stop polling when completed
+      } else if (session.status === 'stopped') {
+        setIsExecuting(false);
+        setIsCompleted(false);
+        setIsStopped(true);
+        setSuccess(null);
+        stopPolling(); // Stop polling when stopped
       } else if (session.status === 'failed') {
         setIsExecuting(false);
         setIsCompleted(true);
@@ -110,6 +121,26 @@ export function useAnalysisPolling(sessionId: string | null): UseAnalysisPolling
     }
   }, [sessionId, startPolling]);
 
+  const stopExecution = useCallback(async () => {
+    if (!sessionId) {
+      setError('No session ID');
+      return;
+    }
+
+    try {
+      // Stop execution via API
+      await analysisApi.stopExecution(sessionId);
+
+      // Stop polling and update state
+      stopPolling();
+      setIsExecuting(false);
+      setIsStopped(true);
+    } catch (e) {
+      console.error('Error stopping execution:', e);
+      setError(e instanceof Error ? e.message : 'Failed to stop execution');
+    }
+  }, [sessionId, stopPolling]);
+
   const clear = useCallback(async () => {
     if (sessionId) {
       try {
@@ -121,6 +152,7 @@ export function useAnalysisPolling(sessionId: string | null): UseAnalysisPolling
     setSteps([]);
     lastStepCountRef.current = 0;
     setIsCompleted(false);
+    setIsStopped(false);
     setSuccess(null);
     setError(null);
   }, [sessionId]);
@@ -139,6 +171,7 @@ export function useAnalysisPolling(sessionId: string | null): UseAnalysisPolling
     setStatus(null);
     setIsExecuting(false);
     setIsCompleted(false);
+    setIsStopped(false);
     setSuccess(null);
     setError(null);
     stopPolling();
@@ -149,9 +182,11 @@ export function useAnalysisPolling(sessionId: string | null): UseAnalysisPolling
     status,
     isExecuting,
     isCompleted,
+    isStopped,
     success,
     error,
     startExecution,
+    stopExecution,
     clear,
     startPolling,
     stopPolling,

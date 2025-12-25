@@ -36,6 +36,7 @@ build/
 *.log
 logs/
 
-# Screenshots and data (optional - uncomment if needed)
-# backend/data/
-# backend/screenshots/
+# Screenshots and data
+screenshots/
+backend/data/
+backend/screenshots/
