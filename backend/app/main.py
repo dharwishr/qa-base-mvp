@@ -1,3 +1,4 @@
+import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,6 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.routers import analysis, auth
 from app.routers.scripts import router as scripts_router, runs_router
+from app.routers.browser import router as browser_router
+from app.services.browser_orchestrator import init_orchestrator, shutdown_orchestrator
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -24,8 +29,22 @@ async def lifespan(app: FastAPI):
 	data_dir.mkdir(exist_ok=True)
 	screenshots_dir = Path(settings.SCREENSHOTS_DIR)
 	screenshots_dir.mkdir(parents=True, exist_ok=True)
+	
+	# Initialize browser orchestrator
+	try:
+		await init_orchestrator()
+		logger.info("Browser orchestrator initialized")
+	except Exception as e:
+		logger.warning(f"Failed to initialize browser orchestrator: {e}")
+	
 	yield
-	# Shutdown: cleanup if needed
+	
+	# Shutdown: cleanup browser orchestrator
+	try:
+		await shutdown_orchestrator()
+		logger.info("Browser orchestrator shutdown complete")
+	except Exception as e:
+		logger.error(f"Error shutting down browser orchestrator: {e}")
 
 
 app = FastAPI(
@@ -60,6 +79,7 @@ app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(scripts_router)
 app.include_router(runs_router)
+app.include_router(browser_router)
 
 # Mount static files for screenshots
 app.mount("/screenshots", StaticFiles(directory=settings.SCREENSHOTS_DIR), name="screenshots")

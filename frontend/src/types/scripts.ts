@@ -140,4 +140,11 @@ export interface WSRunError {
   message: string;
 }
 
-export type WSRunMessage = WSRunStepStarted | WSRunStepCompleted | WSRunCompleted | WSRunError;
+export interface WSBrowserSessionStarted {
+  type: 'browser_session_started';
+  session_id: string;
+  cdp_url: string;
+  live_view_url: string;
+}
+
+export type WSRunMessage = WSRunStepStarted | WSRunStepCompleted | WSRunCompleted | WSRunError | WSBrowserSessionStarted;

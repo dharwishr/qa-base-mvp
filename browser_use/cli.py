@@ -1792,7 +1792,7 @@ async def run_auth_command():
 			browser_session_cdp_url='',
 			device_id=auth_client.device_id,
 			browser_state={
-				'viewport': {'width': 1280, 'height': 720},
+				'viewport': {'width': 1920, 'height': 1080},
 				'user_agent': None,
 				'headless': True,
 				'initial_url': None,

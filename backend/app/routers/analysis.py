@@ -65,10 +65,11 @@ async def create_session(
 	current_user: User = Depends(get_current_user),
 ):
 	"""Create a new test session and generate a plan."""
-	# Create session with selected LLM model
+	# Create session with selected LLM model and headless option
 	session = TestSession(
 		prompt=request.prompt,
 		llm_model=request.llm_model,
+		headless=request.headless,
 		status="pending_plan"
 	)
 	db.add(session)

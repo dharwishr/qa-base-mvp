@@ -299,12 +299,14 @@ class CDPRunner(BaseRunner):
         screenshot_dir: str = "data/screenshots/runs",
         on_step_start: StepStartCallback | None = None,
         on_step_complete: StepCompleteCallback | None = None,
+        cdp_url: str | None = None,
     ):
         super().__init__(headless, screenshot_dir, on_step_start, on_step_complete)
 
         self._session: BrowserSession | None = None
         self._page: Page | None = None
         self._session_id: str | None = None
+        self._cdp_url = cdp_url  # Remote browser CDP URL
 
     async def __aenter__(self) -> "CDPRunner":
         await self._setup()
@@ -314,10 +316,17 @@ class CDPRunner(BaseRunner):
         await self._teardown()
 
     async def _setup(self):
-        """Initialize browser using BrowserSession."""
+        """Initialize browser using BrowserSession - connect to remote or launch local."""
         logger.info("Initializing CDP browser via BrowserSession...")
 
-        self._session = BrowserSession(headless=self.headless)
+        if self._cdp_url:
+            # Connect to remote browser via CDP URL
+            logger.info(f"Connecting to remote browser via CDP: {self._cdp_url}")
+            self._session = BrowserSession(cdp_url=self._cdp_url)
+        else:
+            # Launch local browser
+            self._session = BrowserSession(headless=self.headless)
+        
         await self._session.start()
 
         # Wait for browser to be ready and get the page
@@ -331,7 +340,7 @@ class CDPRunner(BaseRunner):
         self._page = Page(self._session, target_id, self._session_id)
 
         # Set viewport size
-        await self._page.set_viewport_size(1280, 720)
+        await self._page.set_viewport_size(1920, 1080)
 
         logger.info("CDP browser initialized successfully")
 

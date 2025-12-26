@@ -1,0 +1,16 @@
+services:
+  test-browser:
+    build: .
+    container_name: test-browser
+    ports:
+      - "5900:5900"   # VNC (raw) - connect with VNC client
+      - "7900:7900"   # noVNC (web) - open http://localhost:7900 in browser
+      - "9222:9222"   # CDP - Chrome DevTools Protocol
+      - "9224:9224"   # CDP with CORS - for browser access
+    environment:
+      - SCREEN_WIDTH=1920
+      - SCREEN_HEIGHT=1080
+      - SCREEN_DEPTH=24
+    # Shared memory size for Chrome
+    shm_size: '2gb'
+    restart: unless-stopped

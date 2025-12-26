@@ -1,0 +1,498 @@
+"""
+Browser Router - API endpoints for browser session management and live viewing.
+
+Endpoints:
+- POST /browser/sessions - Create a new browser session
+- GET /browser/sessions - List active browser sessions
+- GET /browser/sessions/{session_id} - Get session details
+- DELETE /browser/sessions/{session_id} - Stop a browser session
+- WebSocket /browser/sessions/{session_id}/cdp - CDP proxy
+- WebSocket /browser/sessions/{session_id}/vnc - VNC WebSocket proxy
+- GET /browser/sessions/{session_id}/view - noVNC viewer HTML
+"""
+
+import asyncio
+import logging
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
+import httpx
+import websockets
+
+from app.services.browser_orchestrator import (
+    BrowserOrchestrator,
+    BrowserSession,
+    BrowserPhase,
+    BrowserSessionStatus,
+    get_orchestrator,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/browser", tags=["browser"])
+
+
+# ============================================
+# Request/Response Schemas
+# ============================================
+
+class CreateBrowserSessionRequest(BaseModel):
+    """Request to create a new browser session."""
+    phase: str = Field(..., description="Phase: 'analysis' or 'execution'")
+    test_session_id: str | None = Field(None, description="Test session ID for analysis")
+    test_run_id: str | None = Field(None, description="Test run ID for execution")
+
+
+class BrowserSessionResponse(BaseModel):
+    """Response for a browser session."""
+    id: str
+    phase: str
+    status: str
+    cdp_url: str | None = None
+    novnc_url: str | None = None
+    live_view_url: str | None = None
+    created_at: str
+    expires_at: str | None = None
+    test_session_id: str | None = None
+    test_run_id: str | None = None
+    error_message: str | None = None
+
+    @classmethod
+    def from_session(cls, session: BrowserSession, request: Request | None = None) -> "BrowserSessionResponse":
+        """Create response from BrowserSession."""
+        # Build live view URL based on request
+        live_view_url = None
+        novnc_url = None
+        
+        if request and session.is_active:
+            base_url = str(request.base_url).rstrip("/")
+            live_view_url = f"{base_url}/browser/sessions/{session.id}/view"
+            
+            # Build browser-accessible noVNC URL using the request host
+            if session.novnc_port:
+                # Use the same host as the API request, but with the noVNC port
+                request_host = request.headers.get("host", "localhost").split(":")[0]
+                novnc_url = f"http://{request_host}:{session.novnc_port}/?autoconnect=true&resize=scale"
+        
+        return cls(
+            id=session.id,
+            phase=session.phase.value,
+            status=session.status.value,
+            cdp_url=session.cdp_url,
+            novnc_url=novnc_url or session.novnc_url,
+            live_view_url=live_view_url,
+            created_at=session.created_at.isoformat(),
+            expires_at=session.expires_at.isoformat() if session.expires_at else None,
+            test_session_id=session.test_session_id,
+            test_run_id=session.test_run_id,
+            error_message=session.error_message,
+        )
+
+
+# ============================================
+# REST Endpoints
+# ============================================
+
+@router.post("/sessions", response_model=BrowserSessionResponse)
+async def create_browser_session(
+    request_body: CreateBrowserSessionRequest,
+    request: Request,
+):
+    """Create a new isolated browser session."""
+    try:
+        phase = BrowserPhase(request_body.phase.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid phase: {request_body.phase}. Must be 'analysis' or 'execution'"
+        )
+    
+    orchestrator = get_orchestrator()
+    
+    try:
+        session = await orchestrator.create_session(
+            phase=phase,
+            test_session_id=request_body.test_session_id,
+            test_run_id=request_body.test_run_id,
+        )
+        return BrowserSessionResponse.from_session(session, request)
+    except Exception as e:
+        logger.error(f"Failed to create browser session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sessions", response_model=list[BrowserSessionResponse])
+async def list_browser_sessions(
+    request: Request,
+    phase: str | None = None,
+    active_only: bool = True,
+):
+    """List browser sessions."""
+    orchestrator = get_orchestrator()
+    
+    browser_phase = None
+    if phase:
+        try:
+            browser_phase = BrowserPhase(phase.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid phase: {phase}. Must be 'analysis' or 'execution'"
+            )
+    
+    sessions = await orchestrator.list_sessions(phase=browser_phase, active_only=active_only)
+    return [BrowserSessionResponse.from_session(s, request) for s in sessions]
+
+
+@router.get("/sessions/{session_id}", response_model=BrowserSessionResponse)
+async def get_browser_session(session_id: str, request: Request):
+    """Get browser session details."""
+    orchestrator = get_orchestrator()
+    session = await orchestrator.get_session(session_id)
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Browser session not found")
+    
+    return BrowserSessionResponse.from_session(session, request)
+
+
+@router.delete("/sessions/{session_id}")
+async def stop_browser_session(session_id: str):
+    """Stop and remove a browser session."""
+    orchestrator = get_orchestrator()
+    success = await orchestrator.stop_session(session_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Browser session not found")
+    
+    return {"status": "stopped", "session_id": session_id}
+
+
+# ============================================
+# CDP WebSocket Proxy
+# ============================================
+
+@router.websocket("/sessions/{session_id}/cdp")
+async def cdp_websocket_proxy(websocket: WebSocket, session_id: str):
+    """
+    Proxy WebSocket connection to browser's CDP endpoint.
+    
+    Used by browser-use and Playwright to control the browser.
+    """
+    await websocket.accept()
+    
+    orchestrator = get_orchestrator()
+    session = await orchestrator.get_session(session_id)
+    
+    if not session or not session.is_active:
+        await websocket.close(code=4004, reason="Session not found or not active")
+        return
+    
+    if not session.cdp_url:
+        await websocket.close(code=4004, reason="CDP not available")
+        return
+    
+    # Update session status
+    session.status = BrowserSessionStatus.CONNECTED
+    
+    logger.info(f"CDP proxy connecting to {session.cdp_url}")
+    
+    try:
+        async with websockets.connect(session.cdp_url) as cdp_ws:
+            async def client_to_cdp():
+                """Forward messages from client to CDP."""
+                try:
+                    while True:
+                        data = await websocket.receive_text()
+                        await cdp_ws.send(data)
+                except WebSocketDisconnect:
+                    logger.debug("Client disconnected from CDP proxy")
+                except Exception as e:
+                    logger.error(f"Error forwarding to CDP: {e}")
+
+            async def cdp_to_client():
+                """Forward messages from CDP to client."""
+                try:
+                    async for message in cdp_ws:
+                        if isinstance(message, str):
+                            await websocket.send_text(message)
+                        else:
+                            await websocket.send_bytes(message)
+                except Exception as e:
+                    logger.error(f"Error forwarding from CDP: {e}")
+
+            # Run both directions concurrently
+            await asyncio.gather(
+                client_to_cdp(),
+                cdp_to_client(),
+                return_exceptions=True
+            )
+            
+    except websockets.exceptions.ConnectionClosed:
+        logger.debug("CDP connection closed")
+    except Exception as e:
+        logger.error(f"CDP proxy error: {e}")
+    finally:
+        session.status = BrowserSessionStatus.READY
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ============================================
+# VNC WebSocket Proxy (for noVNC)
+# ============================================
+
+@router.websocket("/sessions/{session_id}/vnc")
+async def vnc_websocket_proxy(websocket: WebSocket, session_id: str):
+    """
+    Proxy WebSocket connection to browser's VNC/websockify endpoint.
+    
+    Used by noVNC client for live browser viewing.
+    """
+    await websocket.accept()
+    
+    orchestrator = get_orchestrator()
+    session = await orchestrator.get_session(session_id)
+    
+    if not session or not session.is_active:
+        await websocket.close(code=4004, reason="Session not found or not active")
+        return
+    
+    if not session.novnc_port:
+        await websocket.close(code=4004, reason="VNC not available")
+        return
+    
+    # noVNC uses websockify on the same port as HTTP
+    vnc_ws_url = f"ws://{session.novnc_host}:{session.novnc_port}/websockify"
+    
+    logger.info(f"VNC proxy connecting to {vnc_ws_url}")
+    
+    try:
+        async with websockets.connect(vnc_ws_url, subprotocols=["binary"]) as vnc_ws:
+            async def client_to_vnc():
+                """Forward messages from client to VNC."""
+                try:
+                    while True:
+                        data = await websocket.receive_bytes()
+                        await vnc_ws.send(data)
+                except WebSocketDisconnect:
+                    logger.debug("Client disconnected from VNC proxy")
+                except Exception as e:
+                    logger.error(f"Error forwarding to VNC: {e}")
+
+            async def vnc_to_client():
+                """Forward messages from VNC to client."""
+                try:
+                    async for message in vnc_ws:
+                        if isinstance(message, bytes):
+                            await websocket.send_bytes(message)
+                        else:
+                            await websocket.send_text(message)
+                except Exception as e:
+                    logger.error(f"Error forwarding from VNC: {e}")
+
+            await asyncio.gather(
+                client_to_vnc(),
+                vnc_to_client(),
+                return_exceptions=True
+            )
+            
+    except websockets.exceptions.ConnectionClosed:
+        logger.debug("VNC connection closed")
+    except Exception as e:
+        logger.error(f"VNC proxy error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ============================================
+# noVNC HTTP Proxy (for static assets)
+# ============================================
+
+@router.get("/sessions/{session_id}/novnc/{path:path}")
+async def novnc_http_proxy(session_id: str, path: str):
+    """Proxy HTTP requests to noVNC static files."""
+    orchestrator = get_orchestrator()
+    session = await orchestrator.get_session(session_id)
+    
+    if not session or not session.is_active:
+        raise HTTPException(status_code=404, detail="Session not found or not active")
+    
+    if not session.novnc_port:
+        raise HTTPException(status_code=503, detail="noVNC not available")
+    
+    target_url = f"http://{session.novnc_host}:{session.novnc_port}/{path}"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(target_url, timeout=10)
+            
+            # Determine content type
+            content_type = resp.headers.get("content-type", "application/octet-stream")
+            
+            from fastapi.responses import Response
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=content_type,
+            )
+        except Exception as e:
+            logger.error(f"noVNC proxy error: {e}")
+            raise HTTPException(status_code=502, detail="Failed to proxy to noVNC")
+
+
+# ============================================
+# Live Browser View (HTML page with embedded noVNC)
+# ============================================
+
+# VNC password for the browser container (matches VNC_PASS in browser_orchestrator.py)
+VNC_PASSWORD = "qabase"
+
+@router.get("/sessions/{session_id}/view", response_class=HTMLResponse)
+async def browser_view(session_id: str, request: Request):
+    """
+    Serve an HTML page with embedded noVNC client for live browser viewing.
+    
+    This page embeds the container's built-in noVNC interface via iframe.
+    """
+    orchestrator = get_orchestrator()
+    session = await orchestrator.get_session(session_id)
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Browser session not found")
+    
+    if not session.is_active:
+        return HTMLResponse(
+            content=f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Browser Session - {session_id[:8]}</title>
+                <style>
+                    body {{ font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f5f5f5; }}
+                    .message {{ text-align: center; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                    .status {{ color: #666; margin-top: 1rem; }}
+                </style>
+            </head>
+            <body>
+                <div class="message">
+                    <h2>Browser Session Unavailable</h2>
+                    <p class="status">Status: {session.status.value}</p>
+                    {f'<p class="error" style="color: red;">{session.error_message}</p>' if session.error_message else ''}
+                </div>
+            </body>
+            </html>
+            """,
+            status_code=200,
+        )
+    
+    # Build URL to container's noVNC interface using the request host for browser access
+    request_host = request.headers.get("host", "localhost").split(":")[0]
+    novnc_url = f"http://{request_host}:{session.novnc_port}/?autoconnect=true&resize=scale"
+    
+    # Serve a page that embeds the noVNC interface in an iframe
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Live Browser - {session_id[:8]}</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ 
+                font-family: system-ui, -apple-system, sans-serif;
+                background: #1a1a2e;
+                color: white;
+                overflow: hidden;
+            }}
+            .header {{
+                background: #16213e;
+                padding: 0.5rem 1rem;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                border-bottom: 1px solid #0f3460;
+                height: 48px;
+            }}
+            .header h1 {{
+                font-size: 1rem;
+                font-weight: 500;
+            }}
+            .status {{
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }}
+            .status-dot {{
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #4caf50;
+            }}
+            .controls {{
+                display: flex;
+                gap: 0.5rem;
+            }}
+            .btn {{
+                padding: 0.25rem 0.75rem;
+                border: 1px solid #0f3460;
+                background: #16213e;
+                color: white;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 0.875rem;
+                text-decoration: none;
+            }}
+            .btn:hover {{
+                background: #1a3a5c;
+            }}
+            #vnc-frame {{
+                width: 100%;
+                height: calc(100vh - 48px);
+                border: none;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Live Browser View</h1>
+            <div class="status">
+                <span class="status-dot"></span>
+                <span>Connected</span>
+            </div>
+            <div class="controls">
+                <button class="btn" onclick="toggleFullscreen()">Fullscreen</button>
+                <a class="btn" href="{novnc_url}" target="_blank">Open in New Tab</a>
+                <button class="btn" onclick="reload()">Reload</button>
+            </div>
+        </div>
+        <iframe id="vnc-frame" src="{novnc_url}" allow="fullscreen"></iframe>
+        
+        <script>
+            function toggleFullscreen() {{
+                const frame = document.getElementById('vnc-frame');
+                if (document.fullscreenElement) {{
+                    document.exitFullscreen();
+                }} else {{
+                    frame.requestFullscreen();
+                }}
+            }}
+            
+            function reload() {{
+                const frame = document.getElementById('vnc-frame');
+                frame.src = frame.src;
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content)

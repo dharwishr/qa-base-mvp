@@ -39,6 +39,7 @@ from app.schemas import (
 from app.services.script_recorder import PlaywrightStep, ScriptRecorder
 from app.services.base_runner import StepResult
 from app.services.runner_factory import create_runner, RunnerType
+from app.services.browser_orchestrator import get_orchestrator, BrowserPhase
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +312,8 @@ async def run_websocket(websocket: WebSocket, run_id: str, db: Session = Depends
 	"""WebSocket endpoint for live run updates."""
 	await websocket.accept()
 	
+	remote_session = None
+	
 	try:
 		run = db.query(TestRun).filter(TestRun.id == run_id).first()
 		if not run:
@@ -326,6 +329,29 @@ async def run_websocket(websocket: WebSocket, run_id: str, db: Session = Depends
 		run.status = "running"
 		run.started_at = datetime.utcnow()
 		db.commit()
+		
+		# Create remote browser session for live view
+		cdp_url = None
+		try:
+			orchestrator = get_orchestrator()
+			remote_session = await orchestrator.create_session(
+				phase=BrowserPhase.EXECUTION,
+				test_run_id=run_id,
+			)
+			cdp_url = remote_session.cdp_url
+			
+			# Send live view URL to frontend
+			await websocket.send_json({
+				"type": "browser_session_started",
+				"session_id": remote_session.id,
+				"cdp_url": cdp_url,
+				"live_view_url": f"/browser/sessions/{remote_session.id}/view",
+			})
+			
+			logger.info(f"Created remote browser session for run: {remote_session.id}")
+			
+		except Exception as e:
+			logger.warning(f"Failed to create remote browser, using headless: {e}")
 		
 		# Define callbacks
 		async def on_step_start(step_index: int, step: PlaywrightStep):
@@ -362,12 +388,13 @@ async def run_websocket(websocket: WebSocket, run_id: str, db: Session = Depends
 		# Create steps from JSON
 		steps = [PlaywrightStep(**step) for step in script.steps_json]
 
-		# Run the script using the appropriate runner
+		# Run the script using the appropriate runner (with remote CDP if available)
 		async with create_runner(
 			runner_type=runner_type,
 			headless=True,
 			on_step_start=on_step_start,
 			on_step_complete=on_step_complete,
+			cdp_url=cdp_url,
 		) as runner:
 			result = await runner.run(steps, run_id)
 		
@@ -394,6 +421,15 @@ async def run_websocket(websocket: WebSocket, run_id: str, db: Session = Depends
 		except Exception:
 			pass
 	finally:
+		# Clean up remote browser session
+		if remote_session:
+			try:
+				orchestrator = get_orchestrator()
+				await orchestrator.stop_session(remote_session.id)
+				logger.info(f"Stopped remote browser session: {remote_session.id}")
+			except Exception as e:
+				logger.error(f"Error stopping remote browser session: {e}")
+		
 		try:
 			await websocket.close()
 		except Exception:

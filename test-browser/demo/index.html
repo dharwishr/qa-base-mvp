@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Browser - CDP Control Panel</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Test Browser - CDP Control Panel</h1>
+        <div class="status">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">Disconnected</span>
+        </div>
+    </header>
+
+    <main>
+        <aside class="controls">
+            <section class="control-section">
+                <h2>Connection</h2>
+                <div class="form-group">
+                    <label for="cdpUrl">CDP URL</label>
+                    <input type="text" id="cdpUrl" value="http://localhost:9222" placeholder="http://localhost:9222">
+                    <small style="color: #888; font-size: 0.7rem;">Uses CORS proxy on port 9224</small>
+                </div>
+                <button id="connectBtn" class="btn btn-primary">Connect to CDP</button>
+            </section>
+
+            <section class="control-section">
+                <h2>Navigation</h2>
+                <div class="form-group">
+                    <label for="urlInput">URL</label>
+                    <input type="text" id="urlInput" placeholder="https://example.com">
+                </div>
+                <button id="navigateBtn" class="btn" disabled>Navigate</button>
+            </section>
+
+            <section class="control-section">
+                <h2>Click Element</h2>
+                <div class="form-group">
+                    <label for="clickSelector">CSS Selector</label>
+                    <input type="text" id="clickSelector" placeholder="button, #submit, .link">
+                </div>
+                <button id="clickBtn" class="btn" disabled>Click</button>
+            </section>
+
+            <section class="control-section">
+                <h2>Type Text</h2>
+                <div class="form-group">
+                    <label for="typeSelector">CSS Selector</label>
+                    <input type="text" id="typeSelector" placeholder="input, #email, .search">
+                </div>
+                <div class="form-group">
+                    <label for="typeText">Text</label>
+                    <input type="text" id="typeText" placeholder="Hello World">
+                </div>
+                <button id="typeBtn" class="btn" disabled>Type</button>
+            </section>
+
+            <section class="control-section">
+                <h2>Screenshot</h2>
+                <button id="screenshotBtn" class="btn" disabled>Take Screenshot</button>
+                <div id="screenshotPreview" class="screenshot-preview"></div>
+            </section>
+        </aside>
+
+        <div class="browser-container">
+            <div class="browser-header">
+                <span>Live Browser View</span>
+                <div class="browser-actions">
+                    <button id="refreshVnc" class="btn-icon" title="Refresh VNC">Refresh</button>
+                    <a href="http://localhost:7900/vnc.html?autoconnect=true" target="_blank" class="btn-icon" title="Open in new tab">New Tab</a>
+                </div>
+            </div>
+            <iframe
+                id="vncFrame"
+                class="browser-frame"
+                src="http://localhost:7900/vnc.html?autoconnect=true&resize=scale&reconnect=true&reconnect_delay=1000"
+                allow="fullscreen"
+            ></iframe>
+        </div>
+    </main>
+
+    <footer>
+        <div class="log-container">
+            <div class="log-header">
+                <h3>Action Log</h3>
+                <button id="clearLog" class="btn-small">Clear</button>
+            </div>
+            <div id="actionLog" class="action-log"></div>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

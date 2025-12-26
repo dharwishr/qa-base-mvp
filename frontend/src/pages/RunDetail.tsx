@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck, Code, Copy, Check } from "lucide-react"
+import { ArrowLeft, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck, Code, Copy, Check, Monitor } from "lucide-react"
 import { runsApi, scriptsApi, getScreenshotUrl, getRunWebSocketUrl } from "@/services/api"
 import type { TestRun, RunStep, WSRunMessage, PlaywrightScript } from "@/types/scripts"
 import { getAuthToken } from "@/contexts/AuthContext"
 import { generatePlaywrightCode } from "@/utils/playwrightCodeGen"
+import LiveBrowserView from "@/components/LiveBrowserView"
 
 const STATUS_COLORS: Record<string, string> = {
     'pending': 'bg-gray-100 text-gray-700 border-gray-200',
@@ -65,6 +66,7 @@ export default function RunDetail() {
     const [expandedHealing, setExpandedHealing] = useState<string | null>(null)
     const [showCode, setShowCode] = useState(false)
     const [copied, setCopied] = useState(false)
+    const [browserSession, setBrowserSession] = useState<{ id: string; liveViewUrl: string } | null>(null)
     const wsRef = useRef<WebSocket | null>(null)
 
     const fetchRun = async () => {
@@ -119,7 +121,13 @@ export default function RunDetail() {
             try {
                 const message: WSRunMessage = JSON.parse(event.data)
                 
-                if (message.type === 'run_step_completed') {
+                if (message.type === 'browser_session_started') {
+                    // Live browser session started
+                    setBrowserSession({
+                        id: message.session_id,
+                        liveViewUrl: message.live_view_url,
+                    })
+                } else if (message.type === 'run_step_completed') {
                     const step = message.step
                     setSteps(prev => {
                         const existing = prev.findIndex(s => s.step_index === step.step_index)
@@ -133,6 +141,8 @@ export default function RunDetail() {
                     setSelectedStep(step)
                 } else if (message.type === 'run_completed') {
                     setRun(message.run)
+                    // Clear browser session on completion
+                    setBrowserSession(null)
                 } else if (message.type === 'error') {
                     setError(message.message)
                 }
@@ -299,6 +309,8 @@ export default function RunDetail() {
                 </div>
             )}
 
+
+
             {/* Steps and Screenshot */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Steps List */}
@@ -396,20 +408,53 @@ export default function RunDetail() {
                     </div>
                 </div>
 
-                {/* Screenshot */}
+                {/* Live Browser View (when running) OR Screenshot (when complete) */}
                 <div className="rounded-lg border bg-card shadow-sm">
-                    <div className="border-b px-4 py-3">
-                        <h2 className="font-semibold">
-                            Screenshot
-                            {selectedStep && (
-                                <span className="text-muted-foreground font-normal ml-2">
-                                    Step {selectedStep.step_index + 1}
-                                </span>
+                    <div className="border-b px-4 py-3 flex items-center justify-between">
+                        <h2 className="font-semibold flex items-center gap-2">
+                            {run?.status === 'running' && browserSession ? (
+                                <>
+                                    <Monitor className="h-5 w-5 text-green-500" />
+                                    Live Browser
+                                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded animate-pulse font-normal">
+                                        Connected
+                                    </span>
+                                </>
+                            ) : run?.status === 'running' ? (
+                                <>
+                                    <Monitor className="h-5 w-5 text-yellow-500" />
+                                    Live Browser
+                                    <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+                                </>
+                            ) : (
+                                <>
+                                    Screenshot
+                                    {selectedStep && (
+                                        <span className="text-muted-foreground font-normal">
+                                            Step {selectedStep.step_index + 1}
+                                        </span>
+                                    )}
+                                </>
                             )}
                         </h2>
                     </div>
                     <div className="p-4">
-                        {selectedStep?.screenshot_path ? (
+                        {run?.status === 'running' ? (
+                            browserSession ? (
+                                <LiveBrowserView
+                                    sessionId={browserSession.id}
+                                    liveViewUrl={browserSession.liveViewUrl}
+                                    className="min-h-[400px]"
+                                />
+                            ) : (
+                                <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
+                                    <div className="text-center">
+                                        <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+                                        <p className="text-muted-foreground">Waiting for browser session...</p>
+                                    </div>
+                                </div>
+                            )
+                        ) : selectedStep?.screenshot_path ? (
                             <img
                                 src={getScreenshotUrl(selectedStep.screenshot_path)}
                                 alt={`Step ${selectedStep.step_index + 1} screenshot`}

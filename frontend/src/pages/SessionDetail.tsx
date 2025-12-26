@@ -1,9 +1,11 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Bot } from "lucide-react"
+import { ArrowLeft, Bot, Monitor, RefreshCw } from "lucide-react"
 import StepList, { type TestStep as DisplayTestStep } from "@/components/analysis/StepList"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
+import LiveBrowserView from "@/components/LiveBrowserView"
 import { analysisApi, getScreenshotUrl } from "@/services/api"
+import { getAuthToken } from "@/contexts/AuthContext"
 import type { TestSession, LlmModel } from "@/types/analysis"
 
 const STATUS_COLORS: Record<string, string> = {
@@ -11,6 +13,7 @@ const STATUS_COLORS: Record<string, string> = {
     'plan_ready': 'bg-blue-100 text-blue-700',
     'approved': 'bg-purple-100 text-purple-700',
     'running': 'bg-yellow-100 text-yellow-700',
+    'queued': 'bg-orange-100 text-orange-700',
     'completed': 'bg-green-100 text-green-700',
     'failed': 'bg-red-100 text-red-700',
 }
@@ -20,6 +23,7 @@ const STATUS_LABELS: Record<string, string> = {
     'plan_ready': 'Plan Ready',
     'approved': 'Approved',
     'running': 'Running',
+    'queued': 'Queued',
     'completed': 'Completed',
     'failed': 'Failed',
 }
@@ -31,6 +35,12 @@ const LLM_LABELS: Record<LlmModel, string> = {
     'gemini-3.0-flash': 'Gemini 3.0 Flash',
     'gemini-3.0-pro': 'Gemini 3.0 Pro',
     'gemini-2.5-computer-use': 'Gemini 2.5 Computer Use',
+}
+
+interface BrowserSessionInfo {
+    id: string
+    liveViewUrl?: string
+    novncUrl?: string
 }
 
 function formatDate(dateString: string): string {
@@ -51,7 +61,10 @@ export default function SessionDetail() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [selectedStepId, setSelectedStepId] = useState<string | number | null>(null)
+    const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null)
+    const pollRef = useRef<number | null>(null)
 
+    // Fetch session data
     useEffect(() => {
         if (!sessionId) return
 
@@ -77,6 +90,100 @@ export default function SessionDetail() {
         fetchSession()
     }, [sessionId])
 
+    // Poll for updates when running/queued
+    useEffect(() => {
+        if (!sessionId || !session) return
+        
+        const isActive = session.status === 'running' || session.status === 'queued'
+        if (!isActive) {
+            if (pollRef.current) {
+                clearInterval(pollRef.current)
+                pollRef.current = null
+            }
+            return
+        }
+
+        const pollUpdates = async () => {
+            try {
+                const data = await analysisApi.getSession(sessionId)
+                setSession(data)
+                
+                if (data.steps && data.steps.length > 0) {
+                    const lastStep = data.steps[data.steps.length - 1]
+                    setSelectedStepId(lastStep.id)
+                }
+                
+                // Stop polling when complete
+                if (data.status !== 'running' && data.status !== 'queued') {
+                    if (pollRef.current) {
+                        clearInterval(pollRef.current)
+                        pollRef.current = null
+                    }
+                    setBrowserSession(null)
+                }
+            } catch (e) {
+                console.error('Error polling session:', e)
+            }
+        }
+
+        pollRef.current = window.setInterval(pollUpdates, 2000)
+
+        return () => {
+            if (pollRef.current) {
+                clearInterval(pollRef.current)
+                pollRef.current = null
+            }
+        }
+    }, [sessionId, session?.status])
+
+    // Listen for browser session via polling the browser API
+    useEffect(() => {
+        if (!sessionId || !session) return
+        
+        const isActive = session.status === 'running' || session.status === 'queued'
+        if (!isActive) return
+
+        const checkBrowserSession = async () => {
+            try {
+                const response = await fetch(
+                    `${import.meta.env.VITE_API_URL}/browser/sessions?phase=analysis&active_only=true`,
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${getAuthToken()}`,
+                        },
+                    }
+                )
+                if (response.ok) {
+                    const sessions = await response.json()
+                    const matching = sessions.find((s: any) => s.test_session_id === sessionId)
+                    if (matching) {
+                        setBrowserSession({
+                            id: matching.id,
+                            liveViewUrl: `/browser/sessions/${matching.id}/view`,
+                            novncUrl: matching.novnc_url,
+                        })
+                    }
+                }
+            } catch (e) {
+                console.error('Error checking browser session:', e)
+            }
+        }
+
+        checkBrowserSession()
+        const interval = setInterval(checkBrowserSession, 3000)
+
+        return () => clearInterval(interval)
+    }, [sessionId, session?.status])
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (pollRef.current) {
+                clearInterval(pollRef.current)
+            }
+        }
+    }, [])
+
     // Convert steps to display format
     const displaySteps: DisplayTestStep[] = (session?.steps || []).map((step) => ({
         ...step,
@@ -95,6 +202,9 @@ export default function SessionDetail() {
     const handleStepSelect = (step: DisplayTestStep) => {
         setSelectedStepId(step.id)
     }
+
+    // Check if session is actively running
+    const isRunning = session?.status === 'running' || session?.status === 'queued'
 
     if (loading) {
         return (
@@ -153,6 +263,7 @@ export default function SessionDetail() {
                         <div className="space-y-2">
                             <div className="flex items-center gap-2">
                                 <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-100 text-gray-700'}`}>
+                                    {isRunning && <RefreshCw className="h-3 w-3 mr-1 animate-spin" />}
                                     {STATUS_LABELS[session.status] || session.status}
                                 </span>
                                 <span className="text-xs text-muted-foreground">
@@ -189,14 +300,49 @@ export default function SessionDetail() {
                         <span className="text-sm text-muted-foreground">
                             Model: {LLM_LABELS[session.llm_model] || session.llm_model}
                         </span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${session.headless ? 'bg-gray-100 text-gray-600' : 'bg-blue-100 text-blue-600'}`}>
+                            {session.headless ? 'Headless' : 'Live Browser'}
+                        </span>
+                        {isRunning && !session.headless && browserSession && (
+                            <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600">
+                                <Monitor className="h-3.5 w-3.5" />
+                                Connected
+                            </span>
+                        )}
                     </div>
 
-                    {/* Screenshot Preview */}
-                    <BrowserPreview
-                        screenshotUrl={screenshotUrl}
-                        currentUrl={selectedStep?.url}
-                        pageTitle={selectedStep?.page_title}
-                    />
+                    {/* 
+                        Headless mode: Always show screenshots (live during execution, history after)
+                        Non-headless mode: Show live browser during execution, screenshots in history
+                    */}
+                    {isRunning && !session.headless ? (
+                        // Non-headless running: Show live browser
+                        browserSession ? (
+                            <div className="flex-1 p-4">
+                                <LiveBrowserView
+                                    sessionId={browserSession.id}
+                                    liveViewUrl={browserSession.liveViewUrl}
+                                    novncUrl={browserSession.novncUrl}
+                                    className="h-full"
+                                />
+                            </div>
+                        ) : (
+                            <div className="flex-1 flex items-center justify-center">
+                                <div className="text-center">
+                                    <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-3 text-muted-foreground" />
+                                    <p className="text-sm text-muted-foreground">Starting browser...</p>
+                                    <p className="text-xs text-muted-foreground mt-1">This may take a moment</p>
+                                </div>
+                            </div>
+                        )
+                    ) : (
+                        // Headless mode OR completed: Show screenshots
+                        <BrowserPreview
+                            screenshotUrl={screenshotUrl}
+                            currentUrl={selectedStep?.url}
+                            pageTitle={selectedStep?.page_title}
+                        />
+                    )}
                 </div>
             </div>
         </div>

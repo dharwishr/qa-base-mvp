@@ -11,6 +11,10 @@ class CreateSessionRequest(BaseModel):
 		default="gemini-2.5-flash",
 		description="LLM model for browser automation: browser-use-llm | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use"
 	)
+	headless: bool = Field(
+		default=True,
+		description="If True (default), run in headless mode with screenshots only. If False, show live browser view."
+	)
 
 
 # Response schemas
@@ -62,6 +66,7 @@ class TestSessionResponse(BaseModel):
 	id: str
 	prompt: str
 	llm_model: str
+	headless: bool = True
 	status: str
 	celery_task_id: str | None = None
 	created_at: datetime

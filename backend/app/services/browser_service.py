@@ -16,6 +16,12 @@ from sqlalchemy.orm import Session
 from app.models import StepAction, TestPlan, TestSession, TestStep, PlaywrightScript
 from app.schemas import StepActionResponse, TestStepResponse, WSCompleted, WSError, WSStepCompleted, WSStepStarted
 from app.services.script_recorder import start_recording, stop_recording, ScriptRecorder
+from app.services.browser_orchestrator import (
+	get_orchestrator,
+	BrowserSession as OrchestratorSession,
+	BrowserPhase,
+	BrowserSessionStatus,
+)
 
 if TYPE_CHECKING:
 	from browser_use.agent.service import Agent
@@ -23,6 +29,9 @@ if TYPE_CHECKING:
 	from browser_use.llm.base import BaseChatModel
 
 logger = logging.getLogger(__name__)
+
+# Flag to enable/disable remote browser orchestration
+USE_REMOTE_BROWSER = True
 
 
 def get_llm_for_model(llm_model: str) -> "BaseChatModel":
@@ -56,6 +65,7 @@ class BrowserService:
 		self.session = session
 		self.websocket = websocket
 		self.current_step_number = 0
+		self.browser_session_id: str | None = None  # Remote browser session ID
 
 	async def send_ws_message(self, message: dict[str, Any]) -> None:
 		"""Send a message through the WebSocket."""
@@ -209,6 +219,9 @@ class BrowserService:
 	async def execute(self, plan: TestPlan, max_steps: int = 20) -> None:
 		"""Execute the test plan using browser-use."""
 		recorder: ScriptRecorder | None = None
+		browser_session = None
+		remote_session: OrchestratorSession | None = None
+		
 		try:
 			# Update session status
 			self.session.status = "running"
@@ -230,8 +243,57 @@ class BrowserService:
 			llm = get_llm_for_model(self.session.llm_model)
 			logger.info(f"Using LLM model: {self.session.llm_model}")
 
-			# Initialize browser session (headless mode for Docker/server)
-			browser_session = BrowserSession(headless=True)
+			# Determine browser mode based on session.headless setting
+			use_headless = getattr(self.session, 'headless', True)
+			logger.info(f"Browser mode: {'headless' if use_headless else 'live browser'}")
+
+			# Initialize browser session based on headless setting
+			if not use_headless:
+				# Non-headless mode: use remote browser with live view
+				try:
+					orchestrator = get_orchestrator()
+					remote_session = await orchestrator.create_session(
+						phase=BrowserPhase.ANALYSIS,
+						test_session_id=self.session.id,
+					)
+					self.browser_session_id = remote_session.id
+					
+					# Send live view URL to frontend
+					await self.send_ws_message({
+						"type": "browser_session_started",
+						"session_id": remote_session.id,
+						"cdp_url": remote_session.cdp_url,
+						"live_view_url": f"/browser/sessions/{remote_session.id}/view",
+						"headless": False,
+					})
+					
+					logger.info(f"Created remote browser session: {remote_session.id}, CDP: {remote_session.cdp_url}")
+					
+					# Connect to remote browser via CDP with 1920x1080 viewport
+					browser_session = BrowserSession(
+						cdp_url=remote_session.cdp_url,
+						viewport={'width': 1920, 'height': 1080}
+					)
+					
+				except Exception as e:
+					logger.warning(f"Failed to create remote browser, falling back to local headless: {e}")
+					browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
+					# Notify frontend we're falling back to headless
+					await self.send_ws_message({
+						"type": "browser_session_started",
+						"session_id": None,
+						"headless": True,
+						"fallback": True,
+					})
+			else:
+				# Headless mode: use local headless browser (faster, no live view)
+				browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
+				# Notify frontend we're in headless mode (screenshots only)
+				await self.send_ws_message({
+					"type": "browser_session_started",
+					"session_id": None,
+					"headless": True,
+				})
 
 			# Create agent
 			agent = Agent(
@@ -286,10 +348,19 @@ class BrowserService:
 		finally:
 			# Clean up browser session
 			try:
-				if "browser_session" in locals():
+				if browser_session:
 					await browser_session.stop()
 			except Exception as e:
 				logger.error(f"Error stopping browser session: {e}")
+			
+			# Clean up remote browser session
+			if remote_session:
+				try:
+					orchestrator = get_orchestrator()
+					await orchestrator.stop_session(remote_session.id)
+					logger.info(f"Stopped remote browser session: {remote_session.id}")
+				except Exception as e:
+					logger.error(f"Error stopping remote browser session: {e}")
 
 	def _save_recorded_script(self, recorder: ScriptRecorder) -> None:
 		"""Save the recorded script to the database."""
@@ -324,6 +395,7 @@ class BrowserServiceSync:
 		self.db = db
 		self.session = session
 		self.current_step_number = 0
+		self.browser_session_id: str | None = None  # Remote browser session ID
 
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
@@ -426,6 +498,9 @@ class BrowserServiceSync:
 	async def execute(self, plan: TestPlan, max_steps: int = 20) -> dict:
 		"""Execute the test plan using browser-use."""
 		recorder: ScriptRecorder | None = None
+		browser_session = None
+		remote_session: OrchestratorSession | None = None
+		
 		try:
 			# Update session status
 			self.session.status = "running"
@@ -447,8 +522,41 @@ class BrowserServiceSync:
 			llm = get_llm_for_model(self.session.llm_model)
 			logger.info(f"Using LLM model: {self.session.llm_model}")
 
-			# Initialize browser session (headless mode for Docker/server)
-			browser_session = BrowserSession(headless=True)
+			# Determine browser mode based on session.headless setting
+			use_headless = getattr(self.session, 'headless', True)
+			logger.info(f"Browser mode: {'headless' if use_headless else 'live browser'}")
+
+			# Variable for remote session cleanup
+			remote_session = None
+
+			# Initialize browser session based on headless setting
+			if not use_headless:
+				# Non-headless mode: use test-browser container with live VNC view
+				try:
+					orchestrator = get_orchestrator()
+					remote_session = await orchestrator.create_session(
+						phase=BrowserPhase.ANALYSIS,
+						test_session_id=self.session.id,
+					)
+					self.browser_session_id = remote_session.id
+					logger.info(f"Created remote browser session: {remote_session.id}, CDP: {remote_session.cdp_url}")
+					
+					# Connect browser-use to the browser via CDP directly
+					cdp_url = remote_session.cdp_url
+					if not cdp_url:
+						raise Exception("CDP URL not available from remote session")
+					
+					logger.info(f"Connecting to browser via CDP: {cdp_url}")
+					browser_session = BrowserSession(
+						cdp_url=cdp_url,
+						viewport={'width': 1920, 'height': 1080}
+					)
+				except Exception as e:
+					logger.warning(f"Failed to create remote browser, falling back to local headless: {e}")
+					browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
+			else:
+				# Headless mode: use local headless browser (faster, no live view)
+				browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
 
 			# Create agent
 			agent = Agent(
@@ -484,6 +592,7 @@ class BrowserServiceSync:
 			return {
 				"success": success,
 				"total_steps": len(history.history),
+				"browser_session_id": remote_session.id if remote_session else None,
 			}
 
 		except Exception as e:
@@ -498,10 +607,19 @@ class BrowserServiceSync:
 		finally:
 			# Clean up browser session
 			try:
-				if "browser_session" in locals():
+				if browser_session:
 					await browser_session.stop()
 			except Exception as e:
 				logger.error(f"Error stopping browser session: {e}")
+			
+			# Clean up remote browser session (Docker container)
+			if remote_session:
+				try:
+					orchestrator = get_orchestrator()
+					await orchestrator.stop_session(remote_session.id)
+					logger.info(f"Stopped remote browser session: {remote_session.id}")
+				except Exception as e:
+					logger.error(f"Error stopping remote browser session: {e}")
 
 	def _save_recorded_script(self, recorder: ScriptRecorder) -> None:
 		"""Save the recorded script to the database."""

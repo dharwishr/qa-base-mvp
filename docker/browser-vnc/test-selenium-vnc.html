@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live Browser Test - Selenium Chrome</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #1a1a2e;
+            color: white;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: #16213e;
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #0f3460;
+        }
+        .header h1 { font-size: 1.2rem; font-weight: 500; }
+        .status { display: flex; align-items: center; gap: 0.5rem; }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .info { font-size: 0.875rem; color: #888; }
+        .container { flex: 1; display: flex; flex-direction: column; }
+        .browser-frame {
+            flex: 1;
+            border: none;
+            background: #000;
+        }
+        .controls {
+            background: #16213e;
+            padding: 0.75rem 1rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            border-top: 1px solid #0f3460;
+        }
+        .btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid #0f3460;
+            background: #1a3a5c;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            text-decoration: none;
+        }
+        .btn:hover { background: #245280; }
+        .endpoints {
+            display: flex;
+            gap: 2rem;
+            font-size: 0.8rem;
+            color: #888;
+        }
+        .endpoints code {
+            background: #0f3460;
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🖥️ Live Browser Test - Selenium Chrome</h1>
+        <div class="status">
+            <span class="status-dot"></span>
+            <span>Container Running</span>
+        </div>
+        <div class="info">
+            Port: noVNC=17901, Selenium=14445
+        </div>
+    </div>
+    
+    <div class="container">
+        <iframe 
+            id="vnc-frame"
+            class="browser-frame" 
+            src="http://localhost:17901/?autoconnect=true&resize=scale"
+            allow="fullscreen"
+        ></iframe>
+    </div>
+    
+    <div class="controls">
+        <button class="btn" onclick="reloadFrame()">🔄 Reload VNC</button>
+        <a class="btn" href="http://localhost:17901/?autoconnect=true" target="_blank">🔗 Open in New Tab</a>
+        
+        <div class="endpoints">
+            <span>noVNC: <code>http://localhost:17901</code></span>
+            <span>Selenium: <code>http://localhost:14445</code></span>
+        </div>
+    </div>
+    
+    <script>
+        function reloadFrame() {
+            const frame = document.getElementById('vnc-frame');
+            frame.src = frame.src;
+        }
+    </script>
+</body>
+</html>

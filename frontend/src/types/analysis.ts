@@ -50,6 +50,7 @@ export interface TestSession {
   id: string;
   prompt: string;
   llm_model: LlmModel;
+  headless: boolean;
   status: SessionStatus;
   celery_task_id: string | null;
   created_at: string;
@@ -116,4 +117,13 @@ export interface WSPong {
   type: 'pong';
 }
 
-export type WSMessage = WSStepStarted | WSStepCompleted | WSCompleted | WSError | WSPong;
+export interface WSBrowserSessionStarted {
+  type: 'browser_session_started';
+  session_id: string | null;
+  cdp_url?: string;
+  live_view_url?: string;
+  headless: boolean;
+  fallback?: boolean;
+}
+
+export type WSMessage = WSStepStarted | WSStepCompleted | WSCompleted | WSError | WSPong | WSBrowserSessionStarted;

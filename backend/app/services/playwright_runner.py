@@ -137,6 +137,7 @@ class PlaywrightRunner(BaseRunner):
 		screenshot_dir: str = "data/screenshots/runs",
 		on_step_start: StepStartCallback | None = None,
 		on_step_complete: StepCompleteCallback | None = None,
+		cdp_url: str | None = None,
 	):
 		super().__init__(headless, screenshot_dir, on_step_start, on_step_complete)
 
@@ -144,6 +145,7 @@ class PlaywrightRunner(BaseRunner):
 		self._browser: Browser | None = None
 		self._context: BrowserContext | None = None
 		self._page: Page | None = None
+		self._cdp_url = cdp_url  # Remote browser CDP URL
 
 	async def __aenter__(self) -> "PlaywrightRunner":
 		await self._setup()
@@ -153,14 +155,36 @@ class PlaywrightRunner(BaseRunner):
 		await self._teardown()
 	
 	async def _setup(self):
-		"""Initialize browser."""
+		"""Initialize browser - connect to remote CDP or launch local."""
 		logger.info("Initializing Playwright browser...")
 		self._playwright = await async_playwright().start()
-		self._browser = await self._playwright.chromium.launch(headless=self.headless)
-		self._context = await self._browser.new_context(
-			viewport={"width": 1280, "height": 720}
-		)
-		self._page = await self._context.new_page()
+		
+		if self._cdp_url:
+			# Connect to remote browser via CDP
+			logger.info(f"Connecting to remote browser via CDP: {self._cdp_url}")
+			self._browser = await self._playwright.chromium.connect_over_cdp(self._cdp_url)
+			# Get existing context or create new one
+			contexts = self._browser.contexts
+			if contexts:
+				self._context = contexts[0]
+				pages = self._context.pages
+				if pages:
+					self._page = pages[0]
+				else:
+					self._page = await self._context.new_page()
+			else:
+				self._context = await self._browser.new_context(
+					viewport={"width": 1920, "height": 1080}
+				)
+				self._page = await self._context.new_page()
+		else:
+			# Launch local browser
+			self._browser = await self._playwright.chromium.launch(headless=self.headless)
+			self._context = await self._browser.new_context(
+				viewport={"width": 1920, "height": 1080}
+			)
+			self._page = await self._context.new_page()
+		
 		logger.info("Browser initialized successfully")
 	
 	async def _teardown(self):

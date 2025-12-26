@@ -57,3 +57,38 @@ now using browser-use i want to create a test case analysis module
 now i want to build a system that analyzed test cases can be run multiple times, but the problem is i dont want to run this as a browser-use task or ai assisted. which will cost more token. instead i want to run each step as a script or playwiright scirpt with live screenshots and each step result
 how should i do this? 
 keep that in mind that i want to create a auto heal system on top of this test run without ai that if the test run ffails in a step i want to cerate a system that can heal the issue and continue the test run
+
+
+now i want to integrate live browser to frontend while runnig test case analysis and test case running
+- i think both test case analysis as well as test case running is using cdp protocol to control browser (even bdp possible for playwirght as well if user choose playwright in test case run)
+- so create a python based browser orchestrator that creates isolated browser instance inside a contianer and shares internal cdp url to backend test case analysis and test case running
+- this browser orchestrator should be able to create multiple isolated browser instances and share cdp urls to backend test case analysis and test case running
+- i think isolcated browsers instance can be run inside a custom docker cotainer which is pre configured with all required dependencies and browser
+- to show user live browser in frontend, i think we can use novnc or search for simialr kinda technology
+
+
+is live browser viewrs showed in screenshot area in frontend? for test case analysis and test case running
+
+live browser is not correclty showing in frontend
+- wait for browser to be ready
+- wait for browser to be ready in the frontend as well
+- then run the test case analysis
+- maybe give users to show headless and non headless mode (headless mode will only show screenshots, non headless mode will show live browser)
+- make headless mode default and no need to wait load browser in frontend
+- non headless mode should show live browser in frontend and wait for browser to be ready then execute steps
+- also make sure that each run is isolated and not reusing same browser instance, after test case analysis and test case running is completed, that unique brower contianer should be removed
+
+
+
+even selected live mode in test case analysis, live browser is not showing.
+in test case run, live browser is throwing this error Request URL
+https://cdn.jsdelivr.net/npm/@nicholashaynes/novnc@1.4.0/lib/rfb.js
+Request Method
+GET
+Status Code
+404 Not Found
+Remote Address
+[2a04:4e42:400::485]:443
+Referrer Policy
+strict-origin-when-cro
+

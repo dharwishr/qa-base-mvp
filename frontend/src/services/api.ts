@@ -52,14 +52,14 @@ export const analysisApi = {
   },
 
   /**
-   * Create a new test session with the given prompt and LLM model.
+   * Create a new test session with the given prompt, LLM model, and headless option.
    * This will also generate a plan using Gemini.
    */
-  async createSession(prompt: string, llmModel: LlmModel = 'gemini-2.5-flash'): Promise<TestSession> {
+  async createSession(prompt: string, llmModel: LlmModel = 'gemini-2.5-flash', headless: boolean = true): Promise<TestSession> {
     const response = await fetch(`${API_BASE}/api/analysis/sessions`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ prompt, llm_model: llmModel }),
+      body: JSON.stringify({ prompt, llm_model: llmModel, headless }),
     });
     return handleResponse<TestSession>(response);
   },

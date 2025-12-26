@@ -56,6 +56,10 @@ services:
     volumes:
       - backend_data:/app/data
       - screenshots:/app/data/screenshots
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for browser orchestration
+    networks:
+      - default
+      - qa-browser-network
     depends_on:
       redis:
         condition: service_healthy
@@ -87,6 +91,10 @@ services:
     volumes:
       - backend_data:/app/data
       - screenshots:/app/data/screenshots
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for browser orchestration
+    networks:
+      - default
+      - qa-browser-network
     depends_on:
       redis:
         condition: service_healthy
@@ -115,6 +123,18 @@ services:
       retries: 3
     command: redis-server --appendonly yes
 
+  # ============================================
+  # Test Browser - Chrome + CDP + VNC
+  # ============================================
+  # Pre-built image for browser orchestrator to spawn sessions from
+  test-browser:
+    build:
+      context: ./test-browser
+      dockerfile: Dockerfile
+    image: qa-base-test-browser:latest
+    profiles:
+      - build-only  # Only built, not run as a service (orchestrator spawns containers dynamically)
+
 # ============================================
 # Volumes
 # ============================================
@@ -125,3 +145,13 @@ volumes:
     driver: local
   screenshots:
     driver: local
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  default:
+    driver: bridge
+  qa-browser-network:
+    external: true
+    name: qa-browser-network

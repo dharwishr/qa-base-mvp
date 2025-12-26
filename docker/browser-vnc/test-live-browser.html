@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live Browser Test</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #1a1a2e;
+            color: white;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: #16213e;
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #0f3460;
+        }
+        .header h1 { font-size: 1.2rem; font-weight: 500; }
+        .status { display: flex; align-items: center; gap: 0.5rem; }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #f44;
+        }
+        .status-dot.connected { background: #4caf50; animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .container { flex: 1; display: flex; flex-direction: column; }
+        .browser-frame {
+            flex: 1;
+            border: none;
+            background: #000;
+        }
+        .controls {
+            background: #16213e;
+            padding: 0.75rem 1rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+            border-top: 1px solid #0f3460;
+        }
+        .btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid #0f3460;
+            background: #1a3a5c;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            text-decoration: none;
+        }
+        .btn:hover { background: #245280; }
+        .btn.primary { background: #2563eb; border-color: #1d4ed8; }
+        .btn.primary:hover { background: #1d4ed8; }
+        .btn.danger { background: #dc2626; border-color: #b91c1c; }
+        .btn.danger:hover { background: #b91c1c; }
+        .info {
+            font-size: 0.8rem;
+            color: #888;
+            margin-left: auto;
+        }
+        .info code {
+            background: #0f3460;
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #888;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 1rem;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🖥️ Live Browser Test</h1>
+        <div class="status">
+            <span id="status-dot" class="status-dot"></span>
+            <span id="status-text">Not Connected</span>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <span>Click "Start Browser" to launch a container...</span>
+        </div>
+        <iframe 
+            id="vnc-frame"
+            class="browser-frame" 
+            style="display: none;"
+            allow="fullscreen"
+        ></iframe>
+    </div>
+    
+    <div class="controls">
+        <button id="start-btn" class="btn primary" onclick="startBrowser()">▶️ Start Browser</button>
+        <button id="stop-btn" class="btn danger" onclick="stopBrowser()" disabled>⏹️ Stop Browser</button>
+        <button class="btn" onclick="reloadFrame()">🔄 Reload View</button>
+        <a id="new-tab-link" class="btn" href="#" target="_blank" style="display:none;">🔗 Open in New Tab</a>
+        
+        <div class="info">
+            <span id="session-info"></span>
+        </div>
+    </div>
+    
+    <script>
+        let currentSessionId = null;
+        const API_URL = 'http://localhost:8000';
+        
+        async function startBrowser() {
+            const startBtn = document.getElementById('start-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            const loading = document.getElementById('loading');
+            
+            startBtn.disabled = true;
+            loading.innerHTML = '<div class="spinner"></div><span>Starting browser container...</span>';
+            
+            try {
+                const response = await fetch(`${API_URL}/browser/sessions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phase: 'analysis' })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+                
+                const session = await response.json();
+                currentSessionId = session.id;
+                
+                document.getElementById('session-info').innerHTML = 
+                    `Session: <code>${session.id.substring(0, 8)}...</code> | noVNC: <code>:${session.novnc_url?.split(':').pop() || 'N/A'}</code>`;
+                
+                // Wait a moment for VNC to be fully ready
+                loading.innerHTML = '<div class="spinner"></div><span>Waiting for VNC to be ready...</span>';
+                await new Promise(r => setTimeout(r, 3000));
+                
+                // Show the VNC iframe
+                const frame = document.getElementById('vnc-frame');
+                const newTabLink = document.getElementById('new-tab-link');
+                
+                // Use the live_view_url from the session or construct from novnc_url
+                const vncUrl = session.live_view_url || `${session.novnc_url}/?autoconnect=true&resize=scale`;
+                frame.src = vncUrl;
+                frame.style.display = 'block';
+                loading.style.display = 'none';
+                
+                newTabLink.href = vncUrl;
+                newTabLink.style.display = 'inline-block';
+                
+                stopBtn.disabled = false;
+                updateStatus(true);
+                
+            } catch (error) {
+                console.error('Error starting browser:', error);
+                loading.innerHTML = `<span style="color: #f44;">Error: ${error.message}</span>`;
+                startBtn.disabled = false;
+            }
+        }
+        
+        async function stopBrowser() {
+            if (!currentSessionId) return;
+            
+            const stopBtn = document.getElementById('stop-btn');
+            const startBtn = document.getElementById('start-btn');
+            stopBtn.disabled = true;
+            
+            try {
+                await fetch(`${API_URL}/browser/sessions/${currentSessionId}`, {
+                    method: 'DELETE'
+                });
+            } catch (error) {
+                console.error('Error stopping browser:', error);
+            }
+            
+            currentSessionId = null;
+            document.getElementById('vnc-frame').style.display = 'none';
+            document.getElementById('loading').style.display = 'flex';
+            document.getElementById('loading').innerHTML = 
+                '<div class="spinner"></div><span>Click "Start Browser" to launch a container...</span>';
+            document.getElementById('new-tab-link').style.display = 'none';
+            document.getElementById('session-info').innerHTML = '';
+            
+            startBtn.disabled = false;
+            updateStatus(false);
+        }
+        
+        function reloadFrame() {
+            const frame = document.getElementById('vnc-frame');
+            if (frame.src) {
+                frame.src = frame.src;
+            }
+        }
+        
+        function updateStatus(connected) {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            
+            if (connected) {
+                dot.classList.add('connected');
+                text.textContent = 'Connected';
+            } else {
+                dot.classList.remove('connected');
+                text.textContent = 'Not Connected';
+            }
+        }
+    </script>
+</body>
+</html>

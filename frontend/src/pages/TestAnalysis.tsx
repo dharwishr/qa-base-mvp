@@ -2,10 +2,18 @@ import { useState, useEffect } from "react"
 import StepList, { type TestStep as DisplayTestStep } from "@/components/analysis/StepList"
 import ConfigPanel from "@/components/analysis/ConfigPanel"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
+import LiveBrowserView from "@/components/LiveBrowserView"
 import ActionFooter from "@/components/analysis/ActionFooter"
 import { analysisApi, getScreenshotUrl } from "@/services/api"
+import { getAuthToken } from "@/contexts/AuthContext"
 import { useAnalysisPolling } from "@/hooks/useAnalysisPolling"
 import type { TestSession, LlmModel } from "@/types/analysis"
+
+interface BrowserSessionInfo {
+    id: string
+    liveViewUrl?: string
+    novncUrl?: string
+}
 
 type AnalysisState = 'idle' | 'generating_plan' | 'plan_ready' | 'executing' | 'completed' | 'failed' | 'stopped'
 
@@ -16,6 +24,8 @@ export default function TestAnalysis() {
     const [error, setError] = useState<string | null>(null)
     const [selectedStepId, setSelectedStepId] = useState<string | number | null>(null)
     const [selectedLlm, setSelectedLlm] = useState<LlmModel>('gemini-2.5-flash')
+    const [headless, setHeadless] = useState(true) // Default to headless mode
+    const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null)
 
     // Polling hook for step updates (replaces WebSocket)
     const {
@@ -75,6 +85,52 @@ export default function TestAnalysis() {
         }
     }, [pollingError])
 
+    // Poll for browser session when executing in non-headless mode
+    useEffect(() => {
+        if (!session?.id || headless || !isExecuting) {
+            setBrowserSession(null)
+            return
+        }
+
+        const checkBrowserSession = async () => {
+            try {
+                const response = await fetch(
+                    `${import.meta.env.VITE_API_URL}/browser/sessions?phase=analysis&active_only=true`,
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${getAuthToken()}`,
+                        },
+                    }
+                )
+                if (response.ok) {
+                    const sessions = await response.json()
+                    const matching = sessions.find((s: { test_session_id: string }) => s.test_session_id === session.id)
+                    if (matching) {
+                        setBrowserSession({
+                            id: matching.id,
+                            liveViewUrl: `/browser/sessions/${matching.id}/view`,
+                            novncUrl: matching.novnc_url,
+                        })
+                    }
+                }
+            } catch (e) {
+                console.error('Error checking browser session:', e)
+            }
+        }
+
+        checkBrowserSession()
+        const interval = setInterval(checkBrowserSession, 3000)
+
+        return () => clearInterval(interval)
+    }, [session?.id, headless, isExecuting])
+
+    // Clear browser session when execution completes
+    useEffect(() => {
+        if (!isExecuting) {
+            setBrowserSession(null)
+        }
+    }, [isExecuting])
+
     // Generate plan from prompt
     const handleGenerate = async () => {
         if (!prompt.trim()) return
@@ -83,7 +139,7 @@ export default function TestAnalysis() {
         setAnalysisState('generating_plan')
 
         try {
-            const newSession = await analysisApi.createSession(prompt, selectedLlm)
+            const newSession = await analysisApi.createSession(prompt, selectedLlm, headless)
             setSession(newSession)
 
             if (newSession.status === 'plan_ready') {
@@ -313,13 +369,34 @@ export default function TestAnalysis() {
                     <ConfigPanel
                         selectedLlm={selectedLlm}
                         onLlmChange={setSelectedLlm}
+                        headless={headless}
+                        onHeadlessChange={setHeadless}
                         disabled={analysisState !== 'idle'}
                     />
-                    <BrowserPreview
-                        screenshotUrl={screenshotUrl}
-                        currentUrl={selectedStep?.url}
-                        pageTitle={selectedStep?.page_title}
-                    />
+                    {/* Show live browser during execution in non-headless mode */}
+                    {isExecuting && !headless ? (
+                        browserSession ? (
+                            <LiveBrowserView
+                                sessionId={browserSession.id}
+                                liveViewUrl={browserSession.liveViewUrl}
+                                novncUrl={browserSession.novncUrl}
+                                className="flex-1"
+                            />
+                        ) : (
+                            <div className="flex-1 flex items-center justify-center">
+                                <div className="text-center">
+                                    <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
+                                    <p className="text-sm text-muted-foreground">Starting live browser...</p>
+                                </div>
+                            </div>
+                        )
+                    ) : (
+                        <BrowserPreview
+                            screenshotUrl={screenshotUrl}
+                            currentUrl={selectedStep?.url}
+                            pageTitle={selectedStep?.page_title}
+                        />
+                    )}
                 </div>
             </div>
 

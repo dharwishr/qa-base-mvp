@@ -318,7 +318,7 @@ class DOMWatchdog(BaseWatchdog):
 				except Exception as e:
 					self.logger.debug(f'Failed to get page info from CDP for empty page: {e}, using fallback')
 					# Use default viewport dimensions
-					viewport = self.browser_session.browser_profile.viewport or {'width': 1280, 'height': 720}
+					viewport = self.browser_session.browser_profile.viewport or {'width': 1920, 'height': 1080}
 					page_info = PageInfo(
 						viewport_width=viewport['width'],
 						viewport_height=viewport['height'],
@@ -438,7 +438,7 @@ class DOMWatchdog(BaseWatchdog):
 					f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: Failed to get page info from CDP: {e}, using fallback'
 				)
 				# Fallback to default viewport dimensions
-				viewport = self.browser_session.browser_profile.viewport or {'width': 1280, 'height': 720}
+				viewport = self.browser_session.browser_profile.viewport or {'width': 1920, 'height': 1080}
 				page_info = PageInfo(
 					viewport_width=viewport['width'],
 					viewport_height=viewport['height'],

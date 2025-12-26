@@ -22,6 +22,7 @@ class TestSession(Base):
 	llm_model: Mapped[str] = mapped_column(
 		String(50), nullable=False, default="gemini-2.5-flash"
 	)  # browser-use-llm | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use
+	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # True = headless (default), False = live browser
 	status: Mapped[str] = mapped_column(
 		String(20), nullable=False, default="pending_plan"
 	)  # pending_plan | plan_ready | approved | queued | running | completed | failed
@@ -172,6 +173,7 @@ class TestRun(Base):
 	runner_type: Mapped[str] = mapped_column(
 		String(20), nullable=False, default="playwright"
 	)  # playwright | cdp
+	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # True = headless (default), False = live browser
 	started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 	completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 	total_steps: Mapped[int] = mapped_column(Integer, default=0)
