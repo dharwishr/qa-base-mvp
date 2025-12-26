@@ -80,3 +80,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 		raise credentials_exception
 	
 	return User(email=token_data.email)
+
+
+# Alias for use in router dependencies
+require_auth = get_current_user

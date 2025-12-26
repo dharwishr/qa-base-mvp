@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink } from 'lucide-react'
+import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square } from 'lucide-react'
 
 interface LiveBrowserViewProps {
     sessionId: string | null
     liveViewUrl?: string
     novncUrl?: string
     onClose?: () => void
+    onStopBrowser?: () => Promise<void>
     className?: string
 }
 
@@ -14,19 +15,21 @@ export default function LiveBrowserView({
     liveViewUrl,
     novncUrl,
     onClose,
+    onStopBrowser,
     className = ''
 }: LiveBrowserViewProps) {
+    const [isStopping, setIsStopping] = useState(false)
     const [isExpanded, setIsExpanded] = useState(false)
     const [isLoading, setIsLoading] = useState(true)
     const [hasError, setHasError] = useState(false)
     const iframeRef = useRef<HTMLIFrameElement>(null)
 
     // Prefer novncUrl (direct noVNC access) over liveViewUrl (wrapper page)
-    const fullViewUrl = novncUrl 
+    const fullViewUrl = novncUrl
         ? novncUrl
-        : liveViewUrl 
+        : liveViewUrl
             ? `${import.meta.env.VITE_API_URL}${liveViewUrl}`
-            : sessionId 
+            : sessionId
                 ? `${import.meta.env.VITE_API_URL}/browser/sessions/${sessionId}/view`
                 : null
 
@@ -54,6 +57,16 @@ export default function LiveBrowserView({
         }
     }, [fullViewUrl])
 
+    const handleStopBrowser = useCallback(async () => {
+        if (!onStopBrowser || isStopping) return
+        setIsStopping(true)
+        try {
+            await onStopBrowser()
+        } finally {
+            setIsStopping(false)
+        }
+    }, [onStopBrowser, isStopping])
+
     useEffect(() => {
         setIsLoading(true)
         setHasError(false)
@@ -71,7 +84,7 @@ export default function LiveBrowserView({
     }
 
     return (
-        <div className={`rounded-lg border bg-card shadow-sm overflow-hidden ${isExpanded ? 'fixed inset-4 z-50' : ''} ${className}`}>
+        <div className={`rounded-lg border bg-card shadow-sm overflow-hidden flex flex-col ${isExpanded ? 'fixed inset-4 z-50' : ''} ${className}`}>
             {/* Header */}
             <div className="border-b bg-muted/30 px-4 py-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -112,6 +125,16 @@ export default function LiveBrowserView({
                             <Maximize2 className="h-4 w-4" />
                         )}
                     </button>
+                    {onStopBrowser && (
+                        <button
+                            onClick={handleStopBrowser}
+                            disabled={isStopping}
+                            className="p-1.5 rounded hover:bg-red-100 transition-colors disabled:opacity-50"
+                            title="Stop browser session"
+                        >
+                            <Square className={`h-4 w-4 text-red-500 ${isStopping ? 'animate-pulse' : ''}`} />
+                        </button>
+                    )}
                     {onClose && (
                         <button
                             onClick={onClose}
@@ -125,7 +148,7 @@ export default function LiveBrowserView({
             </div>
 
             {/* Browser View */}
-            <div className={`relative ${isExpanded ? 'h-[calc(100%-44px)]' : 'h-[400px]'}`}>
+            <div className={`relative flex-1 min-h-0 ${isExpanded ? '' : ''}`}>
                 {isLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-10">
                         <div className="text-center">
@@ -165,7 +188,7 @@ export default function LiveBrowserView({
 
             {/* Expanded overlay background */}
             {isExpanded && (
-                <div 
+                <div
                     className="fixed inset-0 bg-black/50 -z-10"
                     onClick={() => setIsExpanded(false)}
                 />

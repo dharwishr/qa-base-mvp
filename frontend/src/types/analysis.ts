@@ -40,6 +40,10 @@ export interface TestPlan {
     }>;
   } | null;
   created_at: string;
+  // Approval tracking
+  approval_status: 'pending' | 'approved' | 'rejected';
+  approval_timestamp: string | null;
+  rejection_reason: string | null;
 }
 
 export type LlmModel = 'browser-use-llm' | 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3.0-flash' | 'gemini-3.0-pro' | 'gemini-2.5-computer-use';
@@ -49,6 +53,7 @@ export type SessionStatus = 'pending_plan' | 'plan_ready' | 'approved' | 'queued
 export interface TestSession {
   id: string;
   prompt: string;
+  title: string | null;
   llm_model: LlmModel;
   headless: boolean;
   status: SessionStatus;
@@ -62,6 +67,7 @@ export interface TestSession {
 export interface TestSessionListItem {
   id: string;
   prompt: string;
+  title: string | null;
   llm_model: LlmModel;
   status: SessionStatus;
   created_at: string;
@@ -127,3 +133,25 @@ export interface WSBrowserSessionStarted {
 }
 
 export type WSMessage = WSStepStarted | WSStepCompleted | WSCompleted | WSError | WSPong | WSBrowserSessionStarted;
+
+// Chat message types
+export type ChatMessageType = 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system';
+export type ChatMode = 'plan' | 'act';
+
+export interface ChatMessageCreate {
+  message_type: ChatMessageType;
+  content?: string;
+  mode?: ChatMode;
+}
+
+export interface ChatMessage {
+  id: string;
+  session_id: string;
+  message_type: ChatMessageType;
+  content: string | null;
+  mode: ChatMode | null;
+  sequence_number: number;
+  plan_id: string | null;
+  step_id: string | null;
+  created_at: string;
+}

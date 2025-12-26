@@ -1,4 +1,4 @@
-import type { ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep } from '../types/analysis';
+import type { ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep } from '../types/analysis';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
@@ -186,6 +186,80 @@ export const analysisApi = {
     );
     return handleResponse<{ status: string; message: string }>(response);
   },
+
+  /**
+   * End the browser session for a test session.
+   * This cleans up browser resources while keeping the test session data.
+   */
+  async endBrowserSession(sessionId: string): Promise<{ status: string; message: string }> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/end-browser`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      }
+    );
+    return handleResponse<{ status: string; message: string }>(response);
+  },
+
+  /**
+   * Get all chat messages for a test session.
+   */
+  async getMessages(sessionId: string): Promise<ChatMessage[]> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/messages`,
+      {
+        headers: getAuthHeaders(),
+      }
+    );
+    return handleResponse<ChatMessage[]>(response);
+  },
+
+  /**
+   * Create a new chat message for a test session.
+   */
+  async createMessage(sessionId: string, message: ChatMessageCreate): Promise<ChatMessage> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/messages`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(message),
+      }
+    );
+    return handleResponse<ChatMessage>(response);
+  },
+
+  /**
+   * Reject a plan and allow re-planning.
+   */
+  async rejectPlan(sessionId: string, reason?: string): Promise<TestSession> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/reject`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ reason }),
+      }
+    );
+    return handleResponse<TestSession>(response);
+  },
+
+  /**
+   * Continue an existing session with a new task.
+   * This allows adding more tasks to a completed session without creating a new one.
+   */
+  async continueSession(sessionId: string, prompt: string, llmModel: LlmModel = 'gemini-2.5-flash', mode: 'plan' | 'act' = 'act'): Promise<TestSession> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/continue`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ prompt, llm_model: llmModel, mode }),
+      }
+    );
+    return handleResponse<TestSession>(response);
+  },
 };
 
 /**
@@ -313,4 +387,91 @@ export function getRunWebSocketUrl(runId: string): string {
   return getWsUrl(`/runs/${runId}/ws`);
 }
 
+/**
+ * Discovery API - Module discovery sessions
+ */
+export const discoveryApi = {
+  /**
+   * Create a new discovery session and start crawling.
+   */
+  async createSession(request: {
+    url: string;
+    username?: string;
+    password?: string;
+    max_steps?: number;
+  }): Promise<{ session_id: string; status: string; message: string }> {
+    const response = await fetch(`${API_BASE}/api/discovery/sessions`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * List all discovery sessions.
+   */
+  async listSessions(): Promise<Array<{
+    id: string;
+    url: string;
+    status: string;
+    total_steps: number;
+    duration_seconds: number;
+    module_count: number;
+    created_at: string;
+  }>> {
+    const response = await fetch(`${API_BASE}/api/discovery/sessions`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Get a discovery session with its modules.
+   */
+  async getSession(sessionId: string): Promise<{
+    id: string;
+    url: string;
+    username?: string;
+    max_steps: number;
+    status: string;
+    total_steps: number;
+    duration_seconds: number;
+    error?: string;
+    created_at: string;
+    updated_at: string;
+    modules: Array<{
+      id: string;
+      name: string;
+      url: string;
+      summary: string;
+      created_at: string;
+    }>;
+  }> {
+    const response = await fetch(`${API_BASE}/api/discovery/sessions/${sessionId}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Delete a discovery session.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/discovery/sessions/${sessionId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) {
+      if (response.status === 204) return;
+      if (response.status === 401) {
+        handleUnauthorized();
+        throw new ApiError(401, 'Unauthorized');
+      }
+      await handleResponse(response);
+    }
+  },
+};
+
 export { ApiError };
+

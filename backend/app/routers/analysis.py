@@ -11,9 +11,13 @@ from app.database import get_db
 from app.deps import User, get_current_user
 from app.models import TestPlan, TestSession, TestStep
 from app.schemas import (
+	ChatMessageCreate,
+	ChatMessageResponse,
+	ContinueSessionRequest,
 	CreateSessionRequest,
 	ExecuteResponse,
 	ExecutionLogResponse,
+	RejectPlanRequest,
 	StopResponse,
 	TestPlanResponse,
 	TestSessionDetailResponse,
@@ -27,6 +31,20 @@ from app.services.plan_service import generate_plan
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
+
+
+def generate_title_from_prompt(prompt: str) -> str:
+	"""Generate a short title from the test prompt."""
+	# Take first line or first 50 characters
+	first_line = prompt.split('\n')[0].strip()
+	if len(first_line) > 50:
+		# Find last word boundary before 50 chars
+		truncated = first_line[:50]
+		last_space = truncated.rfind(' ')
+		if last_space > 30:
+			return truncated[:last_space] + '...'
+		return truncated + '...'
+	return first_line
 
 
 @router.get("/sessions", response_model=list[TestSessionListResponse])
@@ -49,6 +67,7 @@ async def list_sessions(
 		result.append(TestSessionListResponse(
 			id=session.id,
 			prompt=session.prompt,
+			title=session.title,
 			llm_model=session.llm_model,
 			status=session.status,
 			created_at=session.created_at,
@@ -65,9 +84,13 @@ async def create_session(
 	current_user: User = Depends(get_current_user),
 ):
 	"""Create a new test session and generate a plan."""
+	# Generate title from prompt
+	title = generate_title_from_prompt(request.prompt)
+
 	# Create session with selected LLM model and headless option
 	session = TestSession(
 		prompt=request.prompt,
+		title=title,
 		llm_model=request.llm_model,
 		headless=request.headless,
 		status="pending_plan"
@@ -99,6 +122,75 @@ async def get_session(
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
+	return session
+
+
+@router.post("/sessions/{session_id}/continue", response_model=TestSessionResponse)
+async def continue_session(
+	session_id: str,
+	request: ContinueSessionRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Continue an existing session with a new task.
+
+	This allows users to add additional tasks to a completed session,
+	keeping all previous steps and data.
+	"""
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Allow continuing from completed, failed, or stopped states
+	if session.status not in ("completed", "failed", "stopped"):
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot continue session in status: {session.status}. "
+				   "Session must be completed, failed, or stopped to continue."
+		)
+
+	# Update session with new prompt (appended to original)
+	session.prompt = f"{session.prompt}\n\n--- Continuation ---\n{request.prompt}"
+	session.llm_model = request.llm_model
+
+	# Create a user message for the continuation
+	create_system_message(db, session_id, f"Continuing with: {request.prompt}")
+
+	if request.mode == "plan":
+		# Generate a new plan for the continuation
+		session.status = "pending_plan"
+		db.commit()
+
+		try:
+			plan = await generate_plan(db, session)
+			db.refresh(session)
+		except Exception as e:
+			logger.error(f"Error generating continuation plan: {e}")
+			session.status = "failed"
+			db.commit()
+			raise HTTPException(status_code=500, detail=f"Failed to generate plan: {str(e)}")
+	else:
+		# Act mode - set status to approved for direct execution
+		# Create an implicit plan from the prompt
+		from datetime import datetime
+
+		# Delete old plan if exists
+		if session.plan:
+			db.delete(session.plan)
+
+		# Create a simple plan for the continuation task
+		plan = TestPlan(
+			session_id=session.id,
+			plan_text=request.prompt,
+			steps_json={"steps": [{"description": request.prompt}]},
+			approval_status="approved",
+			approval_timestamp=datetime.utcnow()
+		)
+		db.add(plan)
+		session.status = "approved"
+		db.commit()
+
+	db.refresh(session)
 	return session
 
 
@@ -164,12 +256,22 @@ async def approve_plan(
 	current_user: User = Depends(get_current_user),
 ):
 	"""Approve a plan and mark session as ready for execution."""
+	from datetime import datetime
+
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
 
 	if session.status != "plan_ready":
 		raise HTTPException(status_code=400, detail=f"Cannot approve plan in status: {session.status}")
+
+	# Update plan approval status
+	if session.plan:
+		session.plan.approval_status = "approved"
+		session.plan.approval_timestamp = datetime.utcnow()
+
+	# Create approval system message
+	create_system_message(db, session_id, "Plan approved. Starting execution...")
 
 	session.status = "approved"
 	db.commit()
@@ -307,6 +409,121 @@ async def clear_session_steps(
 	db.commit()
 
 
+# ============================================
+# Chat Message Endpoints
+# ============================================
+
+@router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageResponse])
+async def get_session_messages(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Get all chat messages for a test session."""
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	return session.messages
+
+
+@router.post("/sessions/{session_id}/messages", response_model=ChatMessageResponse)
+async def create_message(
+	session_id: str,
+	message: ChatMessageCreate,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Create a new chat message for a test session."""
+	from sqlalchemy import func
+	from app.models import ChatMessage
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Get next sequence number
+	max_seq = db.query(func.max(ChatMessage.sequence_number)).filter(
+		ChatMessage.session_id == session_id
+	).scalar() or 0
+
+	db_message = ChatMessage(
+		session_id=session_id,
+		message_type=message.message_type,
+		content=message.content,
+		mode=message.mode,
+		sequence_number=max_seq + 1
+	)
+	db.add(db_message)
+	db.commit()
+	db.refresh(db_message)
+
+	return db_message
+
+
+@router.post("/sessions/{session_id}/reject", response_model=TestSessionResponse)
+async def reject_plan(
+	session_id: str,
+	request: RejectPlanRequest = None,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Reject a plan and allow re-planning."""
+	from app.models import ChatMessage
+	from sqlalchemy import func
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	if session.status != "plan_ready":
+		raise HTTPException(status_code=400, detail=f"Cannot reject plan in status: {session.status}")
+
+	if not session.plan:
+		raise HTTPException(status_code=400, detail="No plan to reject")
+
+	# Update plan approval status
+	reason = request.reason if request else None
+	session.plan.approval_status = "rejected"
+	session.plan.rejection_reason = reason
+
+	# Create rejection message
+	max_seq = db.query(func.max(ChatMessage.sequence_number)).filter(
+		ChatMessage.session_id == session_id
+	).scalar() or 0
+
+	rejection_msg = ChatMessage(
+		session_id=session_id,
+		message_type="system",
+		content=f"Plan rejected. {reason or 'You can describe a new test case.'}",
+		sequence_number=max_seq + 1
+	)
+	db.add(rejection_msg)
+
+	db.commit()
+	db.refresh(session)
+
+	return session
+
+
+def create_system_message(db: Session, session_id: str, content: str) -> None:
+	"""Helper to create a system message for a session."""
+	from sqlalchemy import func
+	from app.models import ChatMessage
+
+	max_seq = db.query(func.max(ChatMessage.sequence_number)).filter(
+		ChatMessage.session_id == session_id
+	).scalar() or 0
+
+	msg = ChatMessage(
+		session_id=session_id,
+		message_type="system",
+		content=content,
+		sequence_number=max_seq + 1
+	)
+	db.add(msg)
+
+
 async def verify_token_from_query(token: str) -> User:
 	"""Verify JWT token passed as query parameter (for img src URLs)."""
 	from jose import JWTError, jwt
@@ -367,6 +584,40 @@ async def get_screenshot(
 		media_type="image/png",
 		filename=screenshot_path.name,
 	)
+
+
+@router.post("/sessions/{session_id}/end-browser")
+async def end_browser_session(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""End the browser session for a test session without ending the test session itself.
+
+	This is called when the user closes the test analysis page to clean up browser resources
+	while keeping the session data intact.
+	"""
+	from app.services.browser_orchestrator import get_orchestrator, BrowserPhase
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	try:
+		orchestrator = get_orchestrator()
+		if orchestrator:
+			# Find and stop browser sessions for this test session
+			browser_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+			for bs in browser_sessions:
+				if bs.test_session_id == session_id:
+					await orchestrator.stop_session(bs.id)
+					logger.info(f"Ended browser session {bs.id} for test session {session_id}")
+					break
+		return {"status": "stopped", "message": "Browser session ended"}
+	except Exception as e:
+		logger.error(f"Error ending browser session for {session_id}: {e}")
+		# Don't raise - browser cleanup is best-effort
+		return {"status": "error", "message": str(e)}
 
 
 # WebSocket connection manager
@@ -436,6 +687,20 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
 				elif command == "ping":
 					await websocket.send_json({"type": "pong"})
+
+				elif command == "inject_command":
+					# Handle command injection during execution
+					content = data.get("content", "")
+					if content:
+						logger.info(f"Received inject_command for session {session_id}: {content}")
+						# Acknowledge receipt
+						await websocket.send_json({
+							"type": "command_received",
+							"content": content,
+							"status": "received"
+						})
+						# TODO: Implement actual command injection to running agent
+						# For now, we just acknowledge the command
 
 			except WebSocketDisconnect:
 				logger.info(f"WebSocket disconnected for session {session_id}")

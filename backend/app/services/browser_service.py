@@ -11,6 +11,7 @@ if _browser_use_path not in sys.path:
 	sys.path.insert(0, _browser_use_path)
 
 from fastapi import WebSocket
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import StepAction, TestPlan, TestSession, TestStep, PlaywrightScript
@@ -64,7 +65,12 @@ class BrowserService:
 		self.db = db
 		self.session = session
 		self.websocket = websocket
-		self.current_step_number = 0
+		# Initialize step counter from max existing step number for this session
+		# This ensures continuation executions don't restart step numbering from 1
+		max_step = db.query(func.max(TestStep.step_number)).filter(
+			TestStep.session_id == session.id
+		).scalar()
+		self.current_step_number = max_step or 0
 		self.browser_session_id: str | None = None  # Remote browser session ID
 
 	async def send_ws_message(self, message: dict[str, Any]) -> None:
@@ -252,31 +258,62 @@ class BrowserService:
 				# Non-headless mode: use remote browser with live view
 				try:
 					orchestrator = get_orchestrator()
-					remote_session = await orchestrator.create_session(
-						phase=BrowserPhase.ANALYSIS,
-						test_session_id=self.session.id,
+
+					# FIRST: Check if browser session already exists for this test session
+					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+					existing_session = next(
+						(s for s in existing_sessions if s.test_session_id == self.session.id),
+						None
 					)
-					self.browser_session_id = remote_session.id
-					
-					# Send live view URL to frontend
-					await self.send_ws_message({
-						"type": "browser_session_started",
-						"session_id": remote_session.id,
-						"cdp_url": remote_session.cdp_url,
-						"live_view_url": f"/browser/sessions/{remote_session.id}/view",
-						"headless": False,
-					})
-					
-					logger.info(f"Created remote browser session: {remote_session.id}, CDP: {remote_session.cdp_url}")
-					
-					# Connect to remote browser via CDP with 1920x1080 viewport
-					browser_session = BrowserSession(
-						cdp_url=remote_session.cdp_url,
-						viewport={'width': 1920, 'height': 1080}
-					)
-					
+
+					if existing_session and existing_session.cdp_url:
+						# REUSE existing browser session
+						logger.info(f"Reusing existing browser session: {existing_session.id}, CDP: {existing_session.cdp_url}")
+						remote_session = existing_session
+						self.browser_session_id = existing_session.id
+
+						# Connect to existing browser via CDP
+						browser_session = BrowserSession(
+							cdp_url=existing_session.cdp_url,
+							viewport={'width': 1920, 'height': 1080}
+						)
+
+						# Send live view URL to frontend (reusing existing session)
+						await self.send_ws_message({
+							"type": "browser_session_started",
+							"session_id": remote_session.id,
+							"cdp_url": remote_session.cdp_url,
+							"live_view_url": f"/browser/sessions/{remote_session.id}/view",
+							"headless": False,
+							"reused": True,
+						})
+					else:
+						# CREATE new browser session (no existing one found)
+						remote_session = await orchestrator.create_session(
+							phase=BrowserPhase.ANALYSIS,
+							test_session_id=self.session.id,
+						)
+						self.browser_session_id = remote_session.id
+
+						# Send live view URL to frontend
+						await self.send_ws_message({
+							"type": "browser_session_started",
+							"session_id": remote_session.id,
+							"cdp_url": remote_session.cdp_url,
+							"live_view_url": f"/browser/sessions/{remote_session.id}/view",
+							"headless": False,
+						})
+
+						logger.info(f"Created new remote browser session: {remote_session.id}, CDP: {remote_session.cdp_url}")
+
+						# Connect to remote browser via CDP with 1920x1080 viewport
+						browser_session = BrowserSession(
+							cdp_url=remote_session.cdp_url,
+							viewport={'width': 1920, 'height': 1080}
+						)
+
 				except Exception as e:
-					logger.warning(f"Failed to create remote browser, falling back to local headless: {e}")
+					logger.warning(f"Failed to create/reuse remote browser, falling back to local headless: {e}")
 					browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
 					# Notify frontend we're falling back to headless
 					await self.send_ws_message({
@@ -346,21 +383,22 @@ class BrowserService:
 			raise
 
 		finally:
-			# Clean up browser session
-			try:
-				if browser_session:
-					await browser_session.stop()
-			except Exception as e:
-				logger.error(f"Error stopping browser session: {e}")
-			
-			# Clean up remote browser session
-			if remote_session:
+			# Clean up local browser session ONLY if headless (no live view)
+			# For remote sessions (non-headless), keep browser alive for reuse
+			if use_headless and browser_session:
 				try:
-					orchestrator = get_orchestrator()
-					await orchestrator.stop_session(remote_session.id)
-					logger.info(f"Stopped remote browser session: {remote_session.id}")
+					await browser_session.stop()
+					logger.info("Stopped local headless browser session")
 				except Exception as e:
-					logger.error(f"Error stopping remote browser session: {e}")
+					logger.error(f"Error stopping browser session: {e}")
+
+			# DO NOT clean up remote browser session - keep it alive for user interaction
+			# Remote session will be cleaned up via:
+			# 1. User clicking "Stop Browser" button
+			# 2. Frontend calling end-browser API on page close
+			# 3. Inactivity timeout (3 minutes, handled by frontend)
+			if remote_session:
+				logger.info(f"Keeping remote browser session alive: {remote_session.id}")
 
 	def _save_recorded_script(self, recorder: ScriptRecorder) -> None:
 		"""Save the recorded script to the database."""
@@ -394,7 +432,12 @@ class BrowserServiceSync:
 	def __init__(self, db: Session, session: TestSession):
 		self.db = db
 		self.session = session
-		self.current_step_number = 0
+		# Initialize step counter from max existing step number for this session
+		# This ensures continuation executions don't restart step numbering from 1
+		max_step = db.query(func.max(TestStep.step_number)).filter(
+			TestStep.session_id == session.id
+		).scalar()
+		self.current_step_number = max_step or 0
 		self.browser_session_id: str | None = None  # Remote browser session ID
 
 	async def on_step_start(self, agent: "Agent") -> None:
@@ -534,25 +577,46 @@ class BrowserServiceSync:
 				# Non-headless mode: use test-browser container with live VNC view
 				try:
 					orchestrator = get_orchestrator()
-					remote_session = await orchestrator.create_session(
-						phase=BrowserPhase.ANALYSIS,
-						test_session_id=self.session.id,
+
+					# FIRST: Check if browser session already exists for this test session
+					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+					existing_session = next(
+						(s for s in existing_sessions if s.test_session_id == self.session.id),
+						None
 					)
-					self.browser_session_id = remote_session.id
-					logger.info(f"Created remote browser session: {remote_session.id}, CDP: {remote_session.cdp_url}")
-					
-					# Connect browser-use to the browser via CDP directly
-					cdp_url = remote_session.cdp_url
-					if not cdp_url:
-						raise Exception("CDP URL not available from remote session")
-					
-					logger.info(f"Connecting to browser via CDP: {cdp_url}")
-					browser_session = BrowserSession(
-						cdp_url=cdp_url,
-						viewport={'width': 1920, 'height': 1080}
-					)
+
+					if existing_session and existing_session.cdp_url:
+						# REUSE existing browser session
+						logger.info(f"Reusing existing browser session: {existing_session.id}, CDP: {existing_session.cdp_url}")
+						remote_session = existing_session
+						self.browser_session_id = existing_session.id
+
+						# Connect to existing browser via CDP
+						browser_session = BrowserSession(
+							cdp_url=existing_session.cdp_url,
+							viewport={'width': 1920, 'height': 1080}
+						)
+					else:
+						# CREATE new browser session (no existing one found)
+						remote_session = await orchestrator.create_session(
+							phase=BrowserPhase.ANALYSIS,
+							test_session_id=self.session.id,
+						)
+						self.browser_session_id = remote_session.id
+						logger.info(f"Created new remote browser session: {remote_session.id}, CDP: {remote_session.cdp_url}")
+
+						# Connect browser-use to the browser via CDP directly
+						cdp_url = remote_session.cdp_url
+						if not cdp_url:
+							raise Exception("CDP URL not available from remote session")
+
+						logger.info(f"Connecting to browser via CDP: {cdp_url}")
+						browser_session = BrowserSession(
+							cdp_url=cdp_url,
+							viewport={'width': 1920, 'height': 1080}
+						)
 				except Exception as e:
-					logger.warning(f"Failed to create remote browser, falling back to local headless: {e}")
+					logger.warning(f"Failed to create/reuse remote browser, falling back to local headless: {e}")
 					browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
 			else:
 				# Headless mode: use local headless browser (faster, no live view)
@@ -605,21 +669,22 @@ class BrowserServiceSync:
 			raise
 
 		finally:
-			# Clean up browser session
-			try:
-				if browser_session:
-					await browser_session.stop()
-			except Exception as e:
-				logger.error(f"Error stopping browser session: {e}")
-			
-			# Clean up remote browser session (Docker container)
-			if remote_session:
+			# Clean up local browser session ONLY if headless (no live view)
+			# For remote sessions (non-headless), keep browser alive for reuse
+			if use_headless and browser_session:
 				try:
-					orchestrator = get_orchestrator()
-					await orchestrator.stop_session(remote_session.id)
-					logger.info(f"Stopped remote browser session: {remote_session.id}")
+					await browser_session.stop()
+					logger.info("Stopped local headless browser session")
 				except Exception as e:
-					logger.error(f"Error stopping remote browser session: {e}")
+					logger.error(f"Error stopping browser session: {e}")
+
+			# DO NOT clean up remote browser session - keep it alive for user interaction
+			# Remote session will be cleaned up via:
+			# 1. User clicking "Stop Browser" button
+			# 2. Frontend calling end-browser API on page close
+			# 3. Inactivity timeout (3 minutes, handled by frontend)
+			if remote_session:
+				logger.info(f"Keeping remote browser session alive: {remote_session.id}")
 
 	def _save_recorded_script(self, recorder: ScriptRecorder) -> None:
 		"""Save the recorded script to the database."""
@@ -627,7 +692,7 @@ class BrowserServiceSync:
 			# Generate a name based on the session prompt
 			prompt_preview = self.session.prompt[:50].replace("\n", " ").strip()
 			script_name = f"Auto: {prompt_preview}"
-			
+
 			script = PlaywrightScript(
 				session_id=self.session.id,
 				name=script_name,

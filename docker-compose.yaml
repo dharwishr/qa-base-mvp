@@ -153,5 +153,5 @@ networks:
   default:
     driver: bridge
   qa-browser-network:
-    external: true
+    driver: bridge
     name: qa-browser-network

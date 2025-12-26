@@ -17,6 +17,19 @@ class CreateSessionRequest(BaseModel):
 	)
 
 
+class ContinueSessionRequest(BaseModel):
+	"""Request to continue an existing session with a new task."""
+	prompt: str = Field(..., min_length=1, description="The new task prompt to continue with")
+	llm_model: str = Field(
+		default="gemini-2.5-flash",
+		description="LLM model for browser automation"
+	)
+	mode: str = Field(
+		default="act",
+		description="Execution mode: 'plan' generates a new plan, 'act' executes directly"
+	)
+
+
 # Response schemas
 class StepActionResponse(BaseModel):
 	id: str
@@ -57,6 +70,10 @@ class TestPlanResponse(BaseModel):
 	plan_text: str
 	steps_json: dict[str, Any] | None = None
 	created_at: datetime
+	# Approval tracking
+	approval_status: str = "pending"
+	approval_timestamp: datetime | None = None
+	rejection_reason: str | None = None
 
 	class Config:
 		from_attributes = True
@@ -65,6 +82,7 @@ class TestPlanResponse(BaseModel):
 class TestSessionResponse(BaseModel):
 	id: str
 	prompt: str
+	title: str | None = None
 	llm_model: str
 	headless: bool = True
 	status: str
@@ -81,6 +99,7 @@ class TestSessionListResponse(BaseModel):
 	"""Response schema for listing sessions with step count."""
 	id: str
 	prompt: str
+	title: str | None = None
 	llm_model: str
 	status: str
 	created_at: datetime
@@ -147,6 +166,40 @@ class ExecutionLogResponse(BaseModel):
 
 	class Config:
 		from_attributes = True
+
+
+# ============================================
+# Chat Message Schemas
+# ============================================
+
+class ChatMessageBase(BaseModel):
+	"""Base schema for chat messages."""
+	message_type: str = Field(..., description="Message type: user | assistant | plan | step | error | system")
+	content: str | None = Field(None, description="Text content for text messages")
+	mode: str | None = Field(None, description="Mode for user messages: plan | act")
+
+
+class ChatMessageCreate(ChatMessageBase):
+	"""Request to create a chat message."""
+	pass
+
+
+class ChatMessageResponse(ChatMessageBase):
+	"""Response for a chat message."""
+	id: str
+	session_id: str
+	sequence_number: int
+	plan_id: str | None = None
+	step_id: str | None = None
+	created_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class RejectPlanRequest(BaseModel):
+	"""Request to reject a plan."""
+	reason: str | None = Field(None, description="Optional reason for rejection")
 
 
 # ============================================

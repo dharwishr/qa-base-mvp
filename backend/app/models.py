@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Boolean
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -19,6 +19,7 @@ class TestSession(Base):
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
 	prompt: Mapped[str] = mapped_column(Text, nullable=False)
+	title: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Auto-generated from first prompt
 	llm_model: Mapped[str] = mapped_column(
 		String(50), nullable=False, default="gemini-2.5-flash"
 	)  # browser-use-llm | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use
@@ -42,6 +43,10 @@ class TestSession(Base):
 	logs: Mapped[list["ExecutionLog"]] = relationship(
 		"ExecutionLog", back_populates="session", cascade="all, delete-orphan"
 	)
+	messages: Mapped[list["ChatMessage"]] = relationship(
+		"ChatMessage", back_populates="session", cascade="all, delete-orphan",
+		order_by="ChatMessage.sequence_number"
+	)
 
 
 class TestPlan(Base):
@@ -56,6 +61,13 @@ class TestPlan(Base):
 	plan_text: Mapped[str] = mapped_column(Text, nullable=False)
 	steps_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=True)
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Approval tracking
+	approval_status: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="pending"
+	)  # pending | approved | rejected
+	approval_timestamp: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 	# Relationships
 	session: Mapped["TestSession"] = relationship("TestSession", back_populates="plan")
@@ -213,3 +225,85 @@ class RunStep(Base):
 
 	# Relationships
 	run: Mapped["TestRun"] = relationship("TestRun", back_populates="run_steps")
+
+
+class ChatMessage(Base):
+	"""Chat message for test analysis session."""
+
+	__tablename__ = "chat_messages"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	session_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_sessions.id"), nullable=False
+	)
+
+	# Message type: 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system'
+	message_type: Mapped[str] = mapped_column(String(20), nullable=False)
+
+	# Content for text messages
+	content: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+	# For user messages: 'plan' | 'act'
+	mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+	# Sequence for ordering
+	sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+	# Optional references for plan/step messages
+	plan_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("test_plans.id"), nullable=True
+	)
+	step_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("test_steps.id"), nullable=True
+	)
+
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Relationships
+	session: Mapped["TestSession"] = relationship("TestSession", back_populates="messages")
+
+
+class DiscoverySession(Base):
+	"""Session for module discovery - crawls a website to identify application modules."""
+
+	__tablename__ = "discovery_sessions"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	url: Mapped[str] = mapped_column(String(2048), nullable=False)  # Target URL to crawl
+	username: Mapped[str | None] = mapped_column(String(256), nullable=True)  # Optional login
+	password: Mapped[str | None] = mapped_column(String(256), nullable=True)
+	max_steps: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+	status: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="pending"
+	)  # pending | queued | running | completed | failed
+	celery_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+	total_steps: Mapped[int] = mapped_column(Integer, default=0)
+	duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+	error: Mapped[str | None] = mapped_column(Text, nullable=True)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	updated_at: Mapped[datetime] = mapped_column(
+		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+	)
+
+	# Relationships
+	modules: Mapped[list["DiscoveredModule"]] = relationship(
+		"DiscoveredModule", back_populates="session", cascade="all, delete-orphan"
+	)
+
+
+class DiscoveredModule(Base):
+	"""A discovered application module from the discovery crawl."""
+
+	__tablename__ = "discovered_modules"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	session_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("discovery_sessions.id"), nullable=False
+	)
+	name: Mapped[str] = mapped_column(String(256), nullable=False)
+	url: Mapped[str] = mapped_column(String(2048), nullable=False)
+	summary: Mapped[str] = mapped_column(Text, nullable=False)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Relationships
+	session: Mapped["DiscoverySession"] = relationship("DiscoverySession", back_populates="modules")

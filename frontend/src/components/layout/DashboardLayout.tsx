@@ -7,7 +7,8 @@ import {
     PlayCircle,
     FileText,
     Boxes,
-    Zap
+    Zap,
+    Compass
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 
@@ -87,6 +88,12 @@ export default function DashboardLayout() {
                         onClick={() => navigate('/scripts')}
                     />
                     <SidebarItem
+                        icon={Compass}
+                        label="Discovery"
+                        active={activePath.startsWith('/discovery')}
+                        onClick={() => navigate('/discovery')}
+                    />
+                    <SidebarItem
                         icon={Settings}
                         label="Settings"
                     />
@@ -106,7 +113,8 @@ export default function DashboardLayout() {
                                 activePath.includes('/test-cases') ? 'Test Cases' :
                                     activePath.includes('/test-analysis') ? 'Test Analysis' :
                                         activePath.includes('/scripts') ? 'Test Scripts' :
-                                            'SmartTester'}
+                                            activePath.includes('/discovery') ? 'Module Discovery' :
+                                                'SmartTester'}
                     </h1>
                 </header>
                 <main className="flex-1 overflow-auto">
