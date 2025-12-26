@@ -155,3 +155,21 @@ export interface ChatMessage {
   step_id: string | null;
   created_at: string;
 }
+
+// Act mode response from single-step execution
+export interface ActModeResponse {
+  success: boolean;
+  action_taken: string | null;
+  thinking: string | null;
+  evaluation: string | null;
+  memory: string | null;
+  next_goal: string | null;
+  result: Array<Record<string, unknown>>;
+  browser_state: {
+    url: string | null;
+    title: string | null;
+  };
+  screenshot_path: string | null;
+  browser_session_id: string | null;
+  error: string | null;
+}

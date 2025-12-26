@@ -34,9 +34,12 @@ export default function ChatInput({
     }
   }, [input]);
 
+  // Determine if input should be completely blocked
+  const isBlocked = disabled || isExecuting;
+
   const handleSend = () => {
     const trimmed = input.trim();
-    if (trimmed && !disabled) {
+    if (trimmed && !isBlocked) {
       onSend(trimmed, mode);
       setInput('');
       if (textareaRef.current) {
@@ -46,15 +49,18 @@ export default function ChatInput({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Block Enter key when executing or disabled
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      if (!isBlocked) {
+        handleSend();
+      }
     }
   };
 
   // Dynamic placeholder based on mode and execution state
   const dynamicPlaceholder = isExecuting
-    ? 'Send additional instructions...'
+    ? 'Waiting for execution to complete...'
     : mode === 'plan'
     ? 'Describe your test case to generate a plan...'
     : 'Describe what you want the browser to do...';
@@ -68,12 +74,12 @@ export default function ChatInput({
           <button
             type="button"
             onClick={() => onModeChange('plan')}
-            disabled={disabled && !isExecuting}
+            disabled={isBlocked}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
               mode === 'plan'
                 ? 'bg-background text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
-            } ${disabled && !isExecuting ? 'opacity-50 cursor-not-allowed' : ''}`}
+            } ${isBlocked ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <FileText className="h-3.5 w-3.5" />
             Plan
@@ -81,19 +87,21 @@ export default function ChatInput({
           <button
             type="button"
             onClick={() => onModeChange('act')}
-            disabled={disabled && !isExecuting}
+            disabled={isBlocked}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
               mode === 'act'
                 ? 'bg-background text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
-            } ${disabled && !isExecuting ? 'opacity-50 cursor-not-allowed' : ''}`}
+            } ${isBlocked ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Zap className="h-3.5 w-3.5" />
             Act
           </button>
         </div>
         <span className="text-xs text-muted-foreground ml-2">
-          {mode === 'plan'
+          {isExecuting
+            ? 'Please wait for execution to complete'
+            : mode === 'plan'
             ? 'Generate a plan first, then execute'
             : 'Execute actions directly'}
         </span>
@@ -108,7 +116,7 @@ export default function ChatInput({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder || dynamicPlaceholder}
-            disabled={disabled && !isExecuting}
+            disabled={isBlocked}
             rows={1}
             className="w-full resize-none rounded-xl border border-input bg-background px-4 py-3 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] max-h-[150px]"
           />
@@ -116,7 +124,7 @@ export default function ChatInput({
         <Button
           size="icon"
           onClick={handleSend}
-          disabled={(disabled && !isExecuting) || !input.trim()}
+          disabled={isBlocked || !input.trim()}
           className="h-11 w-11 rounded-xl flex-shrink-0"
         >
           <Send className="h-4 w-4" />

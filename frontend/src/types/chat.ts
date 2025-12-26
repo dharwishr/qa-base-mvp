@@ -62,6 +62,14 @@ export interface SystemMessage extends BaseMessage {
   content: string;
 }
 
+// Waiting message - shown when message is queued
+export interface WaitingMessage extends BaseMessage {
+  type: 'waiting';
+  content: string;
+  queuePosition: number;
+  queuedMessageId: string;
+}
+
 // Union type for all message types
 export type TimelineMessage =
   | UserMessage
@@ -69,7 +77,22 @@ export type TimelineMessage =
   | PlanMessage
   | StepMessage
   | ErrorMessage
-  | SystemMessage;
+  | SystemMessage
+  | WaitingMessage;
+
+// Queued message awaiting execution
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  mode: ChatMode;
+  timestamp: string;
+}
+
+// Queue failure state for user decision
+export interface QueueFailure {
+  error: string;
+  pendingMessages: QueuedMessage[];
+}
 
 // Chat session state
 export interface ChatSessionState {

@@ -7,6 +7,9 @@ import type {
   TimelineMessage,
   ChatMode,
   PlanStep,
+  QueuedMessage,
+  QueueFailure,
+  WaitingMessage,
 } from '../types/chat';
 
 // Generate UUID with fallback for non-secure contexts (HTTP)
@@ -54,6 +57,9 @@ interface UseChatSessionReturn {
   isGeneratingPlan: boolean;
   isExecuting: boolean;
   isPlanPending: boolean;
+  isBusy: boolean;
+  messageQueue: QueuedMessage[];
+  queueFailure: QueueFailure | null;
   selectedStepId: string | null;
   error: string | null;
 
@@ -65,6 +71,8 @@ interface UseChatSessionReturn {
   stopExecution: () => Promise<void>;
   resetSession: () => void;
   endBrowserSession: () => Promise<void>;
+  clearQueueAndProceed: () => void;
+  processRemainingQueue: () => void;
   setMode: (mode: ChatMode) => void;
   setSelectedLlm: (llm: LlmModel) => void;
   setHeadless: (headless: boolean) => void;
@@ -90,6 +98,13 @@ export function useChatSession(): UseChatSessionReturn {
   const [error, setError] = useState<string | null>(null);
   const [, setPendingPlanId] = useState<string | null>(null);
   const [currentSession, setCurrentSession] = useState<TestSession | null>(null);
+
+  // Queue state for message queuing
+  const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
+  const [queueFailure, setQueueFailure] = useState<QueueFailure | null>(null);
+
+  // Computed busy state
+  const isBusy = isGeneratingPlan || isExecuting || isPlanPending;
 
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
@@ -284,32 +299,54 @@ export function useChatSession(): UseChatSessionReturn {
     return sessionId && ['completed', 'failed', 'stopped'].includes(sessionStatus || '');
   }, [sessionId, sessionStatus]);
 
-  // Send a message (handles both plan and act modes)
-  const sendMessage = useCallback(
-    async (text: string, messageMode: ChatMode) => {
+  // Queue a message when busy
+  const queueMessage = useCallback((text: string, queueMode: ChatMode) => {
+    const queuedMsg: QueuedMessage = {
+      id: generateUUID(),
+      text,
+      mode: queueMode,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessageQueue(prev => [...prev, queuedMsg]);
+
+    // Show waiting message in timeline
+    setMessages(prev => [
+      ...prev,
+      createTimelineMessage<WaitingMessage>('waiting', {
+        content: `Waiting for current task to complete... (Position: ${messageQueue.length + 1})`,
+        queuePosition: messageQueue.length + 1,
+        queuedMessageId: queuedMsg.id,
+      }),
+    ]);
+  }, [messageQueue.length]);
+
+  // Clear queue and proceed (user chose to discard queued messages)
+  const clearQueueAndProceed = useCallback(() => {
+    setMessageQueue([]);
+    setQueueFailure(null);
+    // Remove waiting messages
+    setMessages(prev => prev.filter(m => m.type !== 'waiting'));
+  }, []);
+
+  // Process remaining queue (user chose to continue after failure)
+  const processRemainingQueue = useCallback(() => {
+    setQueueFailure(null);
+    // Queue will be processed by the effect below
+  }, []);
+
+  // Internal function to execute a message (used by both direct calls and queue processing)
+  const executeMessage = useCallback(
+    async (text: string, messageMode: ChatMode, addUserMessage = true) => {
       setError(null);
 
-      // Add user message to timeline
-      const userMessage = createTimelineMessage('user', {
-        content: text,
-        mode: messageMode,
-      });
-      setMessages((prev) => [...prev, userMessage]);
-
-      if (isExecuting) {
-        // If already executing, inject command via WebSocket
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(
-            JSON.stringify({ command: 'inject_command', content: text })
-          );
-          setMessages((prev) => [
-            ...prev,
-            createTimelineMessage('assistant', {
-              content: 'Command received. Processing...',
-            }),
-          ]);
-        }
-        return;
+      // Add user message to timeline if requested
+      if (addUserMessage) {
+        const userMessage = createTimelineMessage('user', {
+          content: text,
+          mode: messageMode,
+        });
+        setMessages((prev) => [...prev, userMessage]);
       }
 
       // Check if we should continue an existing session
@@ -373,15 +410,30 @@ export function useChatSession(): UseChatSessionReturn {
                 content: 'Failed to generate plan',
               }),
             ]);
+            // Handle failure with queue
+            if (messageQueue.length > 0) {
+              setQueueFailure({
+                error: 'Failed to generate plan',
+                pendingMessages: [...messageQueue],
+              });
+            }
           }
         } catch (e) {
           console.error('Error creating/continuing session:', e);
+          const errorMsg = e instanceof Error ? e.message : 'Failed to generate plan';
           setMessages((prev) => [
             ...prev,
             createTimelineMessage('error', {
-              content: e instanceof Error ? e.message : 'Failed to generate plan',
+              content: errorMsg,
             }),
           ]);
+          // Handle failure with queue
+          if (messageQueue.length > 0) {
+            setQueueFailure({
+              error: errorMsg,
+              pendingMessages: [...messageQueue],
+            });
+          }
         } finally {
           setIsGeneratingPlan(false);
         }
@@ -444,16 +496,70 @@ export function useChatSession(): UseChatSessionReturn {
           }
         } catch (e) {
           console.error('Error starting/continuing execution:', e);
+          const errorMsg = e instanceof Error ? e.message : 'Failed to start execution';
           setMessages((prev) => [
             ...prev,
             createTimelineMessage('error', {
-              content: e instanceof Error ? e.message : 'Failed to start execution',
+              content: errorMsg,
             }),
           ]);
+          // Handle failure with queue
+          if (messageQueue.length > 0) {
+            setQueueFailure({
+              error: errorMsg,
+              pendingMessages: [...messageQueue],
+            });
+          }
         }
       }
     },
-    [isExecuting, selectedLlm, headless, startPolling, startBrowserPolling, persistMessage, canContinueSession, sessionId, sessionStatus]
+    [sessionId, selectedLlm, headless, startPolling, startBrowserPolling, persistMessage, canContinueSession, messageQueue]
+  );
+
+  // Send a message (handles both plan and act modes)
+  const sendMessage = useCallback(
+    async (text: string, messageMode: ChatMode) => {
+      // If busy (generating plan or plan pending), queue the message
+      if (isBusy && !isExecuting) {
+        // Add user message to timeline
+        const userMessage = createTimelineMessage('user', {
+          content: text,
+          mode: messageMode,
+        });
+        setMessages((prev) => [...prev, userMessage]);
+
+        // Queue the message
+        queueMessage(text, messageMode);
+        return;
+      }
+
+      if (isExecuting) {
+        // Add user message to timeline
+        const userMessage = createTimelineMessage('user', {
+          content: text,
+          mode: messageMode,
+        });
+        setMessages((prev) => [...prev, userMessage]);
+
+        // If already executing, inject command via WebSocket
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({ command: 'inject_command', content: text })
+          );
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('assistant', {
+              content: 'Command received. Processing...',
+            }),
+          ]);
+        }
+        return;
+      }
+
+      // Not busy, execute immediately
+      await executeMessage(text, messageMode, true);
+    },
+    [isBusy, isExecuting, queueMessage, executeMessage]
   );
 
   // Approve a plan
@@ -481,7 +587,9 @@ export function useChatSession(): UseChatSessionReturn {
         await analysisApi.startExecution(sessionId);
 
         setIsExecuting(true);
-        lastStepCountRef.current = 0;
+        // DON'T reset lastStepCountRef - it should already have the correct count
+        // from previous steps (for continuations) or be 0 (for new sessions).
+        // Resetting to 0 would cause ALL steps to be re-fetched including old ones.
         startPolling();
 
         // Start browser polling if not headless
@@ -651,8 +759,34 @@ export function useChatSession(): UseChatSessionReturn {
     setPendingPlanId(null);
     setSelectedStepId(null);
     setError(null);
+    setMessageQueue([]);
+    setQueueFailure(null);
     lastStepCountRef.current = 0;
   }, [stopPolling, stopBrowserPolling, clearInactivityTimeout]);
+
+  // Effect to process queue when not busy
+  useEffect(() => {
+    const processNextInQueue = async () => {
+      if (messageQueue.length === 0 || isBusy || queueFailure) return;
+
+      const [nextMessage, ...remaining] = messageQueue;
+      setMessageQueue(remaining);
+
+      // Remove waiting message for this queued message
+      setMessages(prev => prev.filter(
+        m => m.type !== 'waiting' ||
+             (m as WaitingMessage).queuedMessageId !== nextMessage.id
+      ));
+
+      // Add user message for the queued message (was already shown when queued)
+      // but we need to execute it now
+      await executeMessage(nextMessage.text, nextMessage.mode, false);
+    };
+
+    if (!isBusy && messageQueue.length > 0 && !queueFailure) {
+      processNextInQueue();
+    }
+  }, [isBusy, messageQueue, queueFailure, executeMessage]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -689,6 +823,9 @@ export function useChatSession(): UseChatSessionReturn {
     isGeneratingPlan,
     isExecuting,
     isPlanPending,
+    isBusy,
+    messageQueue,
+    queueFailure,
     selectedStepId,
     error,
 
@@ -700,6 +837,8 @@ export function useChatSession(): UseChatSessionReturn {
     stopExecution,
     resetSession,
     endBrowserSession,
+    clearQueueAndProceed,
+    processRemainingQueue,
     setMode,
     setSelectedLlm,
     setHeadless,

@@ -317,3 +317,27 @@ class WSRunStepCompleted(WSMessage):
 class WSRunCompleted(WSMessage):
 	type: str = "run_completed"
 	run: TestRunResponse
+
+
+# ============================================
+# Act Mode Schemas
+# ============================================
+
+class ActModeRequest(BaseModel):
+	"""Request to execute a single action in act mode."""
+	task: str = Field(..., min_length=1, description="The action to execute (e.g., 'click the login button')")
+
+
+class ActModeResponse(BaseModel):
+	"""Response from act mode execution."""
+	success: bool
+	action_taken: str | None = None
+	thinking: str | None = None
+	evaluation: str | None = None
+	memory: str | None = None
+	next_goal: str | None = None
+	result: list[dict[str, Any]] = []
+	browser_state: dict[str, Any] = {}
+	screenshot_path: str | None = None
+	browser_session_id: str | None = None
+	error: str | None = None

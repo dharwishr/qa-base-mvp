@@ -11,6 +11,8 @@ from app.database import get_db
 from app.deps import User, get_current_user
 from app.models import TestPlan, TestSession, TestStep
 from app.schemas import (
+	ActModeRequest,
+	ActModeResponse,
 	ChatMessageCreate,
 	ChatMessageResponse,
 	ContinueSessionRequest,
@@ -149,20 +151,32 @@ async def continue_session(
 				   "Session must be completed, failed, or stopped to continue."
 		)
 
-	# Update session with new prompt (appended to original)
-	session.prompt = f"{session.prompt}\n\n--- Continuation ---\n{request.prompt}"
+	# Store the new request - don't append to original prompt
+	# This keeps session.prompt as the original for reference
+	new_task_prompt = request.prompt
 	session.llm_model = request.llm_model
 
 	# Create a user message for the continuation
-	create_system_message(db, session_id, f"Continuing with: {request.prompt}")
+	create_system_message(db, session_id, f"Continuing with: {new_task_prompt}")
 
 	if request.mode == "plan":
 		# Generate a new plan for the continuation
+		# Pass only the NEW request, not the original prompt
+
+		# Delete old plan first to avoid conflicts
+		if session.plan:
+			logger.info(f"Deleting old plan for session {session_id} before generating new one")
+			db.delete(session.plan)
+			db.flush()  # Ensure delete is processed before creating new plan
+
 		session.status = "pending_plan"
 		db.commit()
 
 		try:
-			plan = await generate_plan(db, session)
+			# Use task_prompt parameter to pass only the new request
+			logger.info(f"Generating continuation plan for session {session_id} with prompt: {new_task_prompt[:100]}...")
+			plan = await generate_plan(db, session, task_prompt=new_task_prompt)
+			logger.info(f"Generated plan with {len(plan.steps_json.get('steps', []))} steps")
 			db.refresh(session)
 		except Exception as e:
 			logger.error(f"Error generating continuation plan: {e}")
@@ -192,6 +206,66 @@ async def continue_session(
 
 	db.refresh(session)
 	return session
+
+
+@router.post("/sessions/{session_id}/act", response_model=ActModeResponse)
+async def execute_act_mode(
+	session_id: str,
+	request: ActModeRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Execute a single action in act mode.
+
+	This endpoint executes a single browser action and returns immediately,
+	without iterative planning or feedback loops. It's designed for interactive
+	testing where users issue one command at a time.
+	"""
+	from app.services.browser_service import BrowserServiceSync
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Allow act mode from various states
+	allowed_states = ("completed", "failed", "stopped", "approved", "plan_ready")
+	if session.status not in allowed_states:
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot execute act mode in status: {session.status}. "
+				   f"Allowed states: {', '.join(allowed_states)}"
+		)
+
+	# Get context from last step (if any)
+	last_step = db.query(TestStep).filter(
+		TestStep.session_id == session_id
+	).order_by(TestStep.step_number.desc()).first()
+
+	previous_context = None
+	if last_step:
+		# Build context from previous step
+		context_parts = []
+		if last_step.next_goal:
+			context_parts.append(f"Last goal: {last_step.next_goal}")
+		if last_step.evaluation:
+			context_parts.append(f"Result: {last_step.evaluation[:200]}")
+		if last_step.url:
+			context_parts.append(f"URL: {last_step.url}")
+		if context_parts:
+			previous_context = " | ".join(context_parts)
+
+	# Create system message for the action
+	create_system_message(db, session_id, f"Act: {request.task}")
+	db.commit()
+
+	# Execute single action
+	service = BrowserServiceSync(db, session)
+	try:
+		result = await service.execute_act_mode(request.task, previous_context)
+		return ActModeResponse(**result)
+	except Exception as e:
+		logger.error(f"Act mode execution failed for session {session_id}: {e}")
+		raise HTTPException(status_code=500, detail=f"Act mode execution failed: {str(e)}")
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

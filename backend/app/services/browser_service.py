@@ -243,7 +243,10 @@ class BrowserService:
 			# Get task from plan
 			from app.services.plan_service import get_plan_as_task
 
-			task = get_plan_as_task(plan)
+			# Check if this is a continuation (session has previous steps)
+			is_continuation = self.current_step_number > 0
+			task = get_plan_as_task(plan, is_continuation=is_continuation)
+			logger.info(f"Task is continuation: {is_continuation}")
 
 			# Initialize LLM based on session's selected model
 			llm = get_llm_for_model(self.session.llm_model)
@@ -559,7 +562,10 @@ class BrowserServiceSync:
 			# Get task from plan
 			from app.services.plan_service import get_plan_as_task
 
-			task = get_plan_as_task(plan)
+			# Check if this is a continuation (session has previous steps)
+			is_continuation = self.current_step_number > 0
+			task = get_plan_as_task(plan, is_continuation=is_continuation)
+			logger.info(f"Task is continuation: {is_continuation}")
 
 			# Initialize LLM based on session's selected model
 			llm = get_llm_for_model(self.session.llm_model)
@@ -704,6 +710,114 @@ class BrowserServiceSync:
 			logger.info(f"Saved PlaywrightScript '{script_name}' with ID {script.id}")
 		except Exception as e:
 			logger.error(f"Failed to save recorded script: {e}")
+
+	async def execute_act_mode(self, task: str, previous_context: str | None = None) -> dict[str, Any]:
+		"""Execute a single action in act mode.
+
+		Args:
+			task: The user's action request (e.g., "click the login button")
+			previous_context: Optional context from previous execution results
+
+		Returns:
+			dict with execution results including action_taken, thinking, browser_state, etc.
+		"""
+		from browser_use import BrowserSession
+
+		from app.services.single_step_service import execute_single_step
+
+		browser_session = None
+		remote_session: OrchestratorSession | None = None
+
+		try:
+			# Determine browser mode based on session.headless setting
+			use_headless = getattr(self.session, 'headless', True)
+			logger.info(f"Act mode - Browser mode: {'headless' if use_headless else 'live browser'}")
+
+			# Initialize browser session based on headless setting
+			if not use_headless:
+				# Non-headless mode: use remote browser with live view
+				try:
+					orchestrator = get_orchestrator()
+
+					# Check if browser session already exists for this test session
+					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+					existing_session = next(
+						(s for s in existing_sessions if s.test_session_id == self.session.id),
+						None
+					)
+
+					if existing_session and existing_session.cdp_url:
+						# REUSE existing browser session
+						logger.info(f"Act mode - Reusing existing browser session: {existing_session.id}")
+						remote_session = existing_session
+						self.browser_session_id = existing_session.id
+
+						# Connect to existing browser via CDP
+						browser_session = BrowserSession(
+							cdp_url=existing_session.cdp_url,
+							viewport={'width': 1920, 'height': 1080}
+						)
+					else:
+						# CREATE new browser session
+						remote_session = await orchestrator.create_session(
+							phase=BrowserPhase.ANALYSIS,
+							test_session_id=self.session.id,
+						)
+						self.browser_session_id = remote_session.id
+						logger.info(f"Act mode - Created new browser session: {remote_session.id}")
+
+						# Connect browser-use to the browser via CDP
+						browser_session = BrowserSession(
+							cdp_url=remote_session.cdp_url,
+							viewport={'width': 1920, 'height': 1080}
+						)
+				except Exception as e:
+					logger.warning(f"Act mode - Failed to use remote browser, falling back to headless: {e}")
+					browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
+			else:
+				# Headless mode: use local headless browser
+				browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
+
+			# Execute single action using SingleStepActService
+			result = await execute_single_step(
+				db=self.db,
+				session=self.session,
+				browser_session=browser_session,
+				task=task,
+				previous_context=previous_context,
+			)
+
+			# Add browser session ID to result for frontend reference
+			result["browser_session_id"] = remote_session.id if remote_session else None
+
+			logger.info(f"Act mode - Action completed: {result.get('action_taken')}")
+
+			return result
+
+		except Exception as e:
+			logger.error(f"Act mode execution failed: {e}")
+			return {
+				"success": False,
+				"action_taken": None,
+				"thinking": None,
+				"evaluation": None,
+				"memory": None,
+				"next_goal": None,
+				"result": [],
+				"browser_state": {"url": None, "title": None},
+				"screenshot_path": None,
+				"browser_session_id": remote_session.id if remote_session else None,
+				"error": str(e),
+			}
+
+		finally:
+			# For act mode, NEVER clean up browser session - keep it alive for next action
+			# Browser session cleanup is handled by:
+			# 1. User clicking "Stop Browser" button
+			# 2. Frontend calling end-browser API
+			# 3. Inactivity timeout
+			if remote_session:
+				logger.info(f"Act mode - Keeping browser session alive: {remote_session.id}")
 
 
 def execute_test_sync(db: Session, session: TestSession, plan: TestPlan) -> dict:

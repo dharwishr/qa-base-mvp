@@ -5,7 +5,7 @@ from google import genai
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import TestPlan, TestSession
+from app.models import TestPlan, TestSession, TestStep
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +14,12 @@ client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 PLAN_GENERATION_PROMPT = """You are a QA automation expert. Given a user's test case description, create a detailed step-by-step plan for browser automation testing.
 
-User's test case description:
+{execution_context}
+
+User's request:
 {prompt}
+
+{continuation_instruction}
 
 Generate a clear, actionable test plan with numbered steps. Each step should be a specific browser action that can be automated (e.g., navigate to URL, click button, fill form, verify text).
 
@@ -42,10 +46,81 @@ Be specific and practical. Include verification steps where appropriate.
 """
 
 
-async def generate_plan(db: Session, session: TestSession) -> TestPlan:
-	"""Generate a test plan using Gemini 2.0 Flash."""
+def build_execution_context(db: Session, session: TestSession) -> str:
+	"""Build minimal context for plan generation - just current browser state.
+
+	For continuation plans, only includes:
+	- Current URL and page title (from last step)
+	- Brief summary of last completed action
+
+	Does NOT include step history, previous plans, or chat history to avoid
+	confusing the LLM into repeating already-completed steps.
+
+	Args:
+		db: Database session
+		session: Test session
+
+	Returns:
+		Context string to include in the prompt
+	"""
+	context_parts = []
+
+	# Get last step only (not multiple steps)
+	last_step = db.query(TestStep).filter(
+		TestStep.session_id == session.id
+	).order_by(TestStep.step_number.desc()).first()
+
+	if last_step:
+		# Current browser state
+		if last_step.url:
+			context_parts.append(f"Current URL: {last_step.url}")
+		if last_step.page_title:
+			context_parts.append(f"Current Page: {last_step.page_title}")
+
+		# Brief summary of last action only
+		if last_step.next_goal:
+			context_parts.append(f"Just completed: {last_step.next_goal}")
+
+	return "\n".join(context_parts) if context_parts else ""
+
+
+async def generate_plan(db: Session, session: TestSession, task_prompt: str | None = None) -> TestPlan:
+	"""Generate a test plan using Gemini 2.0 Flash.
+
+	Args:
+		db: Database session
+		session: Test session
+		task_prompt: Optional specific prompt to use for plan generation.
+			If provided, this is used instead of session.prompt.
+			Use this for continuation plans to pass only the new request.
+	"""
 	try:
-		prompt = PLAN_GENERATION_PROMPT.format(prompt=session.prompt)
+		# Use provided task_prompt or fall back to session.prompt
+		plan_prompt = task_prompt if task_prompt else session.prompt
+
+		# For continuation plans (task_prompt provided), don't include any
+		# previous context - generate a fresh plan from the new prompt only.
+		# The browser-use agent will handle the actual browser state.
+		is_continuation = task_prompt is not None
+
+		if is_continuation:
+			# No execution context for continuations - clean slate
+			execution_context = ""
+			continuation_instruction = """Note: A browser session is already active from previous tasks.
+Generate a complete plan for this new task as a standalone request."""
+			logger.info(f"Generating CONTINUATION plan (no context) for: {plan_prompt[:100]}...")
+		else:
+			# For new sessions, build context (will be empty anyway for new session)
+			execution_context = build_execution_context(db, session)
+			continuation_instruction = ""
+			logger.info(f"Generating NEW session plan for: {plan_prompt[:100]}...")
+
+		prompt = PLAN_GENERATION_PROMPT.format(
+			execution_context=execution_context,
+			prompt=plan_prompt,
+			continuation_instruction=continuation_instruction
+		)
+		logger.debug(f"Full prompt to LLM:\n{prompt}")
 
 		response = client.models.generate_content(
 			model="gemini-2.0-flash",
@@ -94,14 +169,28 @@ async def generate_plan(db: Session, session: TestSession) -> TestPlan:
 		raise
 
 
-def get_plan_as_task(plan: TestPlan) -> str:
-	"""Convert a test plan to a task string for browser-use agent."""
+def get_plan_as_task(plan: TestPlan, is_continuation: bool = False) -> str:
+	"""Convert a test plan to a task string for browser-use agent.
+
+	Args:
+		plan: The test plan to convert
+		is_continuation: If True, tells the agent this is a continuation task
+			and it should NOT navigate away from the current page state.
+	"""
 	steps = plan.steps_json.get("steps", []) if plan.steps_json else []
 
 	if not steps:
 		return plan.plan_text
 
-	task_lines = [f"Execute the following test plan:\n"]
+	task_lines = []
+
+	if is_continuation:
+		# Tell the agent to continue from current state
+		task_lines.append("IMPORTANT: You are continuing from an existing browser session.")
+		task_lines.append("The browser is already open with a page loaded. Do NOT navigate away or reset.")
+		task_lines.append("Start executing from the current page state.\n")
+
+	task_lines.append("Execute the following test plan:\n")
 	for step in steps:
 		step_num = step.get("step_number", "")
 		description = step.get("description", "")

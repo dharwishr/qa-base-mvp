@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff } from 'lucide-react';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
@@ -7,6 +7,7 @@ import LiveBrowserView from '@/components/LiveBrowserView';
 import { useChatSession } from '@/hooks/useChatSession';
 import { getScreenshotUrl } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
+import type { QueueFailure } from '@/types/chat';
 
 const LLM_OPTIONS: { value: LlmModel; label: string }[] = [
   { value: 'browser-use-llm', label: 'Browser Use LLM' },
@@ -16,6 +17,77 @@ const LLM_OPTIONS: { value: LlmModel; label: string }[] = [
   { value: 'gemini-3.0-pro', label: 'Gemini 3.0 Pro' },
   { value: 'gemini-2.5-computer-use', label: 'Gemini 2.5 Computer Use' },
 ];
+
+// Queue failure dialog component
+function QueueFailureDialog({
+  failure,
+  onProceed,
+  onCancel,
+}: {
+  failure: QueueFailure;
+  onProceed: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-background rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-4 py-3 bg-destructive/10 border-b">
+          <AlertCircle className="h-5 w-5 text-destructive" />
+          <h3 className="font-semibold text-destructive">Task Failed</h3>
+          <button
+            onClick={onCancel}
+            className="ml-auto p-1 hover:bg-destructive/10 rounded"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-muted-foreground">
+            The previous task failed with error:
+          </p>
+          <div className="bg-muted/50 rounded p-3 text-sm font-mono">
+            {failure.error}
+          </div>
+
+          {failure.pendingMessages.length > 0 && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                You have {failure.pendingMessages.length} queued message{failure.pendingMessages.length > 1 ? 's' : ''} waiting:
+              </p>
+              <div className="space-y-2 max-h-32 overflow-auto">
+                {failure.pendingMessages.map((msg, idx) => (
+                  <div
+                    key={msg.id}
+                    className="bg-muted/30 rounded p-2 text-sm"
+                  >
+                    <span className="text-muted-foreground mr-2">{idx + 1}.</span>
+                    <span className="truncate">{msg.text}</span>
+                    <span className="text-xs text-muted-foreground ml-2">
+                      ({msg.mode} mode)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2 px-4 py-3 bg-muted/20 border-t">
+          <Button variant="outline" size="sm" onClick={onCancel}>
+            Discard Queue
+          </Button>
+          <Button size="sm" onClick={onProceed}>
+            Continue Queue
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function TestAnalysisChatPage() {
   const {
@@ -29,6 +101,7 @@ export default function TestAnalysisChatPage() {
     isGeneratingPlan,
     isExecuting,
     isPlanPending,
+    queueFailure,
     selectedStepId,
     sendMessage,
     approvePlan,
@@ -36,6 +109,8 @@ export default function TestAnalysisChatPage() {
     stopExecution,
     resetSession,
     endBrowserSession,
+    clearQueueAndProceed,
+    processRemainingQueue,
     setMode,
     setSelectedLlm,
     setHeadless,
@@ -305,6 +380,15 @@ export default function TestAnalysisChatPage() {
           </div>
         )}
       </div>
+
+      {/* Queue Failure Dialog */}
+      {queueFailure && (
+        <QueueFailureDialog
+          failure={queueFailure}
+          onProceed={processRemainingQueue}
+          onCancel={clearQueueAndProceed}
+        />
+      )}
     </div>
   );
 }

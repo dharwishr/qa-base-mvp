@@ -92,3 +92,7 @@ Remote Address
 Referrer Policy
 strict-origin-when-cro
 
+
+in act mode browser use gets halucinated or get lot becasue browser use desinged to run a whole task not a single action, can you fix that ? (you can make changes in browser use but make sure that its treated seperatly for this scenario)
+also using plan mode second time is geeting issues, can you fix that ? like using browser- use context to get more details + given text chat to get more details using both create a plan (you can make changes in browser use but make sure that its treated seperatly for this scenario)
+also when test analysis doing something like runing a action or planing something and if use put more chat/task in between then it should wait till the previous action or plan is completed. show your that its waiting, after previosu action completed then run the given action.

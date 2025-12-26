@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep } from '../types/analysis';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
@@ -259,6 +259,22 @@ export const analysisApi = {
       }
     );
     return handleResponse<TestSession>(response);
+  },
+
+  /**
+   * Execute a single action in act mode.
+   * This executes one browser action and returns immediately without iterative planning.
+   */
+  async executeActMode(sessionId: string, task: string): Promise<ActModeResponse> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/act`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ task }),
+      }
+    );
+    return handleResponse<ActModeResponse>(response);
   },
 };
 
