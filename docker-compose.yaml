@@ -16,7 +16,7 @@ services:
       args:
         - VITE_API_URL=${VITE_API_URL}
     ports:
-      - "3005:80"
+      - "3006:80"
     environment:
       - VITE_API_URL=${VITE_API_URL}
     depends_on:
@@ -40,7 +40,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     ports:
-      - "8005:8000"
+      - "8006:8000"
     environment:
       # Application Settings
       - DEBUG=${DEBUG:-false}
