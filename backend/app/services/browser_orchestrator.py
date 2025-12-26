@@ -139,7 +139,8 @@ class BrowserOrchestrator:
     
     # Container configuration
     # Use custom test-browser image with direct CDP access (no Selenium)
-    DEFAULT_IMAGE = "qa-base-test-browser:latest"
+    # Image hosted on Docker Hub: https://hub.docker.com/r/librekid/qa-test-browser
+    DEFAULT_IMAGE = "librekid/qa-test-browser:latest"
     CONTAINER_CDP_PORT = 9222  # Chrome DevTools Protocol port
     CONTAINER_VNC_PORT = 5900  # VNC port
     CONTAINER_NOVNC_PORT = 7900  # noVNC web interface port

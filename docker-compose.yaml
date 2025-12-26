@@ -123,17 +123,7 @@ services:
       retries: 3
     command: redis-server --appendonly yes
 
-  # ============================================
-  # Test Browser - Chrome + CDP + VNC
-  # ============================================
-  # Pre-built image for browser orchestrator to spawn sessions from
-  test-browser:
-    build:
-      context: ./test-browser
-      dockerfile: Dockerfile
-    image: qa-base-test-browser:latest
-    profiles:
-      - build-only  # Only built, not run as a service (orchestrator spawns containers dynamically)
+
 
 # ============================================
 # Volumes
