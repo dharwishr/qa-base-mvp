@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
-def generate_title_from_prompt(prompt: str) -> str:
-	"""Generate a short title from the test prompt."""
+def generate_title_fallback(prompt: str) -> str:
+	"""Generate a simple fallback title from the test prompt (no LLM)."""
 	# Take first line or first 50 characters
 	first_line = prompt.split('\n')[0].strip()
 	if len(first_line) > 50:
@@ -49,6 +49,79 @@ def generate_title_from_prompt(prompt: str) -> str:
 			return truncated[:last_space] + '...'
 		return truncated + '...'
 	return first_line
+
+
+async def generate_title_with_llm(prompt: str, llm_model: str = "gemini-2.5-flash") -> str:
+	"""Generate a concise title using LLM from the test prompt."""
+	logger.info(f"[TITLE_GEN] Starting LLM title generation with model: {llm_model}")
+	try:
+		from app.services.browser_service import get_llm_for_model
+		from browser_use.llm.messages import UserMessage
+		
+		logger.info(f"[TITLE_GEN] Getting LLM instance for model: {llm_model}")
+		llm = get_llm_for_model(llm_model)
+		logger.info(f"[TITLE_GEN] Got LLM instance: {type(llm).__name__}")
+		
+		title_prompt = f"""Generate a short, descriptive title (max 50 characters) for this test case prompt.
+The title should be concise and capture the main action being tested.
+Do NOT include quotes or any formatting. Just return the plain title text.
+
+Test case prompt:
+{prompt[:500]}
+
+Title:"""
+		
+		# Wrap the prompt in a UserMessage (LLM expects list of BaseMessage objects)
+		messages = [UserMessage(content=title_prompt)]
+		
+		logger.info(f"[TITLE_GEN] Calling LLM ainvoke with UserMessage...")
+		response = await llm.ainvoke(messages)
+		logger.info(f"[TITLE_GEN] Got LLM response: {response}")
+		
+		# Extract content from response - response is ChatInvokeCompletion with 'completion' field
+		if hasattr(response, 'completion'):
+			title = response.completion.strip() if isinstance(response.completion, str) else str(response.completion).strip()
+		else:
+			title = str(response).strip()
+		logger.info(f"[TITLE_GEN] Extracted title: {title}")
+		
+		# Clean up and truncate if needed
+		title = title.strip('"\'').strip()
+		if len(title) > 100:
+			title = title[:97] + '...'
+		
+		result = title if title else generate_title_fallback(prompt)
+		logger.info(f"[TITLE_GEN] Final title: {result}")
+		return result
+	except Exception as e:
+		logger.error(f"[TITLE_GEN] LLM title generation failed: {e}", exc_info=True)
+		return generate_title_fallback(prompt)
+
+
+async def update_session_title_async(session_id: str, prompt: str, llm_model: str) -> None:
+	"""Background task to generate and update session title using LLM."""
+	from app.database import SessionLocal
+	
+	logger.info(f"[TITLE_UPDATE] Starting async title update for session: {session_id}")
+	try:
+		title = await generate_title_with_llm(prompt, llm_model)
+		logger.info(f"[TITLE_UPDATE] Generated title: {title}")
+		
+		# Update the session with the generated title
+		db = SessionLocal()
+		try:
+			session = db.query(TestSession).filter(TestSession.id == session_id).first()
+			if session:
+				old_title = session.title
+				session.title = title
+				db.commit()
+				logger.info(f"[TITLE_UPDATE] Updated session {session_id} title from '{old_title}' to: '{title}'")
+			else:
+				logger.warning(f"[TITLE_UPDATE] Session {session_id} not found!")
+		finally:
+			db.close()
+	except Exception as e:
+		logger.error(f"[TITLE_UPDATE] Failed to update session title: {e}", exc_info=True)
 
 
 @router.get("/sessions", response_model=list[TestSessionListResponse])
@@ -88,8 +161,8 @@ async def create_session(
 	current_user: User = Depends(get_current_user),
 ):
 	"""Create a new test session and generate a plan."""
-	# Generate title from prompt
-	title = generate_title_from_prompt(request.prompt)
+	# Generate simple fallback title initially (LLM title will be updated async)
+	title = generate_title_fallback(request.prompt)
 
 	# Create session with selected LLM model and headless option
 	session = TestSession(
@@ -102,6 +175,14 @@ async def create_session(
 	db.add(session)
 	db.commit()
 	db.refresh(session)
+
+	# Spawn async task to generate better title using LLM (non-blocking)
+	logger.info(f"[TITLE_SPAWN] Spawning async title generation task for session: {session.id}")
+	asyncio.create_task(update_session_title_async(
+		session_id=session.id,
+		prompt=request.prompt,
+		llm_model=request.llm_model
+	))
 
 	# Generate plan asynchronously
 	try:

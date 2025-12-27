@@ -142,7 +142,7 @@ export default function TestCases() {
                         <table className="w-full">
                             <thead>
                                 <tr className="border-b bg-muted/50">
-                                    <th className="text-left py-3 px-4 font-medium text-sm">Prompt</th>
+                                    <th className="text-left py-3 px-4 font-medium text-sm">Title</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Status</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">LLM</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Steps</th>
@@ -158,9 +158,16 @@ export default function TestCases() {
                                         className="border-b hover:bg-muted/30 cursor-pointer transition-colors"
                                     >
                                         <td className="py-3 px-4">
-                                            <span className="text-sm" title={session.prompt}>
-                                                {truncatePrompt(session.prompt)}
-                                            </span>
+                                            <div className="flex flex-col">
+                                                <span className="text-sm font-medium" title={session.title || session.prompt}>
+                                                    {session.title || truncatePrompt(session.prompt)}
+                                                </span>
+                                                {session.title && (
+                                                    <span className="text-xs text-muted-foreground truncate max-w-[200px]" title={session.prompt}>
+                                                        {truncatePrompt(session.prompt, 40)}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="py-3 px-4">
                                             <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-100 text-gray-700'}`}>
