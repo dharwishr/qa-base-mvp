@@ -170,6 +170,33 @@ async def stop_browser_session(session_id: str):
     return {"status": "stopped", "session_id": session_id}
 
 
+@router.post("/sessions/{session_id}/touch")
+async def touch_browser_session(session_id: str):
+    """Mark a browser session as active (reset inactivity timer)."""
+    orchestrator = get_orchestrator()
+    success = await orchestrator.touch_session(session_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Browser session not found")
+    
+    return {"status": "touched", "session_id": session_id}
+
+
+@router.post("/sessions/stop-all")
+async def stop_all_browser_sessions():
+    """Stop all browser sessions and clean up containers.
+    
+    Use this as a reset button to kill all browsers.
+    """
+    orchestrator = get_orchestrator()
+    stopped_count = await orchestrator.stop_all_sessions()
+    
+    return {
+        "status": "stopped_all",
+        "stopped_count": stopped_count,
+    }
+
+
 # ============================================
 # CDP WebSocket Proxy
 # ============================================

@@ -17,6 +17,7 @@ import ModuleDiscovery from "./pages/ModuleDiscovery"
 import BenchmarkPage from "./pages/BenchmarkPage"
 import BenchmarkHistoryPage from "./pages/BenchmarkHistoryPage"
 import BenchmarkDetailPage from "./pages/BenchmarkDetailPage"
+import SettingsPage from "./pages/SettingsPage"
 
 import DashboardLayout from "./components/layout/DashboardLayout"
 
@@ -47,6 +48,7 @@ function App() {
             <Route path="/benchmark" element={<BenchmarkPage />} />
             <Route path="/benchmarks" element={<BenchmarkHistoryPage />} />
             <Route path="/benchmarks/:benchmarkId" element={<BenchmarkDetailPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>
       </AuthProvider>

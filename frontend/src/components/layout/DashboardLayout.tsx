@@ -103,6 +103,8 @@ export default function DashboardLayout() {
                     <SidebarItem
                         icon={Settings}
                         label="Settings"
+                        active={activePath === '/settings'}
+                        onClick={() => navigate('/settings')}
                     />
                 </nav>
 
@@ -122,7 +124,8 @@ export default function DashboardLayout() {
                                         activePath.includes('/scripts') ? 'Test Scripts' :
                                             activePath.includes('/discovery') ? 'Module Discovery' :
                                                 activePath.includes('/benchmark') ? 'LLM Benchmark' :
-                                                    'SmartTester'}
+                                                    activePath.includes('/settings') ? 'Settings' :
+                                                        'SmartTester'}
                     </h1>
                 </header>
                 <main className="flex-1 overflow-auto">

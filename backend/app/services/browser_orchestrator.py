@@ -127,6 +127,14 @@ class BrowserSession:
         if self.expires_at is None:
             return False
         return datetime.utcnow() > self.expires_at
+    
+    def is_inactive(self, inactivity_timeout: timedelta) -> bool:
+        """Check if the session has been inactive for too long."""
+        return datetime.utcnow() - self.last_used_at > inactivity_timeout
+    
+    def touch(self) -> None:
+        """Update last_used_at to current time (mark as active)."""
+        self.last_used_at = datetime.utcnow()
 
 
 class BrowserOrchestrator:
@@ -145,6 +153,7 @@ class BrowserOrchestrator:
     CONTAINER_VNC_PORT = 5900  # VNC port
     CONTAINER_NOVNC_PORT = 7900  # noVNC web interface port
     DEFAULT_TTL_MINUTES = 30
+    DEFAULT_INACTIVITY_TIMEOUT_MINUTES = 5  # Kill browser after 5 min of inactivity
     MAX_SESSIONS_PER_PHASE = 10
     
     def __init__(
@@ -152,10 +161,12 @@ class BrowserOrchestrator:
         image: str = DEFAULT_IMAGE,
         network_name: str = "qa-browser-network",
         session_ttl_minutes: int = DEFAULT_TTL_MINUTES,
+        inactivity_timeout_minutes: int = DEFAULT_INACTIVITY_TIMEOUT_MINUTES,
     ):
         self.image = image
         self.network_name = network_name
         self.session_ttl = timedelta(minutes=session_ttl_minutes)
+        self.inactivity_timeout = timedelta(minutes=inactivity_timeout_minutes)
         self._sessions: dict[str, BrowserSession] = {}
         self._docker_client: docker.DockerClient | None = None
         self._cleanup_task: asyncio.Task | None = None
@@ -431,6 +442,32 @@ class BrowserOrchestrator:
         
         return True
     
+    async def touch_session(self, session_id: str) -> bool:
+        """Mark a session as active (update last_used_at)."""
+        session = self._sessions.get(session_id)
+        if not session:
+            return False
+        session.touch()
+        return True
+    
+    async def stop_all_sessions(self) -> int:
+        """Stop all browser sessions. Returns count of stopped sessions."""
+        session_ids = list(self._sessions.keys())
+        stopped_count = 0
+        
+        for session_id in session_ids:
+            try:
+                if await self.stop_session(session_id):
+                    stopped_count += 1
+            except Exception as e:
+                logger.error(f"Error stopping session {session_id}: {e}")
+        
+        # Also cleanup any orphaned containers not tracked in sessions
+        await self.cleanup_orphaned_containers()
+        
+        logger.info(f"Stopped {stopped_count} browser sessions")
+        return stopped_count
+    
     async def _stop_container(self, container_id: str) -> None:
         """Stop and remove a Docker container."""
         try:
@@ -555,26 +592,35 @@ class BrowserOrchestrator:
             logger.warning(f"Failed to sync sessions from Docker: {e}")
     
     async def cleanup_expired_sessions(self) -> int:
-        """Clean up expired browser sessions. Returns count of cleaned sessions."""
-        expired_ids = [
-            session_id
-            for session_id, session in self._sessions.items()
-            if session.is_expired or session.status in (
-                BrowserSessionStatus.ERROR,
-                BrowserSessionStatus.STOPPED,
-            )
-        ]
+        """Clean up expired and inactive browser sessions. Returns count of cleaned sessions."""
+        sessions_to_cleanup = []
         
-        for session_id in expired_ids:
+        for session_id, session in self._sessions.items():
+            # Check for expired sessions
+            if session.is_expired:
+                sessions_to_cleanup.append((session_id, "expired"))
+                continue
+            
+            # Check for inactive sessions (no activity in last 5 minutes)
+            if session.is_active and session.is_inactive(self.inactivity_timeout):
+                sessions_to_cleanup.append((session_id, "inactive"))
+                continue
+            
+            # Check for error/stopped sessions
+            if session.status in (BrowserSessionStatus.ERROR, BrowserSessionStatus.STOPPED):
+                sessions_to_cleanup.append((session_id, "stopped"))
+        
+        for session_id, reason in sessions_to_cleanup:
             try:
+                logger.info(f"Cleaning up browser session {session_id} (reason: {reason})")
                 await self.stop_session(session_id)
             except Exception as e:
                 logger.error(f"Error cleaning up session {session_id}: {e}")
         
-        if expired_ids:
-            logger.info(f"Cleaned up {len(expired_ids)} expired browser sessions")
+        if sessions_to_cleanup:
+            logger.info(f"Cleaned up {len(sessions_to_cleanup)} browser sessions")
         
-        return len(expired_ids)
+        return len(sessions_to_cleanup)
     
     async def cleanup_orphaned_containers(self) -> int:
         """Clean up any orphaned browser containers. Returns count of cleaned."""

@@ -489,5 +489,72 @@ export const discoveryApi = {
   },
 };
 
+// ============================================
+// Browser API
+// ============================================
+
+export interface BrowserSession {
+  id: string;
+  phase: string;
+  status: string;
+  cdp_url: string | null;
+  novnc_url: string | null;
+  live_view_url: string | null;
+  created_at: string;
+  expires_at: string | null;
+  test_session_id: string | null;
+  test_run_id: string | null;
+  error_message: string | null;
+}
+
+export const browserApi = {
+  /**
+   * List all browser sessions.
+   */
+  async listSessions(phase?: string, activeOnly: boolean = true): Promise<BrowserSession[]> {
+    const params = new URLSearchParams();
+    if (phase) params.set('phase', phase);
+    if (activeOnly) params.set('active_only', 'true');
+    
+    const response = await fetch(`${API_BASE}/browser/sessions?${params}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<BrowserSession[]>(response);
+  },
+
+  /**
+   * Stop a browser session.
+   */
+  async stopSession(sessionId: string): Promise<{ status: string; session_id: string }> {
+    const response = await fetch(`${API_BASE}/browser/sessions/${sessionId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Touch a browser session to keep it alive (reset inactivity timer).
+   */
+  async touchSession(sessionId: string): Promise<{ status: string; session_id: string }> {
+    const response = await fetch(`${API_BASE}/browser/sessions/${sessionId}/touch`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Stop all browser sessions (kill all browsers).
+   */
+  async stopAllSessions(): Promise<{ status: string; stopped_count: number }> {
+    const response = await fetch(`${API_BASE}/browser/sessions/stop-all`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+};
+
 export { ApiError };
 
