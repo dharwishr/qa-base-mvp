@@ -1,4 +1,4 @@
-import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, ReplayResponse, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
@@ -296,6 +296,38 @@ export const analysisApi = {
     );
     return handleResponse<UndoResponse>(response);
   },
+
+  /**
+   * Replay all steps in an existing test session.
+   * This starts a new browser session and replays all recorded steps.
+   * Use this to re-initiate an older test case analysis session.
+   */
+  async replaySession(sessionId: string, headless: boolean = false): Promise<ReplayResponse> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/replay`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ headless }),
+      }
+    );
+    return handleResponse<ReplayResponse>(response);
+  },
+
+  /**
+   * Update the title of a test session.
+   */
+  async updateSessionTitle(sessionId: string, title: string): Promise<TestSession> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/title`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ title }),
+      }
+    );
+    return handleResponse<TestSession>(response);
+  },
 };
 
 /**
@@ -535,7 +567,7 @@ export const browserApi = {
     const params = new URLSearchParams();
     if (phase) params.set('phase', phase);
     if (activeOnly) params.set('active_only', 'true');
-    
+
     const response = await fetch(`${API_BASE}/browser/sessions?${params}`, {
       headers: getAuthHeaders(),
     });

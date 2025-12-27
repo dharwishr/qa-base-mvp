@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Plus, RefreshCw, Trash2, Pencil, Check, X } from "lucide-react"
 import { analysisApi } from "@/services/api"
 import type { TestSessionListItem, LlmModel } from "@/types/analysis"
 
@@ -53,6 +53,8 @@ export default function TestCases() {
     const [sessions, setSessions] = useState<TestSessionListItem[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+    const [editingId, setEditingId] = useState<string | null>(null)
+    const [editingTitle, setEditingTitle] = useState<string>("")
 
     const fetchSessions = async () => {
         setLoading(true)
@@ -78,6 +80,35 @@ export default function TestCases() {
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to delete session')
         }
+    }
+
+    const handleStartEdit = (e: React.MouseEvent, session: TestSessionListItem) => {
+        e.stopPropagation()
+        setEditingId(session.id)
+        setEditingTitle(session.title || truncatePrompt(session.prompt))
+    }
+
+    const handleSaveTitle = async (e: React.MouseEvent, sessionId: string) => {
+        e.stopPropagation()
+        if (!editingTitle.trim()) {
+            setEditingId(null)
+            return
+        }
+        try {
+            await analysisApi.updateSessionTitle(sessionId, editingTitle.trim())
+            setSessions(prev => prev.map(s =>
+                s.id === sessionId ? { ...s, title: editingTitle.trim() } : s
+            ))
+            setEditingId(null)
+        } catch (e) {
+            setError(e instanceof Error ? e.message : 'Failed to update title')
+        }
+    }
+
+    const handleCancelEdit = (e: React.MouseEvent) => {
+        e.stopPropagation()
+        setEditingId(null)
+        setEditingTitle("")
     }
 
     useEffect(() => {
@@ -154,20 +185,59 @@ export default function TestCases() {
                                 {sessions.map((session) => (
                                     <tr
                                         key={session.id}
-                                        onClick={() => navigate(`/test-cases/${session.id}`)}
+                                        onClick={() => navigate(`/test-analysis/${session.id}`)}
                                         className="border-b hover:bg-muted/30 cursor-pointer transition-colors"
                                     >
                                         <td className="py-3 px-4">
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-medium" title={session.title || session.prompt}>
-                                                    {session.title || truncatePrompt(session.prompt)}
-                                                </span>
-                                                {session.title && (
-                                                    <span className="text-xs text-muted-foreground truncate max-w-[200px]" title={session.prompt}>
-                                                        {truncatePrompt(session.prompt, 40)}
-                                                    </span>
-                                                )}
-                                            </div>
+                                            {editingId === session.id ? (
+                                                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                                    <input
+                                                        type="text"
+                                                        value={editingTitle}
+                                                        onChange={(e) => setEditingTitle(e.target.value)}
+                                                        className="flex-1 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary"
+                                                        autoFocus
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') handleSaveTitle(e as unknown as React.MouseEvent, session.id)
+                                                            if (e.key === 'Escape') handleCancelEdit(e as unknown as React.MouseEvent)
+                                                        }}
+                                                    />
+                                                    <button
+                                                        onClick={(e) => handleSaveTitle(e, session.id)}
+                                                        className="p-1 text-green-600 hover:bg-green-50 rounded"
+                                                        title="Save"
+                                                    >
+                                                        <Check className="h-4 w-4" />
+                                                    </button>
+                                                    <button
+                                                        onClick={handleCancelEdit}
+                                                        className="p-1 text-gray-500 hover:bg-gray-100 rounded"
+                                                        title="Cancel"
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-2 group">
+                                                    <div className="flex flex-col flex-1 min-w-0">
+                                                        <span className="text-sm font-medium truncate" title={session.title || session.prompt}>
+                                                            {session.title || truncatePrompt(session.prompt)}
+                                                        </span>
+                                                        {session.title && (
+                                                            <span className="text-xs text-muted-foreground truncate max-w-[200px]" title={session.prompt}>
+                                                                {truncatePrompt(session.prompt, 40)}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <button
+                                                        onClick={(e) => handleStartEdit(e, session)}
+                                                        className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                                        title="Edit title"
+                                                    >
+                                                        <Pencil className="h-3.5 w-3.5" />
+                                                    </button>
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="py-3 px-4">
                                             <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-100 text-gray-700'}`}>

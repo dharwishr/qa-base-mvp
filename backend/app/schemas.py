@@ -110,6 +110,11 @@ class TestSessionListResponse(BaseModel):
 		from_attributes = True
 
 
+class UpdateSessionTitleRequest(BaseModel):
+	"""Request to update a session's title."""
+	title: str = Field(..., min_length=1, max_length=100, description="The new title for the session")
+
+
 class TestSessionDetailResponse(TestSessionResponse):
 	steps: list[TestStepResponse] = []
 
@@ -437,4 +442,28 @@ class UndoResponse(BaseModel):
 	error_message: str | None = None
 	failed_at_step: int | None = Field(None, description="If replay failed, the step index where it failed")
 	actual_step_number: int | None = Field(None, description="The actual step number the session ended at (for partial undo)")
+	user_message: str | None = Field(None, description="Human-readable message to display in the chat")
+
+
+# ============================================
+# Replay Session Schemas
+# ============================================
+
+class ReplaySessionRequest(BaseModel):
+	"""Request to replay all steps in an existing session."""
+	headless: bool = Field(
+		default=False,
+		description="If True, run in headless mode. If False, show live browser view."
+	)
+
+
+class ReplaySessionResponse(BaseModel):
+	"""Response from a replay session operation."""
+	success: bool
+	total_steps: int = Field(..., description="Total number of steps in the session")
+	steps_replayed: int = Field(..., description="Number of steps that were successfully replayed")
+	replay_status: str = Field(..., description="Status of the replay: passed | failed | healed | partial")
+	error_message: str | None = None
+	failed_at_step: int | None = Field(None, description="If replay failed, the step number where it failed")
+	browser_session_id: str | None = Field(None, description="The browser session ID for live view")
 	user_message: str | None = Field(None, description="Human-readable message to display in the chat")

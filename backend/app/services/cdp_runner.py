@@ -52,17 +52,18 @@ class CDPElementLocator:
         self.successful_selector: str | None = None
         self.located_element: Element | None = None
 
-    async def locate(self, timeout: int = 5000) -> Element | None:
+    async def locate(self, timeout: int = 10000) -> Element | None:
         """Try to locate the element using fallback selectors.
 
         Args:
-            timeout: Timeout in milliseconds
+            timeout: Timeout in milliseconds (default 10 seconds)
 
         Returns:
             Element if found, None otherwise
         """
         all_selectors = self.selectors.all_selectors()
-        timeout_seconds = timeout / 1000
+        # Use at least 3 seconds per selector attempt
+        timeout_seconds = max(timeout / 1000, 3.0)
 
         for selector in all_selectors:
             try:
@@ -511,29 +512,53 @@ class CDPRunner(BaseRunner):
         """Execute navigation."""
         assert self._page and step.url
         await self._page.goto(step.url)
-        # Wait for page to settle
-        await asyncio.sleep(1)
+        # Wait for page to settle - use longer delay for page load
+        await asyncio.sleep(2)
+        # Wait for any pending network activity to settle
+        await self._wait_for_page_idle()
 
     async def _execute_click(self, step: PlaywrightStep) -> CDPElementLocator:
         """Execute click with self-healing."""
         assert self._page and step.selectors and self._session_id
 
+        # Wait for page to be stable before looking for elements
+        await self._wait_for_page_idle()
+
         healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
         element = await healer.locate(timeout=step.timeout)
+
+        if not element:
+            # Retry once after a longer wait - elements might still be loading
+            logger.debug(f"Element not found on first try, retrying after wait...")
+            await asyncio.sleep(1)
+            await self._wait_for_page_idle()
+            element = await healer.locate(timeout=step.timeout)
 
         if not element:
             raise Exception(f"Could not find element to click. Tried selectors: {step.selectors.all_selectors()}")
 
         await element.click()
-        await asyncio.sleep(0.1)  # Small delay after click
+        # Wait for any navigation or dynamic content after click
+        await asyncio.sleep(0.5)
+        await self._wait_for_page_idle()
         return healer
 
     async def _execute_fill(self, step: PlaywrightStep) -> CDPElementLocator:
         """Execute fill with self-healing."""
         assert self._page and step.selectors and step.value is not None and self._session_id
 
+        # Wait for page to be stable before looking for elements
+        await self._wait_for_page_idle()
+
         healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
         element = await healer.locate(timeout=step.timeout)
+
+        if not element:
+            # Retry once after a longer wait
+            logger.debug(f"Element not found on first try, retrying after wait...")
+            await asyncio.sleep(1)
+            await self._wait_for_page_idle()
+            element = await healer.locate(timeout=step.timeout)
 
         if not element:
             raise Exception(f"Could not find element to fill. Tried selectors: {step.selectors.all_selectors()}")
@@ -796,6 +821,35 @@ class CDPRunner(BaseRunner):
             result["error"] = str(e)
 
         return result
+
+    async def _wait_for_page_idle(self, timeout: float = 5.0):
+        """Wait for the page to be idle (no pending network requests, DOM stable)."""
+        try:
+            cdp_client = self._page._client
+            start_time = time.time()
+            
+            while (time.time() - start_time) < timeout:
+                # Check document ready state
+                result = await cdp_client.send.Runtime.evaluate(
+                    params={
+                        'expression': 'document.readyState',
+                        'returnByValue': True,
+                    },
+                    session_id=self._session_id,
+                )
+                ready_state = result.get('result', {}).get('value', '')
+                
+                if ready_state == 'complete':
+                    # Additional wait for any animations or delayed content
+                    await asyncio.sleep(0.3)
+                    return
+                
+                await asyncio.sleep(0.2)
+                
+        except Exception as e:
+            logger.debug(f"Error waiting for page idle: {e}")
+            # Don't fail the step, just continue
+            await asyncio.sleep(0.5)
 
     async def _take_screenshot(self, run_id: str, step_index: int, is_error: bool = False) -> str:
         """Take a screenshot and return the path relative to base screenshots dir."""

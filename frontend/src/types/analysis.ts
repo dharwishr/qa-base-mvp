@@ -190,3 +190,19 @@ export interface UndoResponse {
   actual_step_number: number | null;
   user_message: string | null;
 }
+
+// Replay types
+export interface ReplayRequest {
+  headless: boolean;
+}
+
+export interface ReplayResponse {
+  success: boolean;
+  total_steps: number;
+  steps_replayed: number;
+  replay_status: 'passed' | 'failed' | 'healed' | 'partial';
+  error_message: string | null;
+  failed_at_step: number | null;
+  browser_session_id: string | null;
+  user_message: string | null;
+}

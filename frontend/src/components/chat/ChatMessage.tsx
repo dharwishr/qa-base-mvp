@@ -109,22 +109,21 @@ function PlanMessageCard({
 
   return (
     <div className="flex justify-start">
-      <div className="flex items-start gap-2 max-w-[90%] w-full">
+      <div className="flex items-start gap-2 w-full min-w-0">
         <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
           <FileText className="h-4 w-4 text-blue-600" />
         </div>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <span className="text-xs text-muted-foreground mb-1 block">
             {formatTime(message.timestamp)}
           </span>
           <Card
-            className={`border-l-4 ${
-              isApproved || isExecuting
+            className={`border-l-4 ${isApproved || isExecuting
                 ? 'border-l-green-500'
                 : isRejected
-                ? 'border-l-red-500'
-                : 'border-l-blue-500'
-            }`}
+                  ? 'border-l-red-500'
+                  : 'border-l-blue-500'
+              }`}
           >
             <CardContent className="p-4">
               {/* Header */}
@@ -260,17 +259,16 @@ function StepMessageCard({
 
   return (
     <div className="flex justify-start">
-      <div className="flex items-start gap-2 max-w-[90%] w-full">
+      <div className="flex items-start gap-2 w-full min-w-0">
         <div
-          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-            step.status === 'completed'
+          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${step.status === 'completed'
               ? 'bg-green-100'
               : step.status === 'failed'
-              ? 'bg-red-100'
-              : step.status === 'running'
-              ? 'bg-yellow-100'
-              : 'bg-muted'
-          }`}
+                ? 'bg-red-100'
+                : step.status === 'running'
+                  ? 'bg-yellow-100'
+                  : 'bg-muted'
+            }`}
         >
           <StatusIcon />
         </div>
@@ -279,15 +277,14 @@ function StepMessageCard({
             Step {step.step_number} - {formatTime(message.timestamp)}
           </span>
           <Card
-            className={`border-l-4 cursor-pointer transition-all ${
-              step.status === 'completed'
+            className={`border-l-4 cursor-pointer transition-all ${step.status === 'completed'
                 ? 'border-l-green-500'
                 : step.status === 'failed'
-                ? 'border-l-red-500'
-                : step.status === 'running'
-                ? 'border-l-yellow-500'
-                : 'border-l-primary/50'
-            } ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'}`}
+                  ? 'border-l-red-500'
+                  : step.status === 'running'
+                    ? 'border-l-yellow-500'
+                    : 'border-l-primary/50'
+              } ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'}`}
             onClick={() => onStepSelect?.(step.id)}
           >
             <CardContent className="p-3">
@@ -308,7 +305,7 @@ function StepMessageCard({
                   {step.url && (
                     <div className="flex items-center gap-1 mt-1">
                       <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground truncate">
+                      <span className="text-xs text-muted-foreground truncate block max-w-full">
                         {step.url}
                       </span>
                     </div>
@@ -359,13 +356,12 @@ function StepMessageCard({
                         {step.actions.map((action, idx) => (
                           <div
                             key={action.id || idx}
-                            className={`text-xs p-2 rounded flex items-center gap-2 ${
-                              action.result_success
+                            className={`text-xs p-2 rounded flex items-center gap-2 ${action.result_success
                                 ? 'bg-green-50'
                                 : action.result_error
-                                ? 'bg-red-50'
-                                : 'bg-muted/50'
-                            }`}
+                                  ? 'bg-red-50'
+                                  : 'bg-muted/50'
+                              }`}
                           >
                             {action.result_success !== null &&
                               (action.result_success ? (
@@ -395,7 +391,7 @@ function StepMessageCard({
 
               {/* Undo button - shown on hover when this isn't the last step */}
               {canUndo && (
-                <div 
+                <div
                   className="mt-2 pt-2 border-t flex justify-end"
                   onMouseEnter={() => setShowUndoHint(true)}
                   onMouseLeave={() => setShowUndoHint(false)}

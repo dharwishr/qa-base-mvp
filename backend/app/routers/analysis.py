@@ -20,6 +20,8 @@ from app.schemas import (
 	ExecuteResponse,
 	ExecutionLogResponse,
 	RejectPlanRequest,
+	ReplaySessionRequest,
+	ReplaySessionResponse,
 	StopResponse,
 	TestPlanResponse,
 	TestSessionDetailResponse,
@@ -28,6 +30,7 @@ from app.schemas import (
 	TestStepResponse,
 	UndoRequest,
 	UndoResponse,
+	UpdateSessionTitleRequest,
 	WSError,
 )
 from app.services.plan_service import generate_plan
@@ -207,6 +210,24 @@ async def get_session(
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
+	return session
+
+
+@router.patch("/sessions/{session_id}/title", response_model=TestSessionResponse)
+async def update_session_title(
+	session_id: str,
+	request: UpdateSessionTitleRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Update the title of a test session."""
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+	
+	session.title = request.title
+	db.commit()
+	db.refresh(session)
 	return session
 
 
@@ -621,6 +642,58 @@ async def undo_to_step(
 	except Exception as e:
 		logger.error(f"Undo failed for session {session_id}: {e}")
 		raise HTTPException(status_code=500, detail=f"Undo failed: {str(e)}")
+
+
+@router.post("/sessions/{session_id}/replay", response_model=ReplaySessionResponse)
+async def replay_session(
+	session_id: str,
+	request: ReplaySessionRequest = None,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Replay all steps in a test session.
+	
+	This will:
+	1. Start a new browser session
+	2. Replay all recorded steps from the session
+	3. Return the browser session ID for live view
+	
+	Use this to re-initiate an older test case analysis session.
+	The replay uses CDP and does not consume any LLM tokens.
+	"""
+	from app.services.replay_service import replay_session as do_replay
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Allow replay from various states
+	allowed_states = ("completed", "failed", "stopped", "plan_ready", "approved")
+	if session.status not in allowed_states:
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot replay session in status: {session.status}. "
+				   f"Allowed states: {', '.join(allowed_states)}"
+		)
+
+	headless = request.headless if request else False
+
+	try:
+		result = await do_replay(db, session, headless=headless)
+		
+		return ReplaySessionResponse(
+			success=result.success,
+			total_steps=result.total_steps,
+			steps_replayed=result.steps_replayed,
+			replay_status=result.replay_status,
+			error_message=result.error_message,
+			failed_at_step=result.failed_at_step,
+			browser_session_id=result.browser_session_id,
+			user_message=result.user_message,
+		)
+	except Exception as e:
+		logger.error(f"Replay failed for session {session_id}: {e}")
+		raise HTTPException(status_code=500, detail=f"Replay failed: {str(e)}")
 
 
 # ============================================
