@@ -40,3 +40,6 @@ logs/
 screenshots/
 backend/data/
 backend/screenshots/
+
+# Integration sub-projects
+qa-auto-mvp-1/

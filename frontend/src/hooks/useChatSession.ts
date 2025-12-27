@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { analysisApi } from '../services/api';
+import { analysisApi, scriptsApi } from '../services/api';
 import { getAuthToken } from '../contexts/AuthContext';
 import { config } from '../config';
 import type { TestSession, LlmModel } from '../types/analysis';
@@ -48,6 +48,7 @@ interface UseChatSessionReturn {
   // State
   messages: TimelineMessage[];
   sessionId: string | null;
+  sessionStatus: string | null;
   currentSession: TestSession | null;
   browserSessionId: string | null;
   browserSession: BrowserSessionInfo | null;
@@ -73,6 +74,7 @@ interface UseChatSessionReturn {
   endBrowserSession: () => Promise<void>;
   clearQueueAndProceed: () => void;
   processRemainingQueue: () => void;
+  generateScript: () => Promise<string | null>;
   setMode: (mode: ChatMode) => void;
   setSelectedLlm: (llm: LlmModel) => void;
   setHeadless: (headless: boolean) => void;
@@ -764,6 +766,30 @@ export function useChatSession(): UseChatSessionReturn {
     lastStepCountRef.current = 0;
   }, [stopPolling, stopBrowserPolling, clearInactivityTimeout]);
 
+  // Generate test script from session steps
+  const generateScript = useCallback(async (): Promise<string | null> => {
+    if (!sessionId || !currentSession) return null;
+
+    try {
+      // Auto-generate name from session title or prompt
+      const scriptName = currentSession.title ||
+        currentSession.prompt?.slice(0, 50) ||
+        `Test Script ${new Date().toISOString()}`;
+
+      const script = await scriptsApi.createScript({
+        session_id: sessionId,
+        name: scriptName,
+        description: `Generated from test analysis session`,
+      });
+
+      return script.id;
+    } catch (e) {
+      console.error('Error generating script:', e);
+      setError(e instanceof Error ? e.message : 'Failed to generate script');
+      return null;
+    }
+  }, [sessionId, currentSession]);
+
   // Effect to process queue when not busy
   useEffect(() => {
     const processNextInQueue = async () => {
@@ -814,6 +840,7 @@ export function useChatSession(): UseChatSessionReturn {
     // State
     messages,
     sessionId,
+    sessionStatus,
     currentSession,
     browserSessionId: browserSession?.id ?? null,
     browserSession,
@@ -839,6 +866,7 @@ export function useChatSession(): UseChatSessionReturn {
     endBrowserSession,
     clearQueueAndProceed,
     processRemainingQueue,
+    generateScript,
     setMode,
     setSelectedLlm,
     setHeadless,

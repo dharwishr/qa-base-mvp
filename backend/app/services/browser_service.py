@@ -14,9 +14,8 @@ from fastapi import WebSocket
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import StepAction, TestPlan, TestSession, TestStep, PlaywrightScript
+from app.models import StepAction, TestPlan, TestSession, TestStep
 from app.schemas import StepActionResponse, TestStepResponse, WSCompleted, WSError, WSStepCompleted, WSStepStarted
-from app.services.script_recorder import start_recording, stop_recording, ScriptRecorder
 from app.services.browser_orchestrator import (
 	get_orchestrator,
 	BrowserSession as OrchestratorSession,
@@ -224,18 +223,13 @@ class BrowserService:
 
 	async def execute(self, plan: TestPlan, max_steps: int = 20) -> None:
 		"""Execute the test plan using browser-use."""
-		recorder: ScriptRecorder | None = None
 		browser_session = None
 		remote_session: OrchestratorSession | None = None
-		
+
 		try:
 			# Update session status
 			self.session.status = "running"
 			self.db.commit()
-
-			# Start script recording
-			recorder = start_recording()
-			logger.info("Started script recording for session")
 
 			# Import browser-use components
 			from browser_use import Agent, BrowserSession
@@ -358,12 +352,6 @@ class BrowserService:
 			self.session.status = "completed" if success else "failed"
 			self.db.commit()
 
-			# Stop recording and save script if successful
-			recorder = stop_recording()
-			if recorder and success and recorder.steps:
-				self._save_recorded_script(recorder)
-				logger.info(f"Saved recorded script with {len(recorder.steps)} steps")
-
 			# Send completion message
 			await self.send_ws_message(
 				WSCompleted(
@@ -378,9 +366,6 @@ class BrowserService:
 			logger.error(f"Error executing test: {e}")
 			self.session.status = "failed"
 			self.db.commit()
-
-			# Stop recording on error
-			stop_recording()
 
 			await self.send_ws_message(WSError(message=str(e)).model_dump())
 			raise
@@ -402,25 +387,6 @@ class BrowserService:
 			# 3. Inactivity timeout (3 minutes, handled by frontend)
 			if remote_session:
 				logger.info(f"Keeping remote browser session alive: {remote_session.id}")
-
-	def _save_recorded_script(self, recorder: ScriptRecorder) -> None:
-		"""Save the recorded script to the database."""
-		try:
-			# Generate a name based on the session prompt
-			prompt_preview = self.session.prompt[:50].replace("\n", " ").strip()
-			script_name = f"Auto: {prompt_preview}"
-			
-			script = PlaywrightScript(
-				session_id=self.session.id,
-				name=script_name,
-				description=f"Automatically generated from session analysis",
-				steps_json=recorder.to_json(),
-			)
-			self.db.add(script)
-			self.db.commit()
-			logger.info(f"Saved PlaywrightScript '{script_name}' with ID {script.id}")
-		except Exception as e:
-			logger.error(f"Failed to save recorded script: {e}")
 
 
 async def execute_test(db: Session, session: TestSession, plan: TestPlan, websocket: WebSocket) -> None:
@@ -543,18 +509,13 @@ class BrowserServiceSync:
 
 	async def execute(self, plan: TestPlan, max_steps: int = 20) -> dict:
 		"""Execute the test plan using browser-use."""
-		recorder: ScriptRecorder | None = None
 		browser_session = None
 		remote_session: OrchestratorSession | None = None
-		
+
 		try:
 			# Update session status
 			self.session.status = "running"
 			self.db.commit()
-
-			# Start script recording
-			recorder = start_recording()
-			logger.info("Started script recording for session (sync)")
 
 			# Import browser-use components
 			from browser_use import Agent, BrowserSession
@@ -651,12 +612,6 @@ class BrowserServiceSync:
 			self.session.status = "completed" if success else "failed"
 			self.db.commit()
 
-			# Stop recording and save script if successful
-			recorder = stop_recording()
-			if recorder and success and recorder.steps:
-				self._save_recorded_script(recorder)
-				logger.info(f"Saved recorded script with {len(recorder.steps)} steps")
-
 			logger.info(f"Test execution completed. Success: {success}, Steps: {len(history.history)}")
 
 			return {
@@ -669,9 +624,6 @@ class BrowserServiceSync:
 			logger.error(f"Error executing test: {e}")
 			self.session.status = "failed"
 			self.db.commit()
-			
-			# Stop recording on error
-			stop_recording()
 			raise
 
 		finally:
@@ -691,25 +643,6 @@ class BrowserServiceSync:
 			# 3. Inactivity timeout (3 minutes, handled by frontend)
 			if remote_session:
 				logger.info(f"Keeping remote browser session alive: {remote_session.id}")
-
-	def _save_recorded_script(self, recorder: ScriptRecorder) -> None:
-		"""Save the recorded script to the database."""
-		try:
-			# Generate a name based on the session prompt
-			prompt_preview = self.session.prompt[:50].replace("\n", " ").strip()
-			script_name = f"Auto: {prompt_preview}"
-
-			script = PlaywrightScript(
-				session_id=self.session.id,
-				name=script_name,
-				description=f"Automatically generated from session analysis",
-				steps_json=recorder.to_json(),
-			)
-			self.db.add(script)
-			self.db.commit()
-			logger.info(f"Saved PlaywrightScript '{script_name}' with ID {script.id}")
-		except Exception as e:
-			logger.error(f"Failed to save recorded script: {e}")
 
 	async def execute_act_mode(self, task: str, previous_context: str | None = None) -> dict[str, Any]:
 		"""Execute a single action in act mode.

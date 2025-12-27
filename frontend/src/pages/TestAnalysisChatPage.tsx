@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
@@ -90,9 +91,11 @@ function QueueFailureDialog({
 }
 
 export default function TestAnalysisChatPage() {
+  const navigate = useNavigate();
   const {
     messages,
     sessionId,
+    sessionStatus,
     currentSession,
     browserSession,
     mode,
@@ -111,11 +114,16 @@ export default function TestAnalysisChatPage() {
     endBrowserSession,
     clearQueueAndProceed,
     processRemainingQueue,
+    generateScript,
     setMode,
     setSelectedLlm,
     setHeadless,
     setSelectedStepId,
   } = useChatSession();
+
+  // Determine if "Generate Script" button should show
+  const canGenerateScript = sessionStatus === 'completed' &&
+    messages.some(m => m.type === 'step');
 
   // Get session title
   const sessionTitle = currentSession?.title || 'Test Analysis';
@@ -210,6 +218,22 @@ export default function TestAnalysisChatPage() {
               >
                 <RotateCcw className="h-3 w-3 mr-1" />
                 Reset
+              </Button>
+            )}
+            {canGenerateScript && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  const scriptId = await generateScript();
+                  if (scriptId) {
+                    navigate(`/scripts/${scriptId}`);
+                  }
+                }}
+                className="h-7 text-xs"
+              >
+                <FileCode className="h-3 w-3 mr-1" />
+                Generate Script
               </Button>
             )}
             <Button
