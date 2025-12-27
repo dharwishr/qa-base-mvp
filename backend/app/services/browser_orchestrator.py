@@ -392,13 +392,18 @@ class BrowserOrchestrator:
                             version_info = await resp.json()
                             ws_url = version_info.get("webSocketDebuggerUrl")
                             if ws_url:
-                                # Rewrite WebSocket URL to use external port if needed
+                                import re
+                                # Rewrite WebSocket URL based on environment
                                 if self._running_in_docker and session.container_ip:
-                                    # Keep internal URL for Docker-to-Docker communication
-                                    session.cdp_ws_url = ws_url
+                                    # Running in Docker: rewrite to use container IP for Docker-to-Docker communication
+                                    # The raw ws_url has 127.0.0.1 which is the container's loopback, not accessible from other containers
+                                    session.cdp_ws_url = re.sub(
+                                        r'ws://[^/]+',
+                                        f'ws://{session.container_ip}:{self.CONTAINER_CDP_PORT}',
+                                        ws_url
+                                    )
                                 else:
-                                    # Rewrite to use host-mapped port
-                                    import re
+                                    # Running locally: rewrite to use host-mapped port
                                     session.cdp_ws_url = re.sub(
                                         r'ws://[^/]+',
                                         f'ws://{session.cdp_host}:{session.cdp_port}',
@@ -576,14 +581,42 @@ class BrowserOrchestrator:
                         test_run_id=test_run_id,
                     )
                     
-                    # Set CDP URL
-                    if self._running_in_docker and container_ip:
-                        session._cdp_url = f"ws://{container_ip}:{self.CONTAINER_CDP_PORT}"
-                    else:
-                        session._cdp_url = f"ws://{session.cdp_host}:{cdp_port}"
+                    # Fetch the actual WebSocket URL from the browser
+                    try:
+                        if self._running_in_docker and container_ip:
+                            check_url = f"http://{container_ip}:{self.CONTAINER_CDP_PORT}/json/version"
+                        else:
+                            check_url = f"http://127.0.0.1:{cdp_port}/json/version"
+                        
+                        async with aiohttp.ClientSession() as http_session:
+                            async with http_session.get(check_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                if resp.status == 200:
+                                    version_info = await resp.json()
+                                    ws_url = version_info.get("webSocketDebuggerUrl")
+                                    if ws_url:
+                                        import re
+                                        if self._running_in_docker and container_ip:
+                                            session.cdp_ws_url = re.sub(
+                                                r'ws://[^/]+',
+                                                f'ws://{container_ip}:{self.CONTAINER_CDP_PORT}',
+                                                ws_url
+                                            )
+                                        else:
+                                            session.cdp_ws_url = re.sub(
+                                                r'ws://[^/]+',
+                                                f'ws://{session.cdp_host}:{cdp_port}',
+                                                ws_url
+                                            )
+                    except Exception as url_err:
+                        logger.debug(f"Could not fetch WebSocket URL for synced session: {url_err}")
+                        # Fallback: construct URL without the devtools path (may not work for all operations)
+                        if self._running_in_docker and container_ip:
+                            session.cdp_ws_url = f"ws://{container_ip}:{self.CONTAINER_CDP_PORT}"
+                        else:
+                            session.cdp_ws_url = f"ws://{session.cdp_host}:{cdp_port}"
                     
                     self._sessions[session_id] = session
-                    logger.info(f"Synced browser session from Docker: {session_id}")
+                    logger.info(f"Synced browser session from Docker: {session_id}, CDP: {session.cdp_url}")
                     
                 except Exception as e:
                     logger.warning(f"Failed to reconstruct session from container {container.id}: {e}")

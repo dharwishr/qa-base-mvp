@@ -173,3 +173,20 @@ export interface ActModeResponse {
   browser_session_id: string | null;
   error: string | null;
 }
+
+// Undo types
+export interface UndoRequest {
+  target_step_number: number;
+}
+
+export interface UndoResponse {
+  success: boolean;
+  target_step_number: number;
+  steps_removed: number;
+  steps_replayed: number;
+  replay_status: 'passed' | 'failed' | 'healed' | 'partial';
+  error_message: string | null;
+  failed_at_step: number | null;
+  actual_step_number: number | null;
+  user_message: string | null;
+}

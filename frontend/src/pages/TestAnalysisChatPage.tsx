@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
 import LiveBrowserView from '@/components/LiveBrowserView';
+import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
 import { useChatSession } from '@/hooks/useChatSession';
 import { getScreenshotUrl } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
@@ -107,6 +108,9 @@ export default function TestAnalysisChatPage() {
     isPlanPending,
     queueFailure,
     selectedStepId,
+    isUndoing,
+    undoTargetStep,
+    totalSteps,
     sendMessage,
     approvePlan,
     rejectPlan,
@@ -116,6 +120,9 @@ export default function TestAnalysisChatPage() {
     clearQueueAndProceed,
     processRemainingQueue,
     generateScript,
+    undoToStep,
+    confirmUndo,
+    cancelUndo,
     setMode,
     setSelectedLlm,
     setHeadless,
@@ -309,6 +316,8 @@ export default function TestAnalysisChatPage() {
           onReject={rejectPlan}
           onStepSelect={setSelectedStepId}
           selectedStepId={selectedStepId}
+          onUndoToStep={undoToStep}
+          totalSteps={totalSteps}
         />
 
         {/* Chat Input */}
@@ -408,6 +417,17 @@ export default function TestAnalysisChatPage() {
           failure={queueFailure}
           onProceed={processRemainingQueue}
           onCancel={clearQueueAndProceed}
+        />
+      )}
+
+      {/* Undo Confirmation Dialog */}
+      {undoTargetStep !== null && (
+        <UndoConfirmDialog
+          targetStepNumber={undoTargetStep}
+          totalSteps={totalSteps}
+          isLoading={isUndoing}
+          onConfirm={confirmUndo}
+          onCancel={cancelUndo}
         />
       )}
     </div>

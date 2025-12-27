@@ -63,6 +63,9 @@ interface UseChatSessionReturn {
   queueFailure: QueueFailure | null;
   selectedStepId: string | null;
   error: string | null;
+  isUndoing: boolean;
+  undoTargetStep: number | null;
+  totalSteps: number;
 
   // Actions
   sendMessage: (text: string, messageMode: ChatMode) => Promise<void>;
@@ -75,6 +78,9 @@ interface UseChatSessionReturn {
   clearQueueAndProceed: () => void;
   processRemainingQueue: () => void;
   generateScript: () => Promise<string | null>;
+  undoToStep: (targetStepNumber: number) => void;
+  confirmUndo: () => Promise<void>;
+  cancelUndo: () => void;
   setMode: (mode: ChatMode) => void;
   setSelectedLlm: (llm: LlmModel) => void;
   setHeadless: (headless: boolean) => void;
@@ -105,8 +111,15 @@ export function useChatSession(): UseChatSessionReturn {
   const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
   const [queueFailure, setQueueFailure] = useState<QueueFailure | null>(null);
 
+  // Undo state
+  const [isUndoing, setIsUndoing] = useState(false);
+  const [undoTargetStep, setUndoTargetStep] = useState<number | null>(null);
+
   // Computed busy state
-  const isBusy = isGeneratingPlan || isExecuting || isPlanPending;
+  const isBusy = isGeneratingPlan || isExecuting || isPlanPending || isUndoing;
+
+  // Computed total steps count
+  const totalSteps = messages.filter(m => m.type === 'step').length;
 
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
@@ -836,6 +849,89 @@ export function useChatSession(): UseChatSessionReturn {
     };
   }, [browserSession, resetInactivityTimer, clearInactivityTimeout]);
 
+  // Undo to step - opens confirmation dialog
+  const undoToStep = useCallback((targetStepNumber: number) => {
+    setUndoTargetStep(targetStepNumber);
+  }, []);
+
+  // Cancel undo - closes confirmation dialog
+  const cancelUndo = useCallback(() => {
+    setUndoTargetStep(null);
+  }, []);
+
+  // Confirm undo - actually performs the undo operation
+  const confirmUndo = useCallback(async () => {
+    if (!sessionId || undoTargetStep === null) return;
+
+    setIsUndoing(true);
+    setError(null);
+
+    try {
+      const result = await analysisApi.undoToStep(sessionId, undoTargetStep);
+
+      // Determine which step number we actually ended up at
+      let finalStepNumber: number | null = null;
+      let statusMessage: string;
+      let messageType: 'system' | 'error' = 'system';
+
+      if (result.success) {
+        finalStepNumber = undoTargetStep;
+        statusMessage = result.user_message || `Undo completed. Removed ${result.steps_removed} steps and replayed ${result.steps_replayed} steps.${
+          result.replay_status === 'healed' ? ' (Some selectors were auto-healed)' : ''
+        }`;
+      } else if (result.replay_status === 'partial') {
+        finalStepNumber = result.actual_step_number ?? 0;
+        statusMessage = result.user_message || `Undo partially completed. Replay failed at step ${(result.failed_at_step ?? 0) + 1}. Session is now at step ${finalStepNumber}.`;
+        messageType = 'error';
+      } else {
+        // Complete failure - just show error, don't modify steps
+        setMessages(prev => [
+          ...prev,
+          createTimelineMessage('error', {
+            content: result.user_message || `Undo failed: ${result.error_message || 'Unknown error'}${
+              result.failed_at_step !== null ? ` (failed at step ${result.failed_at_step})` : ''
+            }`,
+          }),
+        ]);
+        return;
+      }
+
+      // Fetch fresh steps from backend to ensure UI matches database state
+      const freshSteps = await analysisApi.getSteps(sessionId);
+      
+      // Rebuild messages: keep non-step messages, replace step messages with fresh data
+      setMessages(prev => {
+        const nonStepMessages = prev.filter(m => m.type !== 'step');
+        const stepMessages = freshSteps.map(step => createTimelineMessage('step', { step }));
+        return [
+          ...nonStepMessages,
+          ...stepMessages,
+          createTimelineMessage(messageType, { content: statusMessage }),
+        ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      });
+
+      // Update step count ref to match fresh steps
+      lastStepCountRef.current = freshSteps.length;
+
+      // Select the last step
+      if (freshSteps.length > 0) {
+        setSelectedStepId(freshSteps[freshSteps.length - 1].id);
+      }
+
+    } catch (e) {
+      console.error('Error during undo:', e);
+      setMessages(prev => [
+        ...prev,
+        createTimelineMessage('error', {
+          content: e instanceof Error ? e.message : 'Failed to undo steps',
+        }),
+      ]);
+    } finally {
+      setIsUndoing(false);
+      setUndoTargetStep(null);
+    }
+  }, [sessionId, undoTargetStep]);
+
   return {
     // State
     messages,
@@ -855,6 +951,9 @@ export function useChatSession(): UseChatSessionReturn {
     queueFailure,
     selectedStepId,
     error,
+    isUndoing,
+    undoTargetStep,
+    totalSteps,
 
     // Actions
     sendMessage,
@@ -867,6 +966,9 @@ export function useChatSession(): UseChatSessionReturn {
     clearQueueAndProceed,
     processRemainingQueue,
     generateScript,
+    undoToStep,
+    confirmUndo,
+    cancelUndo,
     setMode,
     setSelectedLlm,
     setHeadless,

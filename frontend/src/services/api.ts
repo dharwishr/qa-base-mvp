@@ -1,4 +1,4 @@
-import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
@@ -275,6 +275,26 @@ export const analysisApi = {
       }
     );
     return handleResponse<ActModeResponse>(response);
+  },
+
+  /**
+   * Undo to a specific step in a test session.
+   * This will delete all steps after the target step and replay steps 1 through target_step_number
+   * in the current browser session.
+   * 
+   * Note: This does NOT revert any changes made to the application under test.
+   * It only repositions the browser state by replaying the earlier steps.
+   */
+  async undoToStep(sessionId: string, targetStepNumber: number): Promise<UndoResponse> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/undo`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ target_step_number: targetStepNumber }),
+      }
+    );
+    return handleResponse<UndoResponse>(response);
   },
 };
 

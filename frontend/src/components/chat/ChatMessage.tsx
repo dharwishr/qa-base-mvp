@@ -13,6 +13,7 @@ import {
   FileText,
   Check,
   X,
+  RotateCcw,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,8 @@ interface ChatMessageProps {
   onReject?: (planId: string) => void;
   onStepSelect?: (stepId: string) => void;
   isSelected?: boolean;
+  onUndoToStep?: (stepNumber: number) => void;
+  totalSteps?: number;
 }
 
 function formatTime(timestamp: string): string {
@@ -226,15 +229,21 @@ function StepMessageCard({
   message,
   onStepSelect,
   isSelected,
+  onUndoToStep,
+  totalSteps = 0,
 }: {
   message: StepMessage;
   onStepSelect?: (stepId: string) => void;
   isSelected?: boolean;
+  onUndoToStep?: (stepNumber: number) => void;
+  totalSteps?: number;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showUndoHint, setShowUndoHint] = useState(false);
   const step = message.step;
 
   const hasDetails = step.thinking || step.evaluation || step.actions?.length;
+  const canUndo = onUndoToStep && step.step_number < totalSteps && step.status === 'completed';
 
   const StatusIcon = () => {
     switch (step.status) {
@@ -383,6 +392,33 @@ function StepMessageCard({
                   )}
                 </div>
               )}
+
+              {/* Undo button - shown on hover when this isn't the last step */}
+              {canUndo && (
+                <div 
+                  className="mt-2 pt-2 border-t flex justify-end"
+                  onMouseEnter={() => setShowUndoHint(true)}
+                  onMouseLeave={() => setShowUndoHint(false)}
+                >
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onUndoToStep?.(step.step_number);
+                    }}
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Undo till here
+                  </Button>
+                  {showUndoHint && (
+                    <span className="text-xs text-muted-foreground self-center ml-2">
+                      Removes steps {step.step_number + 1}–{totalSteps}
+                    </span>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -431,6 +467,8 @@ export default function ChatMessage({
   onReject,
   onStepSelect,
   isSelected,
+  onUndoToStep,
+  totalSteps,
 }: ChatMessageProps) {
   switch (message.type) {
     case 'user':
@@ -451,6 +489,8 @@ export default function ChatMessage({
           message={message}
           onStepSelect={onStepSelect}
           isSelected={isSelected}
+          onUndoToStep={onUndoToStep}
+          totalSteps={totalSteps}
         />
       );
     case 'error':

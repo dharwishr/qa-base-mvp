@@ -26,6 +26,8 @@ from app.schemas import (
 	TestSessionListResponse,
 	TestSessionResponse,
 	TestStepResponse,
+	UndoRequest,
+	UndoResponse,
 	WSError,
 )
 from app.services.plan_service import generate_plan
@@ -481,6 +483,63 @@ async def clear_session_steps(
 	db.query(TestStep).filter(TestStep.session_id == session_id).delete(synchronize_session=False)
 	
 	db.commit()
+
+
+# ============================================
+# Undo Endpoints
+# ============================================
+
+@router.post("/sessions/{session_id}/undo", response_model=UndoResponse)
+async def undo_to_step(
+	session_id: str,
+	request: UndoRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Undo a test session to a specific step number.
+	
+	This will:
+	1. Delete all steps after the target step number
+	2. Replay steps 1 through target_step_number in the current browser session
+	
+	Note: This does NOT revert any changes made to the application under test.
+	It only repositions the browser state by replaying the earlier steps.
+	
+	The replay uses the existing browser session (CDP connection) and does not
+	consume any LLM tokens.
+	"""
+	from app.services.undo_service import undo_to_step as do_undo
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Allow undo from various states
+	allowed_states = ("completed", "failed", "stopped", "running")
+	if session.status not in allowed_states:
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot undo session in status: {session.status}. "
+				   f"Allowed states: {', '.join(allowed_states)}"
+		)
+
+	try:
+		result = await do_undo(db, session, request.target_step_number)
+		
+		return UndoResponse(
+			success=result.success,
+			target_step_number=result.target_step_number,
+			steps_removed=result.steps_removed,
+			steps_replayed=result.steps_replayed,
+			replay_status=result.replay_status,
+			error_message=result.error_message,
+			failed_at_step=result.failed_at_step,
+			actual_step_number=result.actual_step_number,
+			user_message=result.user_message,
+		)
+	except Exception as e:
+		logger.error(f"Undo failed for session {session_id}: {e}")
+		raise HTTPException(status_code=500, detail=f"Undo failed: {str(e)}")
 
 
 # ============================================

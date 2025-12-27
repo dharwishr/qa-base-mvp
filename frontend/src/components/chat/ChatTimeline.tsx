@@ -11,6 +11,8 @@ interface ChatTimelineProps {
   onReject?: (planId: string) => void;
   onStepSelect?: (stepId: string) => void;
   selectedStepId?: string | null;
+  onUndoToStep?: (stepNumber: number) => void;
+  totalSteps?: number;
 }
 
 export default function ChatTimeline({
@@ -21,6 +23,8 @@ export default function ChatTimeline({
   onReject,
   onStepSelect,
   selectedStepId,
+  onUndoToStep,
+  totalSteps = 0,
 }: ChatTimelineProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -74,6 +78,8 @@ export default function ChatTimeline({
           isSelected={
             message.type === 'step' && message.step.id === selectedStepId
           }
+          onUndoToStep={onUndoToStep}
+          totalSteps={totalSteps}
         />
       ))}
 

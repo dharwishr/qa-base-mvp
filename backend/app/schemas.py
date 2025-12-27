@@ -412,3 +412,29 @@ class StartBenchmarkResponse(BaseModel):
 	benchmark_id: str
 	status: str
 	task_ids: list[str]
+
+
+# ============================================
+# Undo Schemas
+# ============================================
+
+class UndoRequest(BaseModel):
+	"""Request to undo steps in a test session."""
+	target_step_number: int = Field(
+		...,
+		ge=1,
+		description="The step number to undo to (inclusive). All steps after this will be removed and the browser will replay from step 1 to this step."
+	)
+
+
+class UndoResponse(BaseModel):
+	"""Response from an undo operation."""
+	success: bool
+	target_step_number: int
+	steps_removed: int = Field(..., description="Number of steps that were deleted from the session")
+	steps_replayed: int = Field(..., description="Number of steps that were replayed in the browser")
+	replay_status: str = Field(..., description="Status of the replay: passed | failed | healed | partial")
+	error_message: str | None = None
+	failed_at_step: int | None = Field(None, description="If replay failed, the step index where it failed")
+	actual_step_number: int | None = Field(None, description="The actual step number the session ended at (for partial undo)")
+	user_message: str | None = Field(None, description="Human-readable message to display in the chat")
