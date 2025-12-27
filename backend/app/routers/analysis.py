@@ -19,9 +19,11 @@ from app.schemas import (
 	CreateSessionRequest,
 	ExecuteResponse,
 	ExecutionLogResponse,
+	RecordingStatusResponse,
 	RejectPlanRequest,
 	ReplaySessionRequest,
 	ReplaySessionResponse,
+	StartRecordingRequest,
 	StopResponse,
 	TestPlanResponse,
 	TestSessionDetailResponse,
@@ -557,7 +559,11 @@ async def get_session_steps(
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
 
-	return session.steps
+	# Refresh session to get latest steps from DB
+	db.refresh(session)
+	steps = session.steps
+	logger.info(f"GET /steps for session {session_id}: returning {len(steps)} steps")
+	return steps
 
 
 @router.delete("/sessions/{session_id}/steps", status_code=204)
@@ -694,6 +700,134 @@ async def replay_session(
 	except Exception as e:
 		logger.error(f"Replay failed for session {session_id}: {e}")
 		raise HTTPException(status_code=500, detail=f"Replay failed: {str(e)}")
+
+
+# ============================================
+# User Recording Endpoints
+# ============================================
+
+@router.post("/sessions/{session_id}/recording/start", response_model=RecordingStatusResponse)
+async def start_recording(
+	session_id: str,
+	request: StartRecordingRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Start recording user interactions in the live browser.
+
+	This connects to the existing browser session via CDP and injects
+	event listeners to capture user interactions (clicks, typing, etc.)
+	as test steps.
+	"""
+	from app.services.browser_orchestrator import get_orchestrator
+	from app.services.user_recording_service import UserRecordingService, get_active_recording
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Check if already recording
+	existing_recording = get_active_recording(session_id)
+	if existing_recording:
+		state = existing_recording.get_status()
+		return RecordingStatusResponse(
+			is_recording=True,
+			session_id=session_id,
+			browser_session_id=state.browser_session_id if state else None,
+			steps_recorded=state.steps_recorded if state else 0,
+			started_at=state.started_at if state else None,
+		)
+
+	# Get browser session from orchestrator
+	orchestrator = get_orchestrator()
+	browser_session = await orchestrator.get_session(request.browser_session_id)
+	if not browser_session:
+		raise HTTPException(status_code=404, detail="Browser session not found")
+
+	if not browser_session.cdp_ws_url:
+		raise HTTPException(status_code=400, detail="Browser session has no CDP URL")
+
+	try:
+		# Create and start recording service
+		recording_service = UserRecordingService(db, session, browser_session)
+		state = await recording_service.start()
+
+		return RecordingStatusResponse(
+			is_recording=True,
+			session_id=session_id,
+			browser_session_id=browser_session.id,
+			steps_recorded=state.steps_recorded,
+			started_at=state.started_at,
+		)
+	except Exception as e:
+		logger.error(f"Failed to start recording for session {session_id}: {e}")
+		raise HTTPException(status_code=500, detail=f"Failed to start recording: {str(e)}")
+
+
+@router.post("/sessions/{session_id}/recording/stop", response_model=RecordingStatusResponse)
+async def stop_recording(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Stop recording user interactions."""
+	from app.services.user_recording_service import get_active_recording
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	recording = get_active_recording(session_id)
+	if not recording:
+		return RecordingStatusResponse(
+			is_recording=False,
+			session_id=session_id,
+			steps_recorded=0,
+		)
+
+	try:
+		state = await recording.stop()
+		return RecordingStatusResponse(
+			is_recording=False,
+			session_id=session_id,
+			browser_session_id=state.browser_session_id,
+			steps_recorded=state.steps_recorded,
+			started_at=state.started_at,
+		)
+	except Exception as e:
+		logger.error(f"Failed to stop recording for session {session_id}: {e}")
+		raise HTTPException(status_code=500, detail=f"Failed to stop recording: {str(e)}")
+
+
+@router.get("/sessions/{session_id}/recording/status", response_model=RecordingStatusResponse)
+async def get_recording_status(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Get current recording status for a session."""
+	from app.services.user_recording_service import get_active_recording
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	recording = get_active_recording(session_id)
+	if not recording:
+		return RecordingStatusResponse(
+			is_recording=False,
+			session_id=session_id,
+			steps_recorded=0,
+		)
+
+	state = recording.get_status()
+	return RecordingStatusResponse(
+		is_recording=state.is_active if state else False,
+		session_id=session_id,
+		browser_session_id=state.browser_session_id if state else None,
+		steps_recorded=state.steps_recorded if state else 0,
+		started_at=state.started_at if state else None,
+	)
 
 
 # ============================================

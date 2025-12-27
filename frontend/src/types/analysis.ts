@@ -206,3 +206,12 @@ export interface ReplayResponse {
   browser_session_id: string | null;
   user_message: string | null;
 }
+
+// Recording types
+export interface RecordingStatusResponse {
+  is_recording: boolean;
+  session_id: string;
+  browser_session_id: string | null;
+  steps_recorded: number;
+  started_at: string | null;
+}

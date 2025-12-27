@@ -1,4 +1,4 @@
-import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, ReplayResponse, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingStatusResponse, ReplayResponse, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
@@ -327,6 +327,49 @@ export const analysisApi = {
       }
     );
     return handleResponse<TestSession>(response);
+  },
+
+  /**
+   * Start recording user interactions in the live browser.
+   * This captures clicks, typing, scrolling, and other user actions as test steps.
+   */
+  async startRecording(sessionId: string, browserSessionId: string): Promise<RecordingStatusResponse> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/recording/start`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ browser_session_id: browserSessionId }),
+      }
+    );
+    return handleResponse<RecordingStatusResponse>(response);
+  },
+
+  /**
+   * Stop recording user interactions.
+   */
+  async stopRecording(sessionId: string): Promise<RecordingStatusResponse> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/recording/stop`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      }
+    );
+    return handleResponse<RecordingStatusResponse>(response);
+  },
+
+  /**
+   * Get current recording status for a session.
+   */
+  async getRecordingStatus(sessionId: string): Promise<RecordingStatusResponse> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/recording/status`,
+      {
+        headers: getAuthHeaders(),
+      }
+    );
+    return handleResponse<RecordingStatusResponse>(response);
   },
 };
 

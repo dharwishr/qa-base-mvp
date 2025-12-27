@@ -123,6 +123,9 @@ export default function TestAnalysisChatPage() {
     undoToStep,
     confirmUndo,
     cancelUndo,
+    startRecording,
+    stopRecording,
+    isRecording,
     setMode,
     setSelectedLlm,
     setHeadless,
@@ -355,6 +358,11 @@ export default function TestAnalysisChatPage() {
             onClose={endBrowserSession}
             onStopBrowser={endBrowserSession}
             className="flex-1 m-4"
+            isRecording={isRecording}
+            onStartRecording={startRecording}
+            onStopRecording={stopRecording}
+            canRecord={!!sessionId && !!browserSession?.id && !isExecuting}
+            isAIExecuting={isExecuting}
           />
         ) : !headless && isExecuting ? (
           <div className="flex-1 flex items-center justify-center">

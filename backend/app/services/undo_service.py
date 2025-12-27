@@ -283,7 +283,9 @@ async def undo_to_step(
                     ).all()
                     
                     # Get the action type of the first failed step for the message
-                    failed_action = fresh_steps_to_delete[0].action_type if fresh_steps_to_delete else "unknown"
+                    failed_action = "unknown"
+                    if fresh_steps_to_delete and fresh_steps_to_delete[0].actions:
+                        failed_action = fresh_steps_to_delete[0].actions[0].action_name
                     
                     # Delete step actions first, then steps
                     for step in fresh_steps_to_delete:

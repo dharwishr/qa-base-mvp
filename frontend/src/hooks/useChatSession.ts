@@ -66,6 +66,7 @@ interface UseChatSessionReturn {
   isUndoing: boolean;
   undoTargetStep: number | null;
   totalSteps: number;
+  isRecording: boolean;
 
   // Actions
   sendMessage: (text: string, messageMode: ChatMode) => Promise<void>;
@@ -81,6 +82,8 @@ interface UseChatSessionReturn {
   undoToStep: (targetStepNumber: number) => void;
   confirmUndo: () => Promise<void>;
   cancelUndo: () => void;
+  startRecording: () => Promise<void>;
+  stopRecording: () => Promise<void>;
   setMode: (mode: ChatMode) => void;
   setSelectedLlm: (llm: LlmModel) => void;
   setHeadless: (headless: boolean) => void;
@@ -114,6 +117,15 @@ export function useChatSession(): UseChatSessionReturn {
   // Undo state
   const [isUndoing, setIsUndoing] = useState(false);
   const [undoTargetStep, setUndoTargetStep] = useState<number | null>(null);
+
+  // Recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const isRecordingRef = useRef(false);
+
+  // Keep recording ref in sync
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
 
   // Computed busy state
   const isBusy = isGeneratingPlan || isExecuting || isPlanPending || isUndoing;
@@ -188,13 +200,22 @@ export function useChatSession(): UseChatSessionReturn {
     browserPollIntervalRef.current = setInterval(checkBrowserSession, 3000);
   }, [stopBrowserPolling]);
 
+  // Ref to track current session ID for polling (avoids stale closure issues)
+  const sessionIdRef = useRef<string | null>(null);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
   // Poll for session updates
-  const pollSession = useCallback(async () => {
-    if (!sessionId) return;
+  const pollSession = useCallback(async (overrideSessionId?: string) => {
+    const targetSessionId = overrideSessionId || sessionIdRef.current;
+    if (!targetSessionId) return;
 
     try {
-      const session = await analysisApi.getSession(sessionId);
-      const steps = await analysisApi.getSteps(sessionId);
+      const session = await analysisApi.getSession(targetSessionId);
+      const steps = await analysisApi.getSteps(targetSessionId);
 
       // Update session status
       setSessionStatus(session.status);
@@ -221,9 +242,10 @@ export function useChatSession(): UseChatSessionReturn {
         if (browserSession) {
           inactivityTimeoutRef.current = setTimeout(async () => {
             console.log('Browser session inactive for 3 minutes, stopping...');
-            if (sessionId) {
+            const currentSessionId = sessionIdRef.current;
+            if (currentSessionId) {
               try {
-                await fetch(`${config.API_URL}/api/analysis/sessions/${sessionId}/end-browser`, {
+                await fetch(`${config.API_URL}/api/analysis/sessions/${currentSessionId}/end-browser`, {
                   method: 'POST',
                   headers: { Authorization: `Bearer ${getAuthToken()}` },
                 });
@@ -241,54 +263,60 @@ export function useChatSession(): UseChatSessionReturn {
         }
       }
 
-      // Handle completion states
-      if (session.status === 'completed') {
-        setIsExecuting(false);
-        stopPolling();
-        // Don't stop browser polling - keep browser alive
-        setMessages((prev) => [
-          ...prev,
-          createTimelineMessage('system', {
-            content: `Test completed successfully with ${steps.length} steps`,
-          }),
-        ]);
-        // Update plan status to 'executing' -> show as done
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.type === 'plan' && msg.status === 'executing'
-              ? { ...msg, status: 'approved' as const }
-              : msg
-          )
-        );
-      } else if (session.status === 'stopped') {
-        setIsExecuting(false);
-        stopPolling();
-        setMessages((prev) => [
-          ...prev,
-          createTimelineMessage('system', {
-            content: `Test stopped after ${steps.length} steps`,
-          }),
-        ]);
-      } else if (session.status === 'failed') {
-        setIsExecuting(false);
-        stopPolling();
-        setMessages((prev) => [
-          ...prev,
-          createTimelineMessage('error', {
-            content: 'Test execution failed',
-          }),
-        ]);
+      // Handle completion states - but skip if recording (we want to keep polling for new recorded steps)
+      if (!isRecordingRef.current) {
+        if (session.status === 'completed') {
+          setIsExecuting(false);
+          stopPolling();
+          // Don't stop browser polling - keep browser alive
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('system', {
+              content: `Test completed successfully with ${steps.length} steps`,
+            }),
+          ]);
+          // Update plan status to 'executing' -> show as done
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.type === 'plan' && msg.status === 'executing'
+                ? { ...msg, status: 'approved' as const }
+                : msg
+            )
+          );
+        } else if (session.status === 'stopped') {
+          setIsExecuting(false);
+          stopPolling();
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('system', {
+              content: `Test stopped after ${steps.length} steps`,
+            }),
+          ]);
+        } else if (session.status === 'failed') {
+          setIsExecuting(false);
+          stopPolling();
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('error', {
+              content: 'Test execution failed',
+            }),
+          ]);
+        }
       }
     } catch (e) {
       console.error('Error polling session:', e);
     }
-  }, [sessionId, stopPolling, browserSession, clearInactivityTimeout, stopBrowserPolling]);
+  }, [stopPolling, browserSession, clearInactivityTimeout, stopBrowserPolling]);
 
-  // Start polling
-  const startPolling = useCallback(() => {
+  // Start polling - accepts optional session ID for new sessions where state hasn't updated yet
+  const startPolling = useCallback((overrideSessionId?: string) => {
     stopPolling();
-    pollSession();
-    pollIntervalRef.current = setInterval(pollSession, POLL_INTERVAL);
+    // If override provided, update the ref immediately so interval callbacks use it
+    if (overrideSessionId) {
+      sessionIdRef.current = overrideSessionId;
+    }
+    pollSession(overrideSessionId);
+    pollIntervalRef.current = setInterval(() => pollSession(), POLL_INTERVAL);
   }, [pollSession, stopPolling]);
 
   // Persist message to backend
@@ -494,7 +522,7 @@ export function useChatSession(): UseChatSessionReturn {
             await analysisApi.startExecution(targetSessionId);
 
             setIsExecuting(true);
-            startPolling();
+            startPolling(targetSessionId);
 
             // Start browser polling if not headless
             if (!headless) {
@@ -605,7 +633,7 @@ export function useChatSession(): UseChatSessionReturn {
         // DON'T reset lastStepCountRef - it should already have the correct count
         // from previous steps (for continuations) or be 0 (for new sessions).
         // Resetting to 0 would cause ALL steps to be re-fetched including old ones.
-        startPolling();
+        startPolling(sessionId);
 
         // Start browser polling if not headless
         if (!headless) {
@@ -898,7 +926,7 @@ export function useChatSession(): UseChatSessionReturn {
 
       // Fetch fresh steps from backend to ensure UI matches database state
       const freshSteps = await analysisApi.getSteps(sessionId);
-      
+
       // Rebuild messages: keep non-step messages, replace step messages with fresh data
       setMessages(prev => {
         const nonStepMessages = prev.filter(m => m.type !== 'step');
@@ -932,6 +960,58 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, [sessionId, undoTargetStep]);
 
+  // Start recording user interactions
+  const startRecording = useCallback(async () => {
+    if (!sessionId || !browserSession?.id) return;
+
+    try {
+      await analysisApi.startRecording(sessionId, browserSession.id);
+      setIsRecording(true);
+      // Start polling for steps during recording
+      startPolling();
+      setMessages(prev => [
+        ...prev,
+        createTimelineMessage('system', {
+          content: 'Recording started. Your interactions with the browser will be captured.',
+        }),
+      ]);
+    } catch (e) {
+      console.error('Error starting recording:', e);
+      setMessages(prev => [
+        ...prev,
+        createTimelineMessage('error', {
+          content: e instanceof Error ? e.message : 'Failed to start recording',
+        }),
+      ]);
+    }
+  }, [sessionId, browserSession?.id, startPolling]);
+
+  // Stop recording user interactions
+  const stopRecording = useCallback(async () => {
+    if (!sessionId) return;
+
+    try {
+      await analysisApi.stopRecording(sessionId);
+      setIsRecording(false);
+      // Stop polling when recording stops
+      stopPolling();
+      setMessages(prev => [
+        ...prev,
+        createTimelineMessage('system', {
+          content: 'Recording stopped.',
+        }),
+      ]);
+    } catch (e) {
+      console.error('Error stopping recording:', e);
+      setMessages(prev => [
+        ...prev,
+        createTimelineMessage('error', {
+          content: e instanceof Error ? e.message : 'Failed to stop recording',
+        }),
+      ]);
+    }
+  }, [sessionId, stopPolling]);
+
   return {
     // State
     messages,
@@ -954,6 +1034,7 @@ export function useChatSession(): UseChatSessionReturn {
     isUndoing,
     undoTargetStep,
     totalSteps,
+    isRecording,
 
     // Actions
     sendMessage,
@@ -969,6 +1050,8 @@ export function useChatSession(): UseChatSessionReturn {
     undoToStep,
     confirmUndo,
     cancelUndo,
+    startRecording,
+    stopRecording,
     setMode,
     setSelectedLlm,
     setHeadless,

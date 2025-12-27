@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square } from 'lucide-react'
+import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square, Circle } from 'lucide-react'
 
 interface LiveBrowserViewProps {
     sessionId: string | null
@@ -8,6 +8,12 @@ interface LiveBrowserViewProps {
     onClose?: () => void
     onStopBrowser?: () => Promise<void>
     className?: string
+    // Recording props
+    isRecording?: boolean
+    onStartRecording?: () => Promise<void>
+    onStopRecording?: () => Promise<void>
+    canRecord?: boolean  // Whether recording is available (not executing, browser session exists)
+    isAIExecuting?: boolean  // Whether AI is currently executing (blocks all interaction)
 }
 
 export default function LiveBrowserView({
@@ -16,12 +22,18 @@ export default function LiveBrowserView({
     novncUrl,
     onClose,
     onStopBrowser,
-    className = ''
+    className = '',
+    isRecording = false,
+    onStartRecording,
+    onStopRecording,
+    canRecord = false,
+    isAIExecuting = false,
 }: LiveBrowserViewProps) {
     const [isStopping, setIsStopping] = useState(false)
     const [isExpanded, setIsExpanded] = useState(false)
     const [isLoading, setIsLoading] = useState(true)
     const [hasError, setHasError] = useState(false)
+    const [isToggling, setIsToggling] = useState(false)
     const iframeRef = useRef<HTMLIFrameElement>(null)
 
     // Prefer novncUrl (direct noVNC access) over liveViewUrl (wrapper page)
@@ -67,6 +79,20 @@ export default function LiveBrowserView({
         }
     }, [onStopBrowser, isStopping])
 
+    const handleToggleRecording = useCallback(async () => {
+        if (isToggling) return
+        setIsToggling(true)
+        try {
+            if (isRecording && onStopRecording) {
+                await onStopRecording()
+            } else if (!isRecording && onStartRecording) {
+                await onStartRecording()
+            }
+        } finally {
+            setIsToggling(false)
+        }
+    }, [isRecording, onStartRecording, onStopRecording, isToggling])
+
     useEffect(() => {
         setIsLoading(true)
         setHasError(false)
@@ -84,22 +110,46 @@ export default function LiveBrowserView({
     }
 
     return (
-        <div className={`rounded-lg border bg-card shadow-sm overflow-hidden flex flex-col ${isExpanded ? 'fixed inset-4 z-50' : ''} ${className}`}>
+        <div className={`rounded-lg border bg-card shadow-sm overflow-hidden flex flex-col ${isExpanded ? 'fixed inset-4 z-50' : ''} ${isRecording ? 'ring-2 ring-red-500 ring-offset-2' : ''} ${className}`}>
             {/* Header */}
-            <div className="border-b bg-muted/30 px-4 py-2 flex items-center justify-between">
+            <div className={`border-b px-4 py-2 flex items-center justify-between ${isRecording ? 'bg-red-50' : 'bg-muted/30'}`}>
                 <div className="flex items-center gap-2">
-                    <Monitor className="h-4 w-4 text-green-500" />
-                    <span className="text-sm font-medium">Live Browser</span>
-                    {isLoading && (
+                    <Monitor className={`h-4 w-4 ${isRecording ? 'text-red-500' : 'text-green-500'}`} />
+                    <span className="text-sm font-medium">
+                        {isRecording ? 'Recording' : 'Live Browser'}
+                    </span>
+                    {isRecording && (
+                        <span className="flex items-center gap-1 text-xs text-red-600 font-medium animate-pulse">
+                            <Circle className="h-2 w-2 fill-red-500 text-red-500" />
+                            REC
+                        </span>
+                    )}
+                    {isLoading && !isRecording && (
                         <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground" />
                     )}
-                    {sessionId && (
+                    {sessionId && !isRecording && (
                         <span className="text-xs text-muted-foreground font-mono">
                             {sessionId.substring(0, 8)}...
                         </span>
                     )}
                 </div>
                 <div className="flex items-center gap-1">
+                    {/* Recording button */}
+                    {canRecord && (onStartRecording || onStopRecording) && (
+                        <button
+                            onClick={handleToggleRecording}
+                            disabled={isToggling}
+                            className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                                isRecording
+                                    ? 'bg-red-500 text-white hover:bg-red-600'
+                                    : 'bg-red-100 text-red-700 hover:bg-red-200'
+                            } ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            title={isRecording ? 'Stop Recording' : 'Take Control & Record'}
+                        >
+                            <Circle className={`h-3 w-3 ${isRecording ? 'fill-white animate-pulse' : 'fill-red-500'}`} />
+                            {isToggling ? 'Loading...' : (isRecording ? 'Stop' : 'Record')}
+                        </button>
+                    )}
                     <button
                         onClick={handleRefresh}
                         className="p-1.5 rounded hover:bg-muted transition-colors"
@@ -173,6 +223,28 @@ export default function LiveBrowserView({
                     </div>
                 )}
 
+                {/* Interaction blocker overlay - blocks user interaction */}
+                {!isRecording && (isAIExecuting || canRecord) && (
+                    <div
+                        className="absolute inset-0 z-20 bg-transparent cursor-not-allowed"
+                        title={isAIExecuting ? "AI is controlling the browser" : "Click 'Record' to take control and interact with the browser"}
+                    >
+                        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+                            {isAIExecuting ? (
+                                <>
+                                    <RefreshCw className="h-3 w-3 animate-spin" />
+                                    AI is working...
+                                </>
+                            ) : (
+                                <>
+                                    <Circle className="h-3 w-3 fill-red-500 text-red-500" />
+                                    Click "Record" to take control
+                                </>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {fullViewUrl && (
                     <iframe
                         ref={iframeRef}
@@ -181,7 +253,7 @@ export default function LiveBrowserView({
                         onLoad={handleIframeLoad}
                         onError={handleIframeError}
                         title="Live Browser View"
-                        sandbox="allow-scripts allow-same-origin"
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-modals"
                     />
                 )}
             </div>

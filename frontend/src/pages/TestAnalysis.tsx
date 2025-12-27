@@ -26,6 +26,7 @@ export default function TestAnalysis() {
     const [selectedLlm, setSelectedLlm] = useState<LlmModel>('gemini-2.5-flash')
     const [headless, setHeadless] = useState(true) // Default to headless mode
     const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null)
+    const [isRecording, setIsRecording] = useState(false)
 
     // Polling hook for step updates (replaces WebSocket)
     const {
@@ -85,10 +86,10 @@ export default function TestAnalysis() {
         }
     }, [pollingError])
 
-    // Poll for browser session when executing in non-headless mode
+    // Poll for browser session when in non-headless mode
+    // Keep polling even after execution to allow recording
     useEffect(() => {
-        if (!session?.id || headless || !isExecuting) {
-            setBrowserSession(null)
+        if (!session?.id || headless) {
             return
         }
 
@@ -111,6 +112,9 @@ export default function TestAnalysis() {
                             liveViewUrl: `/browser/sessions/${matching.id}/view`,
                             novncUrl: matching.novnc_url,
                         })
+                    } else {
+                        // Browser session no longer exists
+                        setBrowserSession(null)
                     }
                 }
             } catch (e) {
@@ -122,14 +126,7 @@ export default function TestAnalysis() {
         const interval = setInterval(checkBrowserSession, 3000)
 
         return () => clearInterval(interval)
-    }, [session?.id, headless, isExecuting])
-
-    // Clear browser session when execution completes
-    useEffect(() => {
-        if (!isExecuting) {
-            setBrowserSession(null)
-        }
-    }, [isExecuting])
+    }, [session?.id, headless])
 
     // Generate plan from prompt
     const handleGenerate = async () => {
@@ -182,6 +179,31 @@ export default function TestAnalysis() {
         setPrompt("")
         setSelectedStepId(null)
         setSelectedLlm('gemini-2.5-flash')
+        setIsRecording(false)
+    }
+
+    // Start recording user interactions
+    const handleStartRecording = async () => {
+        if (!session?.id || !browserSession?.id) return
+        try {
+            await analysisApi.startRecording(session.id, browserSession.id)
+            setIsRecording(true)
+        } catch (e) {
+            console.error('Error starting recording:', e)
+            setError(e instanceof Error ? e.message : 'Failed to start recording')
+        }
+    }
+
+    // Stop recording user interactions
+    const handleStopRecording = async () => {
+        if (!session?.id) return
+        try {
+            await analysisApi.stopRecording(session.id)
+            setIsRecording(false)
+        } catch (e) {
+            console.error('Error stopping recording:', e)
+            setError(e instanceof Error ? e.message : 'Failed to stop recording')
+        }
     }
 
     // Resizable panel state
@@ -373,14 +395,19 @@ export default function TestAnalysis() {
                         onHeadlessChange={setHeadless}
                         disabled={analysisState !== 'idle'}
                     />
-                    {/* Show live browser during execution in non-headless mode */}
-                    {isExecuting && !headless ? (
+                    {/* Show live browser when executing, recording, or browser session is available */}
+                    {!headless && (isExecuting || isRecording || browserSession) ? (
                         browserSession ? (
                             <LiveBrowserView
                                 sessionId={browserSession.id}
                                 liveViewUrl={browserSession.liveViewUrl}
                                 novncUrl={browserSession.novncUrl}
                                 className="flex-1"
+                                isRecording={isRecording}
+                                onStartRecording={handleStartRecording}
+                                onStopRecording={handleStopRecording}
+                                canRecord={!!session?.id && !!browserSession?.id && !isExecuting}
+                                isAIExecuting={isExecuting}
                             />
                         ) : (
                             <div className="flex-1 flex items-center justify-center">

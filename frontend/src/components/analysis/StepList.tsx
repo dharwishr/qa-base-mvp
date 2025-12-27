@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useState } from "react"
 import type { TestStep as AnalysisTestStep } from "@/types/analysis"
@@ -49,6 +49,16 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear 
         return step.thinking || step.url || step.actions?.length
     }
 
+    // Check if step is user-recorded (has any action with source: 'user')
+    const isUserRecorded = (step: TestStep) => {
+        return step.actions?.some(action =>
+            action.action_params &&
+            typeof action.action_params === 'object' &&
+            'source' in action.action_params &&
+            action.action_params.source === 'user'
+        ) ?? false
+    }
+
     return (
         <div className="flex flex-col flex-1 bg-background min-h-0">
             <div className="p-4 border-b flex justify-between items-center bg-muted/20">
@@ -71,6 +81,7 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear 
                     const isExpanded = expandedSteps.has(step.id)
                     const showDetails = hasDetails(step)
                     const isSelected = selectedStepId === step.id
+                    const isUserStep = isUserRecorded(step)
 
                     return (
                         <div key={step.id}>
@@ -79,7 +90,7 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear 
                                     step.status === 'failed' ? 'border-l-red-500' :
                                         step.status === 'running' ? 'border-l-yellow-500' :
                                             'border-l-primary/50'
-                                    } ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'}`}
+                                    } ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'} ${isUserStep ? 'bg-red-50/30' : ''}`}
                                 onClick={() => onStepSelect?.(step)}
                             >
                                 <CardContent className="p-3">
@@ -103,7 +114,21 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear 
 
                                         {/* Description */}
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium">{step.description}</p>
+                                            <div className="flex items-center gap-2">
+                                                <p className="text-sm font-medium">{step.description}</p>
+                                                {/* Source indicator */}
+                                                {isUserStep ? (
+                                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700">
+                                                        <Circle className="h-2 w-2 fill-red-500" />
+                                                        User
+                                                    </span>
+                                                ) : step.thinking ? (
+                                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
+                                                        <Bot className="h-2 w-2" />
+                                                        AI
+                                                    </span>
+                                                ) : null}
+                                            </div>
                                             {step.url && (
                                                 <div className="flex items-center gap-1 mt-1">
                                                     <ExternalLink className="h-3 w-3 text-muted-foreground" />
@@ -160,33 +185,46 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear 
                                                         Actions ({step.actions.length})
                                                     </div>
                                                     <div className="space-y-1">
-                                                        {step.actions.map((action, idx) => (
-                                                            <div
-                                                                key={action.id || idx}
-                                                                className={`text-xs p-2 rounded flex items-center gap-2 ${action.result_success ? 'bg-green-50' :
-                                                                    action.result_error ? 'bg-red-50' : 'bg-muted/50'
-                                                                    }`}
-                                                            >
-                                                                {action.result_success !== null && (
-                                                                    action.result_success ? (
-                                                                        <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
-                                                                    ) : (
-                                                                        <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
-                                                                    )
-                                                                )}
-                                                                <span className="font-mono">{action.action_name}</span>
-                                                                {action.element_name && (
-                                                                    <span className="text-muted-foreground">
-                                                                        → {action.element_name}
-                                                                    </span>
-                                                                )}
-                                                                {action.result_error && (
-                                                                    <span className="text-red-600 truncate">
-                                                                        {action.result_error}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        ))}
+                                                        {step.actions.map((action, idx) => {
+                                                            const isUserAction = action.action_params &&
+                                                                typeof action.action_params === 'object' &&
+                                                                'source' in action.action_params &&
+                                                                action.action_params.source === 'user'
+
+                                                            return (
+                                                                <div
+                                                                    key={action.id || idx}
+                                                                    className={`text-xs p-2 rounded flex items-center gap-2 ${action.result_success ? 'bg-green-50' :
+                                                                        action.result_error ? 'bg-red-50' : 'bg-muted/50'
+                                                                        }`}
+                                                                >
+                                                                    {action.result_success !== null && (
+                                                                        action.result_success ? (
+                                                                            <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
+                                                                        ) : (
+                                                                            <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                                                                        )
+                                                                    )}
+                                                                    <span className="font-mono">{action.action_name}</span>
+                                                                    {action.element_name && (
+                                                                        <span className="text-muted-foreground">
+                                                                            → {action.element_name}
+                                                                        </span>
+                                                                    )}
+                                                                    {isUserAction && (
+                                                                        <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-red-100 text-red-600">
+                                                                            <Circle className="h-1.5 w-1.5 fill-red-500" />
+                                                                            recorded
+                                                                        </span>
+                                                                    )}
+                                                                    {action.result_error && (
+                                                                        <span className="text-red-600 truncate">
+                                                                            {action.result_error}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )
+                                                        })}
                                                     </div>
                                                 </div>
                                             )}

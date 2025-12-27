@@ -467,3 +467,21 @@ class ReplaySessionResponse(BaseModel):
 	failed_at_step: int | None = Field(None, description="If replay failed, the step number where it failed")
 	browser_session_id: str | None = Field(None, description="The browser session ID for live view")
 	user_message: str | None = Field(None, description="Human-readable message to display in the chat")
+
+
+# ============================================
+# User Recording Schemas
+# ============================================
+
+class StartRecordingRequest(BaseModel):
+	"""Request to start recording user interactions."""
+	browser_session_id: str = Field(..., description="ID of the browser session to record from")
+
+
+class RecordingStatusResponse(BaseModel):
+	"""Response with recording status information."""
+	is_recording: bool
+	session_id: str
+	browser_session_id: str | None = None
+	steps_recorded: int = 0
+	started_at: datetime | None = None

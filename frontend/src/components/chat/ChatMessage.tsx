@@ -119,10 +119,10 @@ function PlanMessageCard({
           </span>
           <Card
             className={`border-l-4 ${isApproved || isExecuting
-                ? 'border-l-green-500'
-                : isRejected
-                  ? 'border-l-red-500'
-                  : 'border-l-blue-500'
+              ? 'border-l-green-500'
+              : isRejected
+                ? 'border-l-red-500'
+                : 'border-l-blue-500'
               }`}
           >
             <CardContent className="p-4">
@@ -262,32 +262,32 @@ function StepMessageCard({
       <div className="flex items-start gap-2 w-full min-w-0">
         <div
           className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${step.status === 'completed'
-              ? 'bg-green-100'
-              : step.status === 'failed'
-                ? 'bg-red-100'
-                : step.status === 'running'
-                  ? 'bg-yellow-100'
-                  : 'bg-muted'
+            ? 'bg-green-100'
+            : step.status === 'failed'
+              ? 'bg-red-100'
+              : step.status === 'running'
+                ? 'bg-yellow-100'
+                : 'bg-muted'
             }`}
         >
           <StatusIcon />
         </div>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0 overflow-hidden">
           <span className="text-xs text-muted-foreground mb-1 block">
             Step {step.step_number} - {formatTime(message.timestamp)}
           </span>
           <Card
             className={`border-l-4 cursor-pointer transition-all ${step.status === 'completed'
-                ? 'border-l-green-500'
-                : step.status === 'failed'
-                  ? 'border-l-red-500'
-                  : step.status === 'running'
-                    ? 'border-l-yellow-500'
-                    : 'border-l-primary/50'
+              ? 'border-l-green-500'
+              : step.status === 'failed'
+                ? 'border-l-red-500'
+                : step.status === 'running'
+                  ? 'border-l-yellow-500'
+                  : 'border-l-primary/50'
               } ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'}`}
             onClick={() => onStepSelect?.(step.id)}
           >
-            <CardContent className="p-3">
+            <CardContent className="p-3 overflow-hidden">
               {/* Main Row */}
               <div
                 className="flex items-start gap-3"
@@ -298,14 +298,14 @@ function StepMessageCard({
                   }
                 }}
               >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <p className="text-sm font-medium break-words">
                     {step.next_goal || `Step ${step.step_number}`}
                   </p>
                   {step.url && (
-                    <div className="flex items-center gap-1 mt-1">
-                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground truncate block max-w-full">
+                    <div className="flex items-center gap-1 mt-1 min-w-0">
+                      <ExternalLink className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                      <span className="text-xs text-muted-foreground truncate">
                         {step.url}
                       </span>
                     </div>
@@ -357,10 +357,10 @@ function StepMessageCard({
                           <div
                             key={action.id || idx}
                             className={`text-xs p-2 rounded flex items-center gap-2 ${action.result_success
-                                ? 'bg-green-50'
-                                : action.result_error
-                                  ? 'bg-red-50'
-                                  : 'bg-muted/50'
+                              ? 'bg-green-50'
+                              : action.result_error
+                                ? 'bg-red-50'
+                                : 'bg-muted/50'
                               }`}
                           >
                             {action.result_success !== null &&
