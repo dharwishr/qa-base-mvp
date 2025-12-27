@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -473,9 +473,17 @@ class ReplaySessionResponse(BaseModel):
 # User Recording Schemas
 # ============================================
 
+# Recording mode type: 'cdp' (browser-use CDP) or 'playwright' (Playwright connect_over_cdp)
+RecordingMode = Literal['cdp', 'playwright']
+
+
 class StartRecordingRequest(BaseModel):
 	"""Request to start recording user interactions."""
 	browser_session_id: str = Field(..., description="ID of the browser session to record from")
+	recording_mode: RecordingMode = Field(
+		default='playwright',
+		description="Recording mode: 'playwright' (recommended, blur-based input) or 'cdp' (legacy keystroke capture)"
+	)
 
 
 class RecordingStatusResponse(BaseModel):
@@ -485,3 +493,4 @@ class RecordingStatusResponse(BaseModel):
 	browser_session_id: str | None = None
 	steps_recorded: int = 0
 	started_at: datetime | None = None
+	recording_mode: RecordingMode | None = None

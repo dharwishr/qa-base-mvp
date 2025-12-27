@@ -961,18 +961,20 @@ export function useChatSession(): UseChatSessionReturn {
   }, [sessionId, undoTargetStep]);
 
   // Start recording user interactions
+  // Uses Playwright recording mode by default (blur-based input capture, better backspace handling)
   const startRecording = useCallback(async () => {
     if (!sessionId || !browserSession?.id) return;
 
     try {
-      await analysisApi.startRecording(sessionId, browserSession.id);
+      // Use 'playwright' mode (default) - captures final input values on blur, handles backspace correctly
+      const result = await analysisApi.startRecording(sessionId, browserSession.id, 'playwright');
       setIsRecording(true);
       // Start polling for steps during recording
       startPolling();
       setMessages(prev => [
         ...prev,
         createTimelineMessage('system', {
-          content: 'Recording started. Your interactions with the browser will be captured.',
+          content: `Recording started (${result.recording_mode || 'playwright'} mode). Your interactions with the browser will be captured.`,
         }),
       ]);
     } catch (e) {

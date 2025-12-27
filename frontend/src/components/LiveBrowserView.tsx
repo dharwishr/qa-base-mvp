@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square, Circle } from 'lucide-react'
+import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square, Circle, Hand } from 'lucide-react'
 
 interface LiveBrowserViewProps {
     sessionId: string | null
@@ -14,6 +14,9 @@ interface LiveBrowserViewProps {
     onStopRecording?: () => Promise<void>
     canRecord?: boolean  // Whether recording is available (not executing, browser session exists)
     isAIExecuting?: boolean  // Whether AI is currently executing (blocks all interaction)
+    // Interaction props - allows browsing without recording
+    isInteractionEnabled?: boolean
+    onToggleInteraction?: () => void
 }
 
 export default function LiveBrowserView({
@@ -28,6 +31,8 @@ export default function LiveBrowserView({
     onStopRecording,
     canRecord = false,
     isAIExecuting = false,
+    isInteractionEnabled = false,
+    onToggleInteraction,
 }: LiveBrowserViewProps) {
     const [isStopping, setIsStopping] = useState(false)
     const [isExpanded, setIsExpanded] = useState(false)
@@ -134,16 +139,29 @@ export default function LiveBrowserView({
                     )}
                 </div>
                 <div className="flex items-center gap-1">
+                    {/* Interaction toggle button - allows browsing without recording */}
+                    {onToggleInteraction && !isRecording && !isAIExecuting && (
+                        <button
+                            onClick={onToggleInteraction}
+                            className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${isInteractionEnabled
+                                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                                    : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                                }`}
+                            title={isInteractionEnabled ? 'Disable Browser Interaction' : 'Enable Browser Interaction'}
+                        >
+                            <Hand className={`h-3 w-3 ${isInteractionEnabled ? '' : ''}`} />
+                            {isInteractionEnabled ? 'Browsing' : 'Browse'}
+                        </button>
+                    )}
                     {/* Recording button */}
                     {canRecord && (onStartRecording || onStopRecording) && (
                         <button
                             onClick={handleToggleRecording}
                             disabled={isToggling}
-                            className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
-                                isRecording
-                                    ? 'bg-red-500 text-white hover:bg-red-600'
-                                    : 'bg-red-100 text-red-700 hover:bg-red-200'
-                            } ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${isRecording
+                                ? 'bg-red-500 text-white hover:bg-red-600'
+                                : 'bg-red-100 text-red-700 hover:bg-red-200'
+                                } ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
                             title={isRecording ? 'Stop Recording' : 'Take Control & Record'}
                         >
                             <Circle className={`h-3 w-3 ${isRecording ? 'fill-white animate-pulse' : 'fill-red-500'}`} />
@@ -224,10 +242,10 @@ export default function LiveBrowserView({
                 )}
 
                 {/* Interaction blocker overlay - blocks user interaction */}
-                {!isRecording && (isAIExecuting || canRecord) && (
+                {!isRecording && !isInteractionEnabled && (isAIExecuting || canRecord) && (
                     <div
                         className="absolute inset-0 z-20 bg-transparent cursor-not-allowed"
-                        title={isAIExecuting ? "AI is controlling the browser" : "Click 'Record' to take control and interact with the browser"}
+                        title={isAIExecuting ? "AI is controlling the browser" : "Click 'Browse' or 'Record' to interact with the browser"}
                     >
                         <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
                             {isAIExecuting ? (
@@ -237,8 +255,8 @@ export default function LiveBrowserView({
                                 </>
                             ) : (
                                 <>
-                                    <Circle className="h-3 w-3 fill-red-500 text-red-500" />
-                                    Click "Record" to take control
+                                    <Hand className="h-3 w-3" />
+                                    Click "Browse" or "Record" to interact
                                 </>
                             )}
                         </div>

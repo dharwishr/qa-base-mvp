@@ -1,4 +1,4 @@
-import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingStatusResponse, ReplayResponse, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
@@ -332,14 +332,25 @@ export const analysisApi = {
   /**
    * Start recording user interactions in the live browser.
    * This captures clicks, typing, scrolling, and other user actions as test steps.
+   *
+   * @param sessionId - The test session ID
+   * @param browserSessionId - The browser session ID to record from
+   * @param recordingMode - Recording mode: 'playwright' (default, blur-based input) or 'cdp' (legacy)
    */
-  async startRecording(sessionId: string, browserSessionId: string): Promise<RecordingStatusResponse> {
+  async startRecording(
+    sessionId: string,
+    browserSessionId: string,
+    recordingMode: RecordingMode = 'playwright'
+  ): Promise<RecordingStatusResponse> {
     const response = await fetch(
       `${API_BASE}/api/analysis/sessions/${sessionId}/recording/start`,
       {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ browser_session_id: browserSessionId }),
+        body: JSON.stringify({
+          browser_session_id: browserSessionId,
+          recording_mode: recordingMode,
+        }),
       }
     );
     return handleResponse<RecordingStatusResponse>(response);

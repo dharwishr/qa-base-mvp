@@ -183,10 +183,11 @@ export default function TestAnalysis() {
     }
 
     // Start recording user interactions
+    // Uses Playwright mode by default (blur-based input capture, better backspace handling)
     const handleStartRecording = async () => {
         if (!session?.id || !browserSession?.id) return
         try {
-            await analysisApi.startRecording(session.id, browserSession.id)
+            await analysisApi.startRecording(session.id, browserSession.id, 'playwright')
             setIsRecording(true)
         } catch (e) {
             console.error('Error starting recording:', e)

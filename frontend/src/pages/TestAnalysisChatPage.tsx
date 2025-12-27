@@ -142,6 +142,7 @@ export default function TestAnalysisChatPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [leftWidth, setLeftWidth] = useState(450);
   const [isResizing, setIsResizing] = useState(false);
+  const [isInteractionEnabled, setIsInteractionEnabled] = useState(false);
 
   // Get selected step for screenshot display
   const selectedStep = messages
@@ -286,8 +287,8 @@ export default function TestAnalysisChatPage() {
                   onClick={() => setHeadless(true)}
                   disabled={isExecuting || isGeneratingPlan}
                   className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${headless
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                     } disabled:opacity-50`}
                 >
                   <EyeOff className="h-3.5 w-3.5" />
@@ -298,8 +299,8 @@ export default function TestAnalysisChatPage() {
                   onClick={() => setHeadless(false)}
                   disabled={isExecuting || isGeneratingPlan}
                   className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${!headless
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                     } disabled:opacity-50`}
                 >
                   <Monitor className="h-3.5 w-3.5" />
@@ -363,6 +364,8 @@ export default function TestAnalysisChatPage() {
             onStopRecording={stopRecording}
             canRecord={!!sessionId && !!browserSession?.id && !isExecuting}
             isAIExecuting={isExecuting}
+            isInteractionEnabled={isInteractionEnabled}
+            onToggleInteraction={() => setIsInteractionEnabled(!isInteractionEnabled)}
           />
         ) : !headless && isExecuting ? (
           <div className="flex-1 flex items-center justify-center">

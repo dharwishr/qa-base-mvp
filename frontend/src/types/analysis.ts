@@ -208,10 +208,13 @@ export interface ReplayResponse {
 }
 
 // Recording types
+export type RecordingMode = 'cdp' | 'playwright';
+
 export interface RecordingStatusResponse {
   is_recording: boolean;
   session_id: string;
   browser_session_id: string | null;
   steps_recorded: number;
   started_at: string | null;
+  recording_mode: RecordingMode | null;
 }
