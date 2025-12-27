@@ -223,7 +223,7 @@ class BrowserService:
 			logger.error(f"Error in on_step_end: {e}")
 			raise
 
-	async def execute(self, plan: TestPlan, max_steps: int = 20) -> None:
+	async def execute(self, plan: TestPlan, max_steps: int = 100) -> None:
 		"""Execute the test plan using browser-use."""
 		browser_session = None
 		remote_session: OrchestratorSession | None = None
@@ -509,7 +509,7 @@ class BrowserServiceSync:
 			logger.error(f"Error in on_step_end: {e}")
 			raise
 
-	async def execute(self, plan: TestPlan, max_steps: int = 20) -> dict:
+	async def execute(self, plan: TestPlan, max_steps: int = 100) -> dict:
 		"""Execute the test plan using browser-use."""
 		browser_session = None
 		remote_session: OrchestratorSession | None = None
