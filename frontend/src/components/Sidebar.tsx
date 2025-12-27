@@ -6,7 +6,8 @@ import {
     LogOut,
     PlayCircle,
     FileText,
-    Boxes
+    Boxes,
+    FlaskConical
 } from "lucide-react"
 
 interface SidebarItemProps {
@@ -72,6 +73,12 @@ export const Sidebar = ({ activePath }: { activePath?: string }) => {
                     label="Test Cases"
                     active={activePath?.startsWith('/test-cases')}
                     onClick={() => navigate('/test-cases')}
+                />
+                <SidebarItem
+                    icon={FlaskConical}
+                    label="Benchmark"
+                    active={activePath?.startsWith('/benchmark')}
+                    onClick={() => navigate('/benchmark')}
                 />
                 <SidebarItem icon={Settings} label="Settings" />
             </nav>

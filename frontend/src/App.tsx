@@ -14,6 +14,9 @@ import Scripts from "./pages/Scripts"
 import ScriptDetail from "./pages/ScriptDetail"
 import RunDetail from "./pages/RunDetail"
 import ModuleDiscovery from "./pages/ModuleDiscovery"
+import BenchmarkPage from "./pages/BenchmarkPage"
+import BenchmarkHistoryPage from "./pages/BenchmarkHistoryPage"
+import BenchmarkDetailPage from "./pages/BenchmarkDetailPage"
 
 import DashboardLayout from "./components/layout/DashboardLayout"
 
@@ -41,6 +44,9 @@ function App() {
             <Route path="/scripts/:scriptId" element={<ScriptDetail />} />
             <Route path="/scripts/:scriptId/runs/:runId" element={<RunDetail />} />
             <Route path="/discovery" element={<ModuleDiscovery />} />
+            <Route path="/benchmark" element={<BenchmarkPage />} />
+            <Route path="/benchmarks" element={<BenchmarkHistoryPage />} />
+            <Route path="/benchmarks/:benchmarkId" element={<BenchmarkDetailPage />} />
           </Route>
         </Routes>
       </AuthProvider>

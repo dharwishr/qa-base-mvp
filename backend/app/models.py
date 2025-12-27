@@ -307,3 +307,61 @@ class DiscoveredModule(Base):
 
 	# Relationships
 	session: Mapped["DiscoverySession"] = relationship("DiscoverySession", back_populates="modules")
+
+
+class BenchmarkSession(Base):
+	"""Main benchmark session for comparing LLM models on a test case."""
+
+	__tablename__ = "benchmark_sessions"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	prompt: Mapped[str] = mapped_column(Text, nullable=False)
+	title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+	selected_models: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	mode: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="auto"
+	)  # auto | plan | act
+	status: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="pending"
+	)  # pending | planning | plan_ready | running | completed | failed
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	updated_at: Mapped[datetime] = mapped_column(
+		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+	)
+
+	# Relationships
+	model_runs: Mapped[list["BenchmarkModelRun"]] = relationship(
+		"BenchmarkModelRun", back_populates="benchmark_session", cascade="all, delete-orphan"
+	)
+
+
+class BenchmarkModelRun(Base):
+	"""Each model run within a benchmark session."""
+
+	__tablename__ = "benchmark_model_runs"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	benchmark_session_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("benchmark_sessions.id"), nullable=False
+	)
+	llm_model: Mapped[str] = mapped_column(String(50), nullable=False)
+	test_session_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("test_sessions.id"), nullable=True
+	)
+	celery_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+	status: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="pending"
+	)  # pending | planning | plan_ready | approved | rejected | queued | running | completed | failed
+	started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	total_steps: Mapped[int] = mapped_column(Integer, default=0)
+	duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+	error: Mapped[str | None] = mapped_column(Text, nullable=True)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Relationships
+	benchmark_session: Mapped["BenchmarkSession"] = relationship(
+		"BenchmarkSession", back_populates="model_runs"
+	)
+	test_session: Mapped["TestSession | None"] = relationship("TestSession")

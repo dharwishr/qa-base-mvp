@@ -169,6 +169,76 @@ Generate a complete plan for this new task as a standalone request."""
 		raise
 
 
+def generate_plan_sync(db: Session, session: TestSession, task_prompt: str | None = None) -> TestPlan:
+	"""Synchronous version of generate_plan for Celery workers.
+
+	Args:
+		db: Database session
+		session: Test session
+		task_prompt: Optional specific prompt to use for plan generation.
+	"""
+	try:
+		plan_prompt = task_prompt if task_prompt else session.prompt
+
+		is_continuation = task_prompt is not None
+
+		if is_continuation:
+			execution_context = ""
+			continuation_instruction = """Note: A browser session is already active from previous tasks.
+Generate a complete plan for this new task as a standalone request."""
+			logger.info(f"Generating CONTINUATION plan (no context) for: {plan_prompt[:100]}...")
+		else:
+			execution_context = build_execution_context(db, session)
+			continuation_instruction = ""
+			logger.info(f"Generating NEW session plan for: {plan_prompt[:100]}...")
+
+		prompt = PLAN_GENERATION_PROMPT.format(
+			execution_context=execution_context,
+			prompt=plan_prompt,
+			continuation_instruction=continuation_instruction
+		)
+		logger.debug(f"Full prompt to LLM:\n{prompt}")
+
+		response = client.models.generate_content(
+			model="gemini-2.0-flash",
+			contents=prompt,
+		)
+
+		response_text = response.text
+
+		try:
+			if response_text.startswith("```"):
+				lines = response_text.split("\n")
+				response_text = "\n".join(lines[1:-1])
+
+			plan_data = json.loads(response_text)
+			plan_text = plan_data.get("plan_text", response_text)
+			steps_json = plan_data.get("steps", [])
+		except json.JSONDecodeError:
+			plan_text = response_text
+			steps_json = []
+
+		plan = TestPlan(
+			session_id=session.id,
+			plan_text=plan_text,
+			steps_json={"steps": steps_json},
+		)
+		db.add(plan)
+
+		session.status = "plan_ready"
+		db.commit()
+		db.refresh(plan)
+
+		logger.info(f"Generated plan for session {session.id}")
+		return plan
+
+	except Exception as e:
+		logger.error(f"Error generating plan: {e}")
+		session.status = "failed"
+		db.commit()
+		raise
+
+
 def get_plan_as_task(plan: TestPlan, is_continuation: bool = False) -> str:
 	"""Convert a test plan to a task string for browser-use agent.
 

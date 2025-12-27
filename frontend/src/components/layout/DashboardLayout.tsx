@@ -8,7 +8,8 @@ import {
     FileText,
     Boxes,
     Zap,
-    Compass
+    Compass,
+    FlaskConical
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 
@@ -94,6 +95,12 @@ export default function DashboardLayout() {
                         onClick={() => navigate('/discovery')}
                     />
                     <SidebarItem
+                        icon={FlaskConical}
+                        label="Benchmark"
+                        active={activePath.startsWith('/benchmark')}
+                        onClick={() => navigate('/benchmarks')}
+                    />
+                    <SidebarItem
                         icon={Settings}
                         label="Settings"
                     />
@@ -114,7 +121,8 @@ export default function DashboardLayout() {
                                     activePath.includes('/test-analysis') ? 'Test Analysis' :
                                         activePath.includes('/scripts') ? 'Test Scripts' :
                                             activePath.includes('/discovery') ? 'Module Discovery' :
-                                                'SmartTester'}
+                                                activePath.includes('/benchmark') ? 'LLM Benchmark' :
+                                                    'SmartTester'}
                     </h1>
                 </header>
                 <main className="flex-1 overflow-auto">

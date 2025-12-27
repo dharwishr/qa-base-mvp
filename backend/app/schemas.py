@@ -341,3 +341,74 @@ class ActModeResponse(BaseModel):
 	screenshot_path: str | None = None
 	browser_session_id: str | None = None
 	error: str | None = None
+
+
+# ============================================
+# Benchmark Schemas
+# ============================================
+
+class CreateBenchmarkRequest(BaseModel):
+	"""Request to create a new benchmark session."""
+	prompt: str = Field(..., min_length=1, description="The test case prompt to benchmark")
+	models: list[str] = Field(..., min_length=1, max_length=3, description="List of up to 3 LLM models to benchmark")
+	headless: bool = Field(default=True, description="Run browsers in headless mode")
+	mode: str = Field(default="auto", description="Execution mode: auto | plan | act")
+
+
+class BenchmarkModelRunResponse(BaseModel):
+	"""Response for a single model run within a benchmark."""
+	id: str
+	llm_model: str
+	test_session_id: str | None = None
+	celery_task_id: str | None = None
+	status: str
+	started_at: datetime | None = None
+	completed_at: datetime | None = None
+	total_steps: int = 0
+	duration_seconds: float = 0.0
+	error: str | None = None
+	created_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class BenchmarkSessionResponse(BaseModel):
+	"""Response for a benchmark session."""
+	id: str
+	prompt: str
+	title: str | None = None
+	selected_models: list[str]
+	headless: bool = True
+	mode: str = "auto"
+	status: str
+	created_at: datetime
+	updated_at: datetime
+	model_runs: list[BenchmarkModelRunResponse] = []
+
+	class Config:
+		from_attributes = True
+
+
+class BenchmarkSessionListResponse(BaseModel):
+	"""Response for listing benchmark sessions."""
+	id: str
+	prompt: str
+	title: str | None = None
+	selected_models: list[str]
+	status: str
+	mode: str = "auto"  # auto | plan | act
+	created_at: datetime
+	updated_at: datetime
+	model_run_count: int = 0
+	completed_count: int = 0
+
+	class Config:
+		from_attributes = True
+
+
+class StartBenchmarkResponse(BaseModel):
+	"""Response after starting benchmark execution."""
+	benchmark_id: str
+	status: str
+	task_ids: list[str]

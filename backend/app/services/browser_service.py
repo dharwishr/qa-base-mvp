@@ -771,3 +771,105 @@ def execute_test_sync(db: Session, session: TestSession, plan: TestPlan) -> dict
 		return loop.run_until_complete(service.execute(plan))
 	finally:
 		loop.close()
+
+
+def execute_act_mode_sync(
+	db: Session,
+	session: TestSession,
+	task: str,
+	previous_context: str | None = None
+) -> dict:
+	"""Execute a single action synchronously (for Act mode API).
+
+	Args:
+		db: Database session.
+		session: Test session to execute on.
+		task: The action to perform.
+		previous_context: Optional context from previous actions.
+
+	Returns:
+		Dict with execution results.
+	"""
+	import asyncio
+
+	from app.services.single_step_service import execute_single_step
+	from browser_use import BrowserSession
+
+	from app.services.browser_orchestrator import (
+		get_orchestrator,
+		BrowserPhase,
+	)
+
+	async def _execute():
+		browser_session = None
+		remote_session = None
+
+		try:
+			use_headless = getattr(session, 'headless', True)
+			logger.info(f"Act mode sync - Browser mode: {'headless' if use_headless else 'live browser'}")
+
+			if not use_headless:
+				try:
+					orchestrator = get_orchestrator()
+					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+					existing_session = next(
+						(s for s in existing_sessions if s.test_session_id == session.id),
+						None
+					)
+
+					if existing_session and existing_session.cdp_url:
+						logger.info(f"Act mode sync - Reusing browser session: {existing_session.id}")
+						remote_session = existing_session
+						browser_session = BrowserSession(
+							cdp_url=existing_session.cdp_url,
+							viewport={'width': 1920, 'height': 1080}
+						)
+					else:
+						remote_session = await orchestrator.create_session(
+							phase=BrowserPhase.ANALYSIS,
+							test_session_id=session.id,
+						)
+						logger.info(f"Act mode sync - Created browser session: {remote_session.id}")
+						browser_session = BrowserSession(
+							cdp_url=remote_session.cdp_url,
+							viewport={'width': 1920, 'height': 1080}
+						)
+				except Exception as e:
+					logger.warning(f"Act mode sync - Failed to use remote browser: {e}")
+					browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
+			else:
+				browser_session = BrowserSession(headless=True, viewport={'width': 1920, 'height': 1080})
+
+			result = await execute_single_step(
+				db=db,
+				session=session,
+				browser_session=browser_session,
+				task=task,
+				previous_context=previous_context,
+			)
+
+			result["browser_session_id"] = remote_session.id if remote_session else None
+			return result
+
+		except Exception as e:
+			logger.error(f"Act mode sync execution failed: {e}")
+			return {
+				"success": False,
+				"action_taken": None,
+				"thinking": None,
+				"evaluation": None,
+				"memory": None,
+				"next_goal": None,
+				"result": [],
+				"browser_state": {"url": None, "title": None},
+				"screenshot_path": None,
+				"browser_session_id": remote_session.id if remote_session else None,
+				"error": str(e),
+			}
+
+	loop = asyncio.new_event_loop()
+	asyncio.set_event_loop(loop)
+	try:
+		return loop.run_until_complete(_execute())
+	finally:
+		loop.close()
