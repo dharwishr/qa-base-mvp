@@ -30,6 +30,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const LLM_LABELS: Record<LlmModel, string> = {
     'browser-use-llm': 'Browser Use LLM',
+    'gemini-2.0-flash': 'Gemini 2.0 Flash',
     'gemini-2.5-flash': 'Gemini 2.5 Flash',
     'gemini-2.5-pro': 'Gemini 2.5 Pro',
     'gemini-3.0-flash': 'Gemini 3.0 Flash',
@@ -93,7 +94,7 @@ export default function SessionDetail() {
     // Poll for updates when running/queued
     useEffect(() => {
         if (!sessionId || !session) return
-        
+
         const isActive = session.status === 'running' || session.status === 'queued'
         if (!isActive) {
             if (pollRef.current) {
@@ -107,12 +108,12 @@ export default function SessionDetail() {
             try {
                 const data = await analysisApi.getSession(sessionId)
                 setSession(data)
-                
+
                 if (data.steps && data.steps.length > 0) {
                     const lastStep = data.steps[data.steps.length - 1]
                     setSelectedStepId(lastStep.id)
                 }
-                
+
                 // Stop polling when complete
                 if (data.status !== 'running' && data.status !== 'queued') {
                     if (pollRef.current) {
@@ -139,7 +140,7 @@ export default function SessionDetail() {
     // Listen for browser session via polling the browser API
     useEffect(() => {
         if (!sessionId || !session) return
-        
+
         const isActive = session.status === 'running' || session.status === 'queued'
         if (!isActive) return
 

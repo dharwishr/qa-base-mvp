@@ -12,6 +12,7 @@ import type { QueueFailure } from '@/types/chat';
 
 const LLM_OPTIONS: { value: LlmModel; label: string }[] = [
   { value: 'browser-use-llm', label: 'Browser Use LLM' },
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { value: 'gemini-3.0-flash', label: 'Gemini 3.0 Flash' },
@@ -175,14 +176,13 @@ export default function TestAnalysisChatPage() {
   const loadingText = isGeneratingPlan
     ? 'Generating test plan...'
     : isExecuting
-    ? 'Executing test...'
-    : '';
+      ? 'Executing test...'
+      : '';
 
   return (
     <div
-      className={`flex h-[calc(100vh-3.5rem)] bg-background ${
-        isResizing ? 'cursor-col-resize select-none' : ''
-      }`}
+      className={`flex h-[calc(100vh-3.5rem)] bg-background ${isResizing ? 'cursor-col-resize select-none' : ''
+        }`}
       onMouseMove={resize}
       onMouseUp={stopResizing}
       onMouseLeave={stopResizing}
@@ -275,11 +275,10 @@ export default function TestAnalysisChatPage() {
                   type="button"
                   onClick={() => setHeadless(true)}
                   disabled={isExecuting || isGeneratingPlan}
-                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    headless
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${headless
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
-                  } disabled:opacity-50`}
+                    } disabled:opacity-50`}
                 >
                   <EyeOff className="h-3.5 w-3.5" />
                   Headless
@@ -288,11 +287,10 @@ export default function TestAnalysisChatPage() {
                   type="button"
                   onClick={() => setHeadless(false)}
                   disabled={isExecuting || isGeneratingPlan}
-                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    !headless
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${!headless
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
-                  } disabled:opacity-50`}
+                    } disabled:opacity-50`}
                 >
                   <Monitor className="h-3.5 w-3.5" />
                   Live
@@ -324,17 +322,16 @@ export default function TestAnalysisChatPage() {
             isExecuting
               ? 'Send additional instructions...'
               : mode === 'plan'
-              ? 'Describe your test case...'
-              : 'Describe what you want to do...'
+                ? 'Describe your test case...'
+                : 'Describe what you want to do...'
           }
         />
       </div>
 
       {/* Resizer */}
       <div
-        className={`w-1 cursor-col-resize hover:bg-primary/50 transition-colors ${
-          isResizing ? 'bg-primary' : 'bg-transparent'
-        }`}
+        className={`w-1 cursor-col-resize hover:bg-primary/50 transition-colors ${isResizing ? 'bg-primary' : 'bg-transparent'
+          }`}
         onMouseDown={startResizing}
       />
 

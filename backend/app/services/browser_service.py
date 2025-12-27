@@ -42,6 +42,8 @@ def get_llm_for_model(llm_model: str) -> "BaseChatModel":
 
 	if llm_model == "browser-use-llm":
 		return ChatBrowserUse(model="bu-latest", api_key=settings.BROWSER_USE_API_KEY)
+	elif llm_model == "gemini-2.0-flash":
+		return ChatGoogle(model="gemini-2.0-flash", api_key=settings.GEMINI_API_KEY)
 	elif llm_model == "gemini-2.5-flash":
 		return ChatGoogle(model="gemini-2.5-flash", api_key=settings.GEMINI_API_KEY)
 	elif llm_model == "gemini-2.5-pro":

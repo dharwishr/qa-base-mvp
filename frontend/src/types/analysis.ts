@@ -46,7 +46,7 @@ export interface TestPlan {
   rejection_reason: string | null;
 }
 
-export type LlmModel = 'browser-use-llm' | 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3.0-flash' | 'gemini-3.0-pro' | 'gemini-2.5-computer-use';
+export type LlmModel = 'browser-use-llm' | 'gemini-2.0-flash' | 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3.0-flash' | 'gemini-3.0-pro' | 'gemini-2.5-computer-use';
 
 export type SessionStatus = 'pending_plan' | 'plan_ready' | 'approved' | 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
 

@@ -9,7 +9,7 @@ class CreateSessionRequest(BaseModel):
 	prompt: str = Field(..., min_length=1, description="The QA task prompt")
 	llm_model: str = Field(
 		default="gemini-2.5-flash",
-		description="LLM model for browser automation: browser-use-llm | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use"
+		description="LLM model for browser automation: browser-use-llm | gemini-2.0-flash | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use"
 	)
 	headless: bool = Field(
 		default=True,

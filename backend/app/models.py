@@ -22,7 +22,7 @@ class TestSession(Base):
 	title: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Auto-generated from first prompt
 	llm_model: Mapped[str] = mapped_column(
 		String(50), nullable=False, default="gemini-2.5-flash"
-	)  # browser-use-llm | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use
+	)  # browser-use-llm | gemini-2.0-flash | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use
 	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # True = headless (default), False = live browser
 	status: Mapped[str] = mapped_column(
 		String(20), nullable=False, default="pending_plan"

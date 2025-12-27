@@ -24,6 +24,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const LLM_LABELS: Record<LlmModel, string> = {
     'browser-use-llm': 'Browser Use',
+    'gemini-2.0-flash': 'Gemini 2.0 Flash',
     'gemini-2.5-flash': 'Gemini 2.5 Flash',
     'gemini-2.5-pro': 'Gemini 2.5 Pro',
     'gemini-3.0-flash': 'Gemini 3.0 Flash',
