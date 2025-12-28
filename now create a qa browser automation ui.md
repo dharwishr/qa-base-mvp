@@ -96,3 +96,89 @@ strict-origin-when-cro
 in act mode browser use gets halucinated or get lot becasue browser use desinged to run a whole task not a single action, can you fix that ? (you can make changes in browser use but make sure that its treated seperatly for this scenario)
 also using plan mode second time is geeting issues, can you fix that ? like using browser- use context to get more details + given text chat to get more details using both create a plan (you can make changes in browser use but make sure that its treated seperatly for this scenario)
 also when test analysis doing something like runing a action or planing something and if use put more chat/task in between then it should wait till the previous action or plan is completed. show your that its waiting, after previosu action completed then run the given action.
+
+
+<!-- re use test case analysis new page in previosu test case analysis, -->
+<!-- re initialte browser session on that with stesp till end to be emulated -->
+also check if possible to store a browser ssesion like a snapshot aht we can reuse it when user want to go to previous analysis sessions\
+edit input variables inside the test case analaysis steps
+
+steps only view as per picture
+
+analsysis step ui enhanc
+
+
+record and play back from vnc/cdp
+
+
+
+re use test case analysis new page in previosu test case analysis:
+goal is to make use of older test case analysis
+when user clicks on older test case analsysis i want to show the test case analysis page as same as new test case analsysis page (including steps, previous chats etc)
+for live browser there should be a option in the chat input section as blocking that re initiate the session
+when user clicks that a browser session start (new or previous one) and emulates all the actions in the steps to the browser
+and the browser session should be visible like new test case analaysis page
+if there is 10 steps and if it got broken / failed in 7th step, ask user that create a new test case analysis with till 7th step or undo till in the current test case analysis page and do accordingly 
+implememt e2e frontend and backend for this
+
+
+    
+
+
+
+
+
+now i want to introduce live browser sesion user interaction recordiong
+- in current system, live browser is shown in analaysis page. 
+- i want to restrict user interation with live browser during analsysis
+- add a button on top of live browser says take control and record 
+- when user click, the test analysis need to go to record mode 
+- and user can interact with live browser
+- i want to record users actions and save it as a step + action inside the test case analysis page
+- every actions should be recorded and saved, when user clicks stop recording, the record mode should be stopped
+- and the recorded actions should be visible in the test case analysis page which can also be runnable like ai geenrated steps
+
+
+
+i want to create a llm benchmark mode for test case analysis as a seperate module that user can pick up to 3 models and run the benchmark.
+user will have single chat interface to chat with all the models and compare the results. 
+live browser view for all the models as well
+do complete frontend and backend implementation for this
+make sure that its a seperate module in leftside navigation with entire differnt page
+i think we have already implemented celery task for test case analysis, so create each llm model as a celery task and run them in parallel
+
+
+
+now i want to build a undo buttom feature in test case analysis
+the user flow wanted will be like this:
+user will give prompt in chat interface
+- steps are generated and run
+lets say it generated 10 steps and user want to undo the last 5 steps
+- each step will have a undo till here button that when clicked it will undo the last 5 steps by asking user to confirm
+- but the problem is there is no way to simplty undo all steps in rightside browser view (think and check if there are any way to do it)
+- so my proposed way is that if user undo till 5 stpes we will emulate all the steps from the beigining to 5th step using the json info of eachstep action in right browser
+- each session will have browser with cdp url so if undo happend, we will use that cdp url to emulatate the steps begining till the 5th step using playwright runner or cdp runner which ever is the best
+- then user can continue from there
+- make sure that in confirmation message this also mentioned in undo procedeure
+
+
+
+- user give a prompt in plan mode: 
+"Goto https://cigclouds.com/demoit/login.php and login as demo and demo123. Go to main menu Create. Click on Purchase order sub menu item. Set the value Purchase Ledger as 'Purchase Account Credit'. Set the Select Party as 'Test Customer2'. Set Reference number as 1234. Set Narration Text as 'My test narration'. Set Product as 'Copper1'. Set Qty as 10. Set Rate as 11. Click on 'Create Purchase Order' button."
+- Generates a plan
+- Approves the plan
+- App will generta and run test case steps 
+- App competes the run part for previous test case steps
+
+Now if a user want to do another plan mode, app is repeating already done steps. instead app should generate a  new plan using the context of browser-use and given prompt (no need to repeat previous steps, no need to take prevous step context as well)
+
+
+
+now i want to create test script from the test case analaysis steps
+- user will click on a button that called generate test script
+- after click that the generated steps inside the test case analaysis will be converted to test script
+- user can execute the test script in the test run
+- all the steps should be under same test case 
+
+
+

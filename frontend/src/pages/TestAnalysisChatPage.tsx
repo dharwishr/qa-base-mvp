@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode } from 'lucide-react';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
@@ -143,6 +143,7 @@ export default function TestAnalysisChatPage() {
   const [leftWidth, setLeftWidth] = useState(450);
   const [isResizing, setIsResizing] = useState(false);
   const [isInteractionEnabled, setIsInteractionEnabled] = useState(false);
+  const [simpleMode, setSimpleMode] = useState(false);
 
   // Get selected step for screenshot display
   const selectedStep = messages
@@ -308,6 +309,35 @@ export default function TestAnalysisChatPage() {
                 </button>
               </div>
             </div>
+
+            {/* View Mode Toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">View:</span>
+              <div className="inline-flex rounded-lg border bg-muted p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setSimpleMode(false)}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${!simpleMode
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                >
+                  <LayoutList className="h-3.5 w-3.5" />
+                  Detailed
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSimpleMode(true)}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${simpleMode
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                >
+                  <List className="h-3.5 w-3.5" />
+                  Simple
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -322,6 +352,7 @@ export default function TestAnalysisChatPage() {
           selectedStepId={selectedStepId}
           onUndoToStep={undoToStep}
           totalSteps={totalSteps}
+          simpleMode={simpleMode}
         />
 
         {/* Chat Input */}

@@ -158,33 +158,59 @@ class PlaywrightRunner(BaseRunner):
 		"""Initialize browser - connect to remote CDP or launch local."""
 		logger.info("Initializing Playwright browser...")
 		self._playwright = await async_playwright().start()
-		
+
 		if self._cdp_url:
 			# Connect to remote browser via CDP
 			logger.info(f"Connecting to remote browser via CDP: {self._cdp_url}")
-			self._browser = await self._playwright.chromium.connect_over_cdp(self._cdp_url)
+			try:
+				# Use a timeout for the CDP connection
+				self._browser = await asyncio.wait_for(
+					self._playwright.chromium.connect_over_cdp(self._cdp_url),
+					timeout=30.0
+				)
+				logger.info("CDP connection established successfully")
+			except asyncio.TimeoutError:
+				raise RuntimeError(f"Timeout connecting to CDP at {self._cdp_url}")
+			except Exception as e:
+				raise RuntimeError(f"Failed to connect to CDP at {self._cdp_url}: {e}")
+
 			# Get existing context or create new one
 			contexts = self._browser.contexts
+			logger.debug(f"Found {len(contexts)} existing browser contexts")
 			if contexts:
 				self._context = contexts[0]
 				pages = self._context.pages
+				logger.debug(f"Found {len(pages)} existing pages in context")
 				if pages:
 					self._page = pages[0]
+					# Navigate to about:blank to reset page state before starting
+					logger.debug("Resetting existing page to about:blank")
+					try:
+						await self._page.goto("about:blank", timeout=5000)
+					except Exception as e:
+						logger.warning(f"Could not reset page to about:blank: {e}")
 				else:
+					logger.debug("Creating new page in existing context")
 					self._page = await self._context.new_page()
 			else:
+				logger.debug("Creating new browser context")
 				self._context = await self._browser.new_context(
 					viewport={"width": 1920, "height": 1080}
 				)
 				self._page = await self._context.new_page()
+
+			# Wait for page to be ready
+			await asyncio.sleep(0.5)
+			logger.info(f"Page ready, current URL: {self._page.url}")
 		else:
 			# Launch local browser
+			logger.info("Launching local headless browser")
 			self._browser = await self._playwright.chromium.launch(headless=self.headless)
 			self._context = await self._browser.new_context(
 				viewport={"width": 1920, "height": 1080}
 			)
 			self._page = await self._context.new_page()
-		
+
 		logger.info("Browser initialized successfully")
 	
 	async def _teardown(self):

@@ -1,4 +1,4 @@
-import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
@@ -381,6 +381,22 @@ export const analysisApi = {
       }
     );
     return handleResponse<RecordingStatusResponse>(response);
+  },
+
+  /**
+   * Update the text value for a type_text action.
+   * This allows editing recorded input text.
+   */
+  async updateActionText(actionId: string, text: string): Promise<StepAction> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/actions/${actionId}/text`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ text }),
+      }
+    );
+    return handleResponse<StepAction>(response);
   },
 };
 

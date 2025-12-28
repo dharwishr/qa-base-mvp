@@ -17,6 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     net-tools \
     socat \
+    # WebGL2 support - Mesa libraries for software rendering
+    libgl1-mesa-dri \
+    libgl1-mesa-glx \
+    libegl1-mesa \
+    mesa-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install noVNC and websockify

@@ -2,12 +2,15 @@
 # Wait for display to be ready
 sleep 4
 
+# Enable software rendering for WebGL2 support
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+
 # Start Chromium with remote debugging enabled
 # CDP port 9223 is internal, socat will forward to external port 9222
+# WebGL2 is enabled via software rendering (SwiftShader/ANGLE)
 exec chromium \
     --no-sandbox \
-    --disable-gpu \
-    --disable-software-rasterizer \
     --disable-dev-shm-usage \
     --disable-background-networking \
     --disable-default-apps \
@@ -25,4 +28,10 @@ exec chromium \
     --window-position=0,0 \
     --start-maximized \
     --user-data-dir=/tmp/chromium-data \
+    --enable-webgl \
+    --enable-webgl2 \
+    --use-gl=angle \
+    --use-angle=swiftshader \
+    --ignore-gpu-blocklist \
+    --enable-gpu-rasterization \
     about:blank

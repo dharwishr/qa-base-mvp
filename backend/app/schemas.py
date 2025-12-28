@@ -30,6 +30,11 @@ class ContinueSessionRequest(BaseModel):
 	)
 
 
+class UpdateStepActionTextRequest(BaseModel):
+	"""Request to update the text value for a type_text action."""
+	text: str = Field(..., description="The new text value for the action")
+
+
 # Response schemas
 class StepActionResponse(BaseModel):
 	id: str

@@ -1,7 +1,9 @@
-import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot } from "lucide-react"
+import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot, MousePointer, Type, Globe, Eye, Play, ArrowUp, ChevronUp } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useState } from "react"
-import type { TestStep as AnalysisTestStep } from "@/types/analysis"
+import type { TestStep as AnalysisTestStep, StepAction } from "@/types/analysis"
+import { analysisApi } from "@/services/api"
+import EditableText from "./EditableText"
 
 // Extended TestStep interface for display
 export interface TestStep extends Omit<Partial<AnalysisTestStep>, 'id'> {
@@ -15,6 +17,208 @@ interface StepListProps {
     selectedStepId?: string | number | null
     onStepSelect?: (step: TestStep) => void
     onClear?: () => void
+    onActionUpdate?: (stepId: string, updatedAction: StepAction) => void
+    simpleMode?: boolean
+}
+
+// Action type to icon mapping
+export function getActionIcon(actionName: string) {
+    const iconClass = "h-4 w-4"
+    switch (actionName?.toLowerCase()) {
+        case 'click':
+        case 'click_element':
+            return <MousePointer className={`${iconClass} text-blue-500`} />
+        case 'type':
+        case 'type_text':
+        case 'input_text':
+        case 'input':
+        case 'fill':
+            return <Type className={`${iconClass} text-green-500`} />
+        case 'go_to_url':
+        case 'navigate':
+        case 'goto':
+            return <Globe className={`${iconClass} text-purple-500`} />
+        case 'scroll':
+        case 'scroll_down':
+        case 'scroll_up':
+            return <ArrowUp className={`${iconClass} text-orange-500`} />
+        case 'wait':
+        case 'sleep':
+            return <Clock className={`${iconClass} text-yellow-500`} />
+        case 'screenshot':
+        case 'extract':
+            return <Eye className={`${iconClass} text-teal-500`} />
+        case 'select':
+        case 'select_option':
+        case 'dropdown':
+            return <ChevronDown className={`${iconClass} text-indigo-500`} />
+        case 'done':
+            return <CheckCircle className={`${iconClass} text-green-600`} />
+        default:
+            return <Play className={`${iconClass} text-gray-500`} />
+    }
+}
+
+// Simple action row component for compact view
+// Simple action row component for compact view
+export interface SimpleActionRowProps {
+    action: StepAction
+    onTextUpdate?: (newText: string) => Promise<void>
+}
+
+export function SimpleActionRow({ action, onTextUpdate }: SimpleActionRowProps) {
+    const [selectorOpen, setSelectorOpen] = useState(false)
+
+    // Check if this is a text input action (various naming conventions)
+    const isTypeTextAction = ['type_text', 'input_text', 'type', 'input', 'fill'].includes(action.action_name?.toLowerCase() || '')
+
+    // Get the text value - could be in different fields depending on the source
+    const textValue = isTypeTextAction
+        ? (action.action_params?.text as string) ||
+          (action.action_params?.value as string) ||
+          (action.action_params?.input as string) ||
+          null
+        : null
+
+    // Get XPath and CSS selector from action params
+    const xpath = action.element_xpath || (action.action_params?.xpath as string) || null
+    const cssSelector = (action.action_params?.cssSelector as string) || (action.action_params?.selector as string) || null
+    const hasSelectorsOrParams = xpath || cssSelector || (action.action_params && Object.keys(action.action_params).length > 0)
+
+    // Get element name or derive from action - check multiple possible fields
+    const elementName = action.element_name ||
+        (action.action_params?.element as string) ||
+        (action.action_params?.field as string) ||
+        (action.action_params?.label as string) ||
+        (action.action_params?.placeholder as string) ||
+        null
+
+    // Get URL for navigation actions
+    const navigateUrl = (action.action_name === 'go_to_url' || action.action_name === 'navigate' || action.action_name === 'goto')
+        ? (action.action_params?.url as string)
+        : null
+
+    // Get selected option for select/dropdown actions
+    const isSelectAction = ['select', 'select_option', 'dropdown'].includes(action.action_name?.toLowerCase() || '')
+    const selectedOption = isSelectAction
+        ? (action.action_params?.option as string) ||
+          (action.action_params?.value as string) ||
+          (action.action_params?.text as string) ||
+          null
+        : null
+
+    return (
+        <div className="border rounded-lg bg-background overflow-hidden">
+            <div
+                className="flex items-center gap-3 px-3 py-2 hover:bg-muted/30 transition-colors"
+            >
+                {/* Status Icon */}
+                <div className="flex-shrink-0">
+                    {action.result_success !== null ? (
+                        action.result_success ? (
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                        ) : (
+                            <XCircle className="h-4 w-4 text-red-500" />
+                        )
+                    ) : (
+                        <Circle className="h-4 w-4 text-gray-300" />
+                    )}
+                </div>
+
+                {/* Action Type Icon */}
+                <div className="flex-shrink-0">
+                    {getActionIcon(action.action_name)}
+                </div>
+
+                {/* Element/Field Name */}
+                <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                    {elementName && (
+                        <span className="font-medium text-sm truncate">{elementName}</span>
+                    )}
+                    {!elementName && navigateUrl && (
+                        <span className="text-sm text-muted-foreground truncate">{navigateUrl}</span>
+                    )}
+                    {!elementName && !navigateUrl && (
+                        <span className="text-sm font-mono text-muted-foreground">{action.action_name}</span>
+                    )}
+
+                    {/* Input Value for type_text/input actions */}
+                    {isTypeTextAction && textValue !== null && (
+                        <span className="flex items-center gap-1 text-sm">
+                            <span className="text-muted-foreground">:</span>
+                            {onTextUpdate ? (
+                                <EditableText
+                                    value={textValue}
+                                    onSave={onTextUpdate}
+                                    className="inline"
+                                />
+                            ) : (
+                                <span className="font-mono bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs border border-blue-200">"{textValue}"</span>
+                            )}
+                        </span>
+                    )}
+
+                    {/* Show placeholder when input action has no text value yet */}
+                    {isTypeTextAction && textValue === null && (
+                        <span className="text-xs text-muted-foreground italic">(no input value)</span>
+                    )}
+
+                    {/* Selected option for select actions */}
+                    {isSelectAction && selectedOption && (
+                        <span className="flex items-center gap-1 text-sm">
+                            <span className="text-muted-foreground">→</span>
+                            <span className="font-mono bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-xs border border-purple-200">"{selectedOption}"</span>
+                        </span>
+                    )}
+                </div>
+
+                {/* Selector Dropdown Toggle */}
+                {hasSelectorsOrParams && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectorOpen(!selectorOpen)
+                        }}
+                        className="flex-shrink-0 p-1 hover:bg-muted rounded transition-colors"
+                        title="Show details"
+                    >
+                        {selectorOpen ? (
+                            <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        )}
+                    </button>
+                )}
+            </div>
+
+            {/* Selector Dropdown Content */}
+            {selectorOpen && (
+                <div className="px-3 py-2 border-t bg-muted/20 space-y-1.5">
+                    {xpath && (
+                        <div className="flex items-start gap-2">
+                            <span className="text-[10px] font-medium text-muted-foreground uppercase w-12 flex-shrink-0 pt-0.5">XPath</span>
+                            <code className="text-xs break-all bg-muted/50 px-1.5 py-0.5 rounded flex-1">{xpath}</code>
+                        </div>
+                    )}
+                    {cssSelector && (
+                        <div className="flex items-start gap-2">
+                            <span className="text-[10px] font-medium text-muted-foreground uppercase w-12 flex-shrink-0 pt-0.5">CSS</span>
+                            <code className="text-xs break-all bg-muted/50 px-1.5 py-0.5 rounded flex-1">{cssSelector}</code>
+                        </div>
+                    )}
+                    {/* Show all action params for debugging/completeness */}
+                    {action.action_params && Object.keys(action.action_params).length > 0 && (
+                        <div className="flex items-start gap-2 pt-1 border-t border-muted/30">
+                            <span className="text-[10px] font-medium text-muted-foreground uppercase w-12 flex-shrink-0 pt-0.5">Params</span>
+                            <code className="text-xs break-all bg-muted/50 px-1.5 py-0.5 rounded flex-1">
+                                {JSON.stringify(action.action_params, null, 2)}
+                            </code>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    )
 }
 
 function StatusIcon({ status }: { status?: string }) {
@@ -30,7 +234,7 @@ function StatusIcon({ status }: { status?: string }) {
     }
 }
 
-export default function StepList({ steps, selectedStepId, onStepSelect, onClear }: StepListProps) {
+export default function StepList({ steps, selectedStepId, onStepSelect, onClear, onActionUpdate, simpleMode = false }: StepListProps) {
     const [expandedSteps, setExpandedSteps] = useState<Set<string | number>>(new Set())
 
     const toggleExpand = (id: string | number) => {
@@ -83,6 +287,40 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear 
                     const isSelected = selectedStepId === step.id
                     const isUserStep = isUserRecorded(step)
 
+                    // Simple Mode: Show actions directly as compact rows
+                    if (simpleMode) {
+                        const actions = step.actions || []
+                        if (actions.length === 0) {
+                            return (
+                                <div key={step.id} className="border rounded-lg p-3 bg-muted/20">
+                                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                        <StatusIcon status={step.status} />
+                                        <span className="font-mono text-xs">{step.step_number || index + 1}</span>
+                                        <span>{step.description}</span>
+                                    </div>
+                                </div>
+                            )
+                        }
+                        return (
+                            <div key={step.id} className="space-y-1.5">
+                                {actions.map((action, idx) => {
+                                    const handleTextUpdate = async (newText: string) => {
+                                        const updatedAction = await analysisApi.updateActionText(action.id, newText)
+                                        onActionUpdate?.(String(step.id), updatedAction)
+                                    }
+                                    return (
+                                        <SimpleActionRow
+                                            key={action.id || idx}
+                                            action={action}
+                                            onTextUpdate={handleTextUpdate}
+                                        />
+                                    )
+                                })}
+                            </div>
+                        )
+                    }
+
+                    // Detailed Mode (default): Show full step cards with expandable details
                     return (
                         <div key={step.id}>
                             <Card
@@ -191,10 +429,23 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear 
                                                                 'source' in action.action_params &&
                                                                 action.action_params.source === 'user'
 
+                                                            const isTypeTextAction = ['type_text', 'input_text', 'type', 'input', 'fill'].includes(action.action_name?.toLowerCase() || '')
+                                                            const textValue = isTypeTextAction
+                                                                ? (action.action_params?.text as string) ||
+                                                                  (action.action_params?.value as string) ||
+                                                                  (action.action_params?.input as string) ||
+                                                                  null
+                                                                : null
+
+                                                            const handleTextUpdate = async (newText: string) => {
+                                                                const updatedAction = await analysisApi.updateActionText(action.id, newText)
+                                                                onActionUpdate?.(String(step.id), updatedAction)
+                                                            }
+
                                                             return (
                                                                 <div
                                                                     key={action.id || idx}
-                                                                    className={`text-xs p-2 rounded flex items-center gap-2 ${action.result_success ? 'bg-green-50' :
+                                                                    className={`text-xs p-2 rounded flex items-center gap-2 flex-wrap ${action.result_success ? 'bg-green-50' :
                                                                         action.result_error ? 'bg-red-50' : 'bg-muted/50'
                                                                         }`}
                                                                 >
@@ -210,6 +461,14 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear 
                                                                         <span className="text-muted-foreground">
                                                                             → {action.element_name}
                                                                         </span>
+                                                                    )}
+                                                                    {/* Display and allow editing of text for type_text actions */}
+                                                                    {isTypeTextAction && textValue !== null && (
+                                                                        <EditableText
+                                                                            value={textValue}
+                                                                            onSave={handleTextUpdate}
+                                                                            className="ml-1"
+                                                                        />
                                                                     )}
                                                                     {isUserAction && (
                                                                         <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-red-100 text-red-600">

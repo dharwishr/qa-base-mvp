@@ -326,22 +326,62 @@ class CDPRunner(BaseRunner):
             self._session = BrowserSession(cdp_url=self._cdp_url)
         else:
             # Launch local browser
+            logger.info("Launching local CDP browser")
             self._session = BrowserSession(headless=self.headless)
-        
-        await self._session.start()
 
-        # Wait for browser to be ready and get the page
-        target_id = self._session.agent_focus_target_id
+        try:
+            await asyncio.wait_for(self._session.start(), timeout=30.0)
+            logger.info("BrowserSession started successfully")
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"Timeout starting BrowserSession with CDP URL: {self._cdp_url}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to start BrowserSession: {e}")
+
+        # Wait for browser to be ready and get the page - retry up to 5 times
+        target_id = None
+        max_retries = 5
+        for attempt in range(max_retries):
+            target_id = self._session.agent_focus_target_id
+            if target_id:
+                logger.info(f"Got browser target ID: {target_id}")
+                break
+            logger.debug(f"Waiting for browser target ID (attempt {attempt + 1}/{max_retries})...")
+            await asyncio.sleep(1.0)
+
         if not target_id:
-            raise RuntimeError("Failed to get browser target ID")
+            # Try to get any available target
+            logger.warning("agent_focus_target_id not available, attempting to find any target...")
+            try:
+                # Get targets list from the browser
+                targets = await self._session._client.send.Target.getTargets()
+                page_targets = [t for t in targets.get('targetInfos', []) if t.get('type') == 'page']
+                if page_targets:
+                    target_id = page_targets[0].get('targetId')
+                    logger.info(f"Found page target: {target_id}")
+            except Exception as e:
+                logger.warning(f"Could not get targets list: {e}")
+
+        if not target_id:
+            raise RuntimeError(
+                f"Failed to get browser target ID after {max_retries} attempts. "
+                f"CDP URL: {self._cdp_url}. Browser may not be ready or CDP connection failed."
+            )
 
         # Create Page actor
-        cdp_session = await self._session.get_or_create_cdp_session(target_id=target_id, focus=True)
-        self._session_id = cdp_session.session_id
-        self._page = Page(self._session, target_id, self._session_id)
+        logger.debug(f"Creating CDP session for target: {target_id}")
+        try:
+            cdp_session = await self._session.get_or_create_cdp_session(target_id=target_id, focus=True)
+            self._session_id = cdp_session.session_id
+            self._page = Page(self._session, target_id, self._session_id)
+            logger.info(f"CDP session created with session_id: {self._session_id}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to create CDP session: {e}")
 
         # Set viewport size
         await self._page.set_viewport_size(1920, 1080)
+
+        # Wait for page to be ready
+        await asyncio.sleep(0.5)
 
         logger.info("CDP browser initialized successfully")
 

@@ -13,6 +13,7 @@ interface ChatTimelineProps {
   selectedStepId?: string | null;
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
+  simpleMode?: boolean;
 }
 
 export default function ChatTimeline({
@@ -25,6 +26,7 @@ export default function ChatTimeline({
   selectedStepId,
   onUndoToStep,
   totalSteps = 0,
+  simpleMode = false,
 }: ChatTimelineProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -80,6 +82,7 @@ export default function ChatTimeline({
           }
           onUndoToStep={onUndoToStep}
           totalSteps={totalSteps}
+          simpleMode={simpleMode}
         />
       ))}
 

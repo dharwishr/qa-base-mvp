@@ -387,16 +387,44 @@ async def run_websocket(websocket: WebSocket, run_id: str, db: Session = Depends
 
 		# Create steps from JSON
 		steps = [PlaywrightStep(**step) for step in script.steps_json]
+		logger.info(f"Created {len(steps)} steps for run {run_id}")
+
+		# Validate steps
+		if not steps:
+			error_msg = "No steps to execute - script has no valid steps"
+			logger.error(error_msg)
+			await websocket.send_json({"type": "error", "message": error_msg})
+			run.status = "failed"
+			run.error_message = error_msg
+			db.commit()
+			return
+
+		# Log step details for debugging
+		for i, step in enumerate(steps):
+			logger.debug(f"Step {i}: action={step.action}, description={step.description}")
 
 		# Run the script using the appropriate runner (with remote CDP if available)
-		async with create_runner(
-			runner_type=runner_type,
-			headless=True,
-			on_step_start=on_step_start,
-			on_step_complete=on_step_complete,
-			cdp_url=cdp_url,
-		) as runner:
-			result = await runner.run(steps, run_id)
+		logger.info(f"Creating {runner_type.value} runner with CDP URL: {cdp_url}")
+		try:
+			async with create_runner(
+				runner_type=runner_type,
+				headless=True,
+				on_step_start=on_step_start,
+				on_step_complete=on_step_complete,
+				cdp_url=cdp_url,
+			) as runner:
+				logger.info(f"Runner created successfully, starting execution of {len(steps)} steps")
+				result = await runner.run(steps, run_id)
+				logger.info(f"Runner execution completed with status: {result.status}")
+		except Exception as runner_error:
+			error_msg = f"Runner execution failed: {str(runner_error)}"
+			logger.exception(error_msg)
+			await websocket.send_json({"type": "error", "message": error_msg})
+			run.status = "failed"
+			run.error_message = error_msg
+			run.completed_at = datetime.utcnow()
+			db.commit()
+			raise
 		
 		# Update run with final status
 		run.status = result.status

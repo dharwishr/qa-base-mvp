@@ -11,10 +11,11 @@ import {
   ChevronRight,
   ExternalLink,
   FileText,
+  RotateCcw,
   Check,
   X,
-  RotateCcw,
 } from 'lucide-react';
+import { SimpleActionRow } from '@/components/analysis/StepList';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import type {
@@ -35,6 +36,7 @@ interface ChatMessageProps {
   isSelected?: boolean;
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
+  simpleMode?: boolean;
 }
 
 function formatTime(timestamp: string): string {
@@ -230,12 +232,14 @@ function StepMessageCard({
   isSelected,
   onUndoToStep,
   totalSteps = 0,
+  simpleMode = false,
 }: {
   message: StepMessage;
   onStepSelect?: (stepId: string) => void;
   isSelected?: boolean;
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
+  simpleMode?: boolean;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showUndoHint, setShowUndoHint] = useState(false);
@@ -256,6 +260,36 @@ function StepMessageCard({
         return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
   };
+
+  if (simpleMode) {
+    const actions = step.actions || []
+
+    if (actions.length === 0) {
+      return (
+        <div className="flex justify-start w-full">
+          <div className="flex items-center gap-2 max-w-[80%] border rounded-lg p-2 bg-muted/20">
+            <StatusIcon />
+            <span className="font-mono text-xs">{step.step_number}</span>
+            <span className="text-sm">{step.next_goal || `Step ${step.step_number}`}</span>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex justify-start w-full">
+        <div className="space-y-1.5 w-full max-w-[80%]">
+          {actions.map((action, idx) => (
+            <SimpleActionRow
+              key={action.id || idx}
+              action={action}
+            // Note: Chat view doesn't support action updates directly for now
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex justify-start">
@@ -465,6 +499,7 @@ export default function ChatMessage({
   isSelected,
   onUndoToStep,
   totalSteps,
+  simpleMode,
 }: ChatMessageProps) {
   switch (message.type) {
     case 'user':
@@ -487,6 +522,7 @@ export default function ChatMessage({
           isSelected={isSelected}
           onUndoToStep={onUndoToStep}
           totalSteps={totalSteps}
+          simpleMode={simpleMode}
         />
       );
     case 'error':

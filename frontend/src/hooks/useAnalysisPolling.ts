@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { analysisApi } from '../services/api';
-import type { TestStep, SessionStatus } from '../types/analysis';
+import type { TestStep, SessionStatus, StepAction } from '../types/analysis';
 
 interface UseAnalysisPollingReturn {
   steps: TestStep[];
@@ -15,6 +15,7 @@ interface UseAnalysisPollingReturn {
   clear: () => Promise<void>;
   startPolling: () => void;
   stopPolling: () => void;
+  updateStepAction: (stepId: string, updatedAction: StepAction) => void;
 }
 
 const POLL_INTERVAL = 2000; // 2 seconds
@@ -157,6 +158,21 @@ export function useAnalysisPolling(sessionId: string | null): UseAnalysisPolling
     setError(null);
   }, [sessionId]);
 
+  const updateStepAction = useCallback((stepId: string, updatedAction: StepAction) => {
+    setSteps(prevSteps =>
+      prevSteps.map(step =>
+        step.id === stepId
+          ? {
+              ...step,
+              actions: step.actions.map(action =>
+                action.id === updatedAction.id ? updatedAction : action
+              )
+            }
+          : step
+      )
+    );
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -190,5 +206,6 @@ export function useAnalysisPolling(sessionId: string | null): UseAnalysisPolling
     clear,
     startPolling,
     stopPolling,
+    updateStepAction,
   };
 }

@@ -1,12 +1,12 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Bot, Monitor, RefreshCw } from "lucide-react"
+import { ArrowLeft, Bot, Monitor, RefreshCw, List, LayoutList } from "lucide-react"
 import StepList, { type TestStep as DisplayTestStep } from "@/components/analysis/StepList"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
 import LiveBrowserView from "@/components/LiveBrowserView"
 import { analysisApi, getScreenshotUrl } from "@/services/api"
 import { getAuthToken } from "@/contexts/AuthContext"
-import type { TestSession, LlmModel } from "@/types/analysis"
+import type { TestSession, LlmModel, StepAction } from "@/types/analysis"
 
 const STATUS_COLORS: Record<string, string> = {
     'pending_plan': 'bg-gray-100 text-gray-700',
@@ -63,6 +63,7 @@ export default function SessionDetail() {
     const [error, setError] = useState<string | null>(null)
     const [selectedStepId, setSelectedStepId] = useState<string | number | null>(null)
     const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null)
+    const [simpleMode, setSimpleMode] = useState(false)
     const pollRef = useRef<number | null>(null)
 
     // Fetch session data
@@ -204,6 +205,27 @@ export default function SessionDetail() {
         setSelectedStepId(step.id)
     }
 
+    // Handle action update (for editable input text)
+    const handleActionUpdate = useCallback((stepId: string, updatedAction: StepAction) => {
+        if (!session) return
+        setSession(prevSession => {
+            if (!prevSession || !prevSession.steps) return prevSession
+            return {
+                ...prevSession,
+                steps: prevSession.steps.map(step =>
+                    step.id === stepId
+                        ? {
+                            ...step,
+                            actions: step.actions.map(action =>
+                                action.id === updatedAction.id ? updatedAction : action
+                            )
+                        }
+                        : step
+                )
+            }
+        })
+    }, [session])
+
     // Check if session is actively running
     const isRunning = session?.status === 'running' || session?.status === 'queued'
 
@@ -285,12 +307,38 @@ export default function SessionDetail() {
                         </div>
                     )}
 
-                    {/* Step List */}
-                    <StepList
-                        steps={displaySteps}
-                        selectedStepId={selectedStepId}
-                        onStepSelect={handleStepSelect}
-                    />
+                    {/* Step List with View Mode Toggle */}
+                    <div className="flex flex-col flex-1 min-h-0">
+                        {/* View Mode Toggle */}
+                        <div className="px-4 py-2 border-b bg-muted/10 flex items-center justify-between">
+                            <span className="text-xs text-muted-foreground">View Mode</span>
+                            <div className="flex items-center gap-1 bg-muted/30 rounded-md p-0.5">
+                                <button
+                                    onClick={() => setSimpleMode(false)}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${!simpleMode ? 'bg-background shadow-sm' : 'hover:bg-background/50'}`}
+                                    title="Detailed view"
+                                >
+                                    <LayoutList className="h-3.5 w-3.5" />
+                                    Detailed
+                                </button>
+                                <button
+                                    onClick={() => setSimpleMode(true)}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${simpleMode ? 'bg-background shadow-sm' : 'hover:bg-background/50'}`}
+                                    title="Simple view"
+                                >
+                                    <List className="h-3.5 w-3.5" />
+                                    Simple
+                                </button>
+                            </div>
+                        </div>
+                        <StepList
+                            steps={displaySteps}
+                            selectedStepId={selectedStepId}
+                            onStepSelect={handleStepSelect}
+                            onActionUpdate={handleActionUpdate}
+                            simpleMode={simpleMode}
+                        />
+                    </div>
                 </div>
 
                 {/* Right Panel */}

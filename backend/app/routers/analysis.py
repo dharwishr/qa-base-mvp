@@ -24,6 +24,7 @@ from app.schemas import (
 	ReplaySessionRequest,
 	ReplaySessionResponse,
 	StartRecordingRequest,
+	StepActionResponse,
 	StopResponse,
 	TestPlanResponse,
 	TestSessionDetailResponse,
@@ -33,6 +34,7 @@ from app.schemas import (
 	UndoRequest,
 	UndoResponse,
 	UpdateSessionTitleRequest,
+	UpdateStepActionTextRequest,
 	WSError,
 )
 from app.services.plan_service import generate_plan
@@ -589,8 +591,55 @@ async def clear_session_steps(
 	
 	# Delete steps
 	db.query(TestStep).filter(TestStep.session_id == session_id).delete(synchronize_session=False)
-	
+
 	db.commit()
+
+
+# ============================================
+# Step Action Update Endpoints
+# ============================================
+
+@router.patch("/actions/{action_id}/text", response_model=StepActionResponse)
+async def update_action_text(
+	action_id: str,
+	request: UpdateStepActionTextRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Update the text value for a type_text action.
+
+	This endpoint allows editing the input text for type_text actions,
+	which is useful for correcting recorded user inputs or modifying
+	test data before replay.
+	"""
+	from app.models import StepAction
+	from sqlalchemy.orm.attributes import flag_modified
+
+	action = db.query(StepAction).filter(StepAction.id == action_id).first()
+	if not action:
+		raise HTTPException(status_code=404, detail="Action not found")
+
+	# Verify this is a type_text action
+	if action.action_name != "type_text":
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot update text for action type: {action.action_name}. "
+				   "Only type_text actions can have their text edited."
+		)
+
+	# Update action_params with new text
+	params = action.action_params or {}
+	params["text"] = request.text
+	action.action_params = params
+
+	# SQLAlchemy may not detect changes to JSON field, so force update
+	flag_modified(action, "action_params")
+
+	db.commit()
+	db.refresh(action)
+
+	logger.info(f"Updated action {action_id} text to: {request.text[:50]}...")
+	return action
 
 
 # ============================================

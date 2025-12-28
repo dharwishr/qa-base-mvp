@@ -91,6 +91,12 @@ CHROME_DOCKER_ARGS = [
 	'--no-zygote',
 	# '--single-process',  # might be the cause of "Target page, context or browser has been closed" errors during CDP page.captureScreenshot https://stackoverflow.com/questions/51629151/puppeteer-protocol-error-page-navigate-target-closed
 	'--disable-site-isolation-trials',  # lowers RAM use by 10-16% in docker, but could lead to easier bot blocking if pages can detect it?
+	# WebGL2 support via software rendering (SwiftShader/ANGLE)
+	'--enable-webgl',
+	'--enable-webgl2',
+	'--use-gl=angle',
+	'--use-angle=swiftshader',
+	'--ignore-gpu-blocklist',
 ]
 
 

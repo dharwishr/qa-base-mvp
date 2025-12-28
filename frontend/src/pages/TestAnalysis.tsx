@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { List, LayoutList } from "lucide-react"
 import StepList, { type TestStep as DisplayTestStep } from "@/components/analysis/StepList"
 import ConfigPanel from "@/components/analysis/ConfigPanel"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
@@ -27,6 +28,7 @@ export default function TestAnalysis() {
     const [headless, setHeadless] = useState(true) // Default to headless mode
     const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null)
     const [isRecording, setIsRecording] = useState(false)
+    const [simpleMode, setSimpleMode] = useState(false)
 
     // Polling hook for step updates (replaces WebSocket)
     const {
@@ -39,6 +41,7 @@ export default function TestAnalysis() {
         startExecution,
         stopExecution,
         clear,
+        updateStepAction,
     } = useAnalysisPolling(session?.id ?? null)
 
     // Convert polling steps to display format
@@ -372,13 +375,39 @@ export default function TestAnalysis() {
                         </div>
                     )}
 
-                    {/* Step List */}
-                    <StepList
-                        steps={displaySteps}
-                        selectedStepId={selectedStepId}
-                        onStepSelect={handleStepSelect}
-                        onClear={clear}
-                    />
+                    {/* Step List with View Mode Toggle */}
+                    <div className="flex flex-col flex-1 min-h-0">
+                        {/* View Mode Toggle */}
+                        <div className="px-4 py-2 border-b bg-muted/10 flex items-center justify-between">
+                            <span className="text-xs text-muted-foreground">View Mode</span>
+                            <div className="flex items-center gap-1 bg-muted/30 rounded-md p-0.5">
+                                <button
+                                    onClick={() => setSimpleMode(false)}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${!simpleMode ? 'bg-background shadow-sm' : 'hover:bg-background/50'}`}
+                                    title="Detailed view"
+                                >
+                                    <LayoutList className="h-3.5 w-3.5" />
+                                    Detailed
+                                </button>
+                                <button
+                                    onClick={() => setSimpleMode(true)}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${simpleMode ? 'bg-background shadow-sm' : 'hover:bg-background/50'}`}
+                                    title="Simple view"
+                                >
+                                    <List className="h-3.5 w-3.5" />
+                                    Simple
+                                </button>
+                            </div>
+                        </div>
+                        <StepList
+                            steps={displaySteps}
+                            selectedStepId={selectedStepId}
+                            onStepSelect={handleStepSelect}
+                            onClear={clear}
+                            onActionUpdate={updateStepAction}
+                            simpleMode={simpleMode}
+                        />
+                    </div>
                 </div>
 
                 {/* Resizer Handle */}
