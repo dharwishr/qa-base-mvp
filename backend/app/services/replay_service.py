@@ -244,7 +244,10 @@ async def replay_session(
                 source="replay_service",
             ))
             db.commit()
-            
+
+            # Touch the browser session to keep it active for debugging
+            await orchestrator.touch_session(browser_session.id)
+
             return ReplayResult(
                 success=False,
                 total_steps=total_steps,
@@ -265,9 +268,12 @@ async def replay_session(
             source="replay_service",
         ))
         db.commit()
-        
+
+        # Touch the browser session to keep it active for user interaction
+        await orchestrator.touch_session(browser_session.id)
+
         healed_msg = f" ({result.healed_steps} selectors auto-healed)" if result.healed_steps > 0 else ""
-        
+
         return ReplayResult(
             success=True,
             total_steps=total_steps,

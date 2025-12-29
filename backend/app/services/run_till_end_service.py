@@ -311,6 +311,9 @@ class RunTillEndService:
             # All steps completed
             self.state.is_running = False
 
+            # Touch the browser session to keep it active for user interaction
+            await orchestrator.touch_session(browser_session.id)
+
             await self.send_message({
                 "type": "run_till_end_completed",
                 "success": True,
