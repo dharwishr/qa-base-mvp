@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Bot, Monitor, RefreshCw, List, LayoutList } from "lucide-react"
+import { ArrowLeft, Bot, Monitor, RefreshCw, List, LayoutList, FileCode, ExternalLink, Loader2 } from "lucide-react"
 import StepList, { type TestStep as DisplayTestStep } from "@/components/analysis/StepList"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
 import LiveBrowserView from "@/components/LiveBrowserView"
-import { analysisApi, getScreenshotUrl } from "@/services/api"
+import { analysisApi, scriptsApi, getScreenshotUrl } from "@/services/api"
 import { getAuthToken } from "@/contexts/AuthContext"
 import type { TestSession, LlmModel, StepAction } from "@/types/analysis"
+import type { PlaywrightScript } from "@/types/scripts"
 
 const STATUS_COLORS: Record<string, string> = {
     'pending_plan': 'bg-gray-100 text-gray-700',
@@ -64,7 +65,24 @@ export default function SessionDetail() {
     const [selectedStepId, setSelectedStepId] = useState<string | number | null>(null)
     const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null)
     const [simpleMode, setSimpleMode] = useState(false)
+    const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null)
+    const [generatingScript, setGeneratingScript] = useState(false)
     const pollRef = useRef<number | null>(null)
+
+    // Check for existing script linked to this session
+    useEffect(() => {
+        const checkForLinkedScript = async () => {
+            if (!sessionId) return
+            try {
+                const scripts = await scriptsApi.listScripts()
+                const existingScript = scripts.find(s => s.session_id === sessionId)
+                setLinkedScript(existingScript || null)
+            } catch (e) {
+                console.error('Error checking for linked script:', e)
+            }
+        }
+        checkForLinkedScript()
+    }, [sessionId])
 
     // Fetch session data
     useEffect(() => {
@@ -226,6 +244,53 @@ export default function SessionDetail() {
         })
     }, [session])
 
+    // Handle step deletion
+    const handleDeleteStep = useCallback(async (stepId: string) => {
+        if (!session) return
+        try {
+            await analysisApi.deleteStep(stepId)
+            // Update local state: remove the step and renumber remaining steps
+            setSession(prevSession => {
+                if (!prevSession || !prevSession.steps) return prevSession
+                const newSteps = prevSession.steps
+                    .filter(step => step.id !== stepId)
+                    .map((step, idx) => ({ ...step, step_number: idx + 1 }))
+                return { ...prevSession, steps: newSteps }
+            })
+        } catch (e) {
+            console.error('Failed to delete step:', e)
+            throw e
+        }
+    }, [session])
+
+    // Generate script from session
+    const handleGenerateScript = async () => {
+        if (!session?.id) return
+        setGeneratingScript(true)
+        try {
+            const scriptName = session.title || session.prompt?.slice(0, 50) || `Test Script ${new Date().toISOString()}`
+            const script = await scriptsApi.createScript({
+                session_id: session.id,
+                name: scriptName,
+                description: `Generated from test analysis session`,
+            })
+            setLinkedScript(script)
+            navigate(`/scripts/${script.id}`)
+        } catch (e) {
+            console.error('Error generating script:', e)
+            setError(e instanceof Error ? e.message : 'Failed to generate script')
+        } finally {
+            setGeneratingScript(false)
+        }
+    }
+
+    // Open linked script
+    const handleOpenScript = () => {
+        if (linkedScript) {
+            navigate(`/scripts/${linkedScript.id}`)
+        }
+    }
+
     // Check if session is actively running
     const isRunning = session?.status === 'running' || session?.status === 'queued'
 
@@ -294,6 +359,38 @@ export default function SessionDetail() {
                                 </span>
                             </div>
                             <p className="text-sm">{session.prompt}</p>
+                            {/* Script Button */}
+                            {displaySteps.length > 0 && (
+                                <div className="pt-2">
+                                    {linkedScript ? (
+                                        <button
+                                            onClick={handleOpenScript}
+                                            className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 h-7 px-3 py-1"
+                                        >
+                                            <ExternalLink className="h-3.5 w-3.5" />
+                                            Open Script
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handleGenerateScript}
+                                            disabled={generatingScript || isRunning}
+                                            className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 h-7 px-3 py-1 disabled:opacity-50"
+                                        >
+                                            {generatingScript ? (
+                                                <>
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                    Generating...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <FileCode className="h-3.5 w-3.5" />
+                                                    Generate Script
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -336,6 +433,8 @@ export default function SessionDetail() {
                             selectedStepId={selectedStepId}
                             onStepSelect={handleStepSelect}
                             onActionUpdate={handleActionUpdate}
+                            onDeleteStep={handleDeleteStep}
+                            isExecuting={isRunning}
                             simpleMode={simpleMode}
                         />
                     </div>

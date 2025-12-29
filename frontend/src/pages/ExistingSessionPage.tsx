@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Square, Settings2, Bot, Monitor, EyeOff, ArrowLeft, Play, FileCode, List, LayoutList } from 'lucide-react';
+import { Square, Settings2, Bot, Monitor, EyeOff, ArrowLeft, Play, FileCode, List, LayoutList, ExternalLink, Circle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
@@ -10,6 +10,7 @@ import ReplayFailureDialog from '@/components/analysis/ReplayFailureDialog';
 import { useExistingSession } from '@/hooks/useExistingSession';
 import { getScreenshotUrl, scriptsApi } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
+import type { PlaywrightScript } from '@/types/scripts';
 
 const LLM_OPTIONS: { value: LlmModel; label: string }[] = [
   { value: 'browser-use-llm', label: 'Browser Use LLM' },
@@ -39,6 +40,7 @@ export default function ExistingSessionPage() {
     selectedStepId,
     totalSteps,
     replayFailure,
+    isRecording,
     loadSession,
     replaySession,
     sendMessage,
@@ -49,6 +51,8 @@ export default function ExistingSessionPage() {
     forkFromStep,
     undoToStep,
     clearReplayFailure,
+    startRecording,
+    stopRecording,
     setMode,
     setSelectedLlm,
     setHeadless,
@@ -61,6 +65,9 @@ export default function ExistingSessionPage() {
   const [undoTargetStep, setUndoTargetStep] = useState<number | null>(null);
   const [isUndoing, setIsUndoing] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
+  const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null);
+  const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+  const [isInteractionEnabled, setIsInteractionEnabled] = useState(false);
 
   // Load session on mount
   useEffect(() => {
@@ -68,6 +75,21 @@ export default function ExistingSessionPage() {
       loadSession(sessionId);
     }
   }, [sessionId, loadSession]);
+
+  // Check for existing script linked to this session
+  useEffect(() => {
+    const checkForLinkedScript = async () => {
+      if (!sessionId) return;
+      try {
+        const scripts = await scriptsApi.listScripts();
+        const existingScript = scripts.find(s => s.session_id === sessionId);
+        setLinkedScript(existingScript || null);
+      } catch (e) {
+        console.error('Error checking for linked script:', e);
+      }
+    };
+    checkForLinkedScript();
+  }, [sessionId]);
 
   // Determine if "Generate Script" button should show
   const canGenerateScript = sessionStatus === 'completed' &&
@@ -190,28 +212,45 @@ export default function ExistingSessionPage() {
                 Stop
               </Button>
             )}
-            {canGenerateScript && (
+            {linkedScript ? (
               <Button
                 size="sm"
                 variant="outline"
+                onClick={() => navigate(`/scripts/${linkedScript.id}`)}
+                className="h-7 text-xs"
+              >
+                <ExternalLink className="h-3 w-3 mr-1" />
+                Open Script
+              </Button>
+            ) : canGenerateScript && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isGeneratingScript}
                 onClick={async () => {
                   if (!currentSession) return;
-                  const scriptName = currentSession.title ||
-                    currentSession.prompt?.slice(0, 50) ||
-                    `Test Script ${new Date().toISOString()}`;
-                  const script = await scriptsApi.createScript({
-                    session_id: currentSession.id,
-                    name: scriptName,
-                    description: `Generated from test analysis session`,
-                  });
-                  if (script) {
-                    navigate(`/scripts/${script.id}`);
+                  setIsGeneratingScript(true);
+                  try {
+                    const scriptName = currentSession.title ||
+                      currentSession.prompt?.slice(0, 50) ||
+                      `Test Script ${new Date().toISOString()}`;
+                    const script = await scriptsApi.createScript({
+                      session_id: currentSession.id,
+                      name: scriptName,
+                      description: `Generated from test analysis session`,
+                    });
+                    if (script) {
+                      setLinkedScript(script);
+                      navigate(`/scripts/${script.id}`);
+                    }
+                  } finally {
+                    setIsGeneratingScript(false);
                   }
                 }}
                 className="h-7 text-xs"
               >
                 <FileCode className="h-3 w-3 mr-1" />
-                Generate Script
+                {isGeneratingScript ? 'Generating...' : 'Generate Script'}
               </Button>
             )}
             <Button
@@ -327,20 +366,31 @@ export default function ExistingSessionPage() {
 
         {/* Chat Input with Re-initiate Button */}
         <div className="border-t bg-background">
-          {/* Re-initiate Session Button */}
+          {/* Re-initiate Session Buttons */}
           {!browserSession && !isExecuting && !isReplaying && totalSteps > 0 && (
-            <div className="px-4 pt-3">
-              <Button
-                onClick={replaySession}
-                disabled={isReplaying}
-                className="w-full"
-                variant="secondary"
-              >
-                <Play className="h-4 w-4 mr-2" />
-                Re-initiate Session
-              </Button>
-              <p className="text-xs text-muted-foreground mt-2 text-center">
-                Start a live browser and replay all {totalSteps} steps
+            <div className="px-4 pt-3 space-y-2">
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => replaySession(false)}
+                  disabled={isReplaying}
+                  className="flex-1"
+                  variant="secondary"
+                >
+                  <Monitor className="h-4 w-4 mr-2" />
+                  Browser
+                </Button>
+                <Button
+                  onClick={() => replaySession(true)}
+                  disabled={isReplaying}
+                  className="flex-1"
+                  variant="default"
+                >
+                  <Circle className="h-4 w-4 mr-2 fill-red-500 text-red-500" />
+                  Record
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground text-center">
+                Replay {totalSteps} steps, then browse or record new steps
               </p>
             </div>
           )}
@@ -383,6 +433,13 @@ export default function ExistingSessionPage() {
             onClose={endBrowserSession}
             onStopBrowser={endBrowserSession}
             className="flex-1 m-4"
+            isRecording={isRecording}
+            onStartRecording={startRecording}
+            onStopRecording={stopRecording}
+            canRecord={!!sessionId && !!browserSession?.id && !isExecuting}
+            isAIExecuting={isExecuting}
+            isInteractionEnabled={isInteractionEnabled}
+            onToggleInteraction={() => setIsInteractionEnabled(!isInteractionEnabled)}
           />
         ) : !headless && isReplaying ? (
           <div className="flex-1 flex items-center justify-center">
@@ -433,15 +490,24 @@ export default function ExistingSessionPage() {
                             : 'Select a step to view its screenshot'}
                       </p>
                       {totalSteps > 0 && !browserSession && (
-                        <Button
-                          onClick={replaySession}
-                          disabled={isReplaying}
-                          variant="outline"
-                          className="mt-4"
-                        >
-                          <Play className="h-4 w-4 mr-2" />
-                          Re-initiate Session
-                        </Button>
+                        <div className="flex gap-2 mt-4">
+                          <Button
+                            onClick={() => replaySession(false)}
+                            disabled={isReplaying}
+                            variant="outline"
+                          >
+                            <Monitor className="h-4 w-4 mr-2" />
+                            Browser
+                          </Button>
+                          <Button
+                            onClick={() => replaySession(true)}
+                            disabled={isReplaying}
+                            variant="default"
+                          >
+                            <Circle className="h-4 w-4 mr-2 fill-red-500 text-red-500" />
+                            Record
+                          </Button>
+                        </div>
                       )}
                     </div>
                   )}

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot, MousePointer, Type, Globe, Eye, Play, ArrowUp, ChevronUp } from "lucide-react"
+import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot, MousePointer, Type, Globe, Eye, Play, ArrowUp, ChevronUp, AlertTriangle } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useState } from "react"
 import type { TestStep as AnalysisTestStep, StepAction } from "@/types/analysis"
@@ -18,6 +18,8 @@ interface StepListProps {
     onStepSelect?: (step: TestStep) => void
     onClear?: () => void
     onActionUpdate?: (stepId: string, updatedAction: StepAction) => void
+    onDeleteStep?: (stepId: string) => Promise<void>
+    isExecuting?: boolean
     simpleMode?: boolean
 }
 
@@ -234,8 +236,32 @@ function StatusIcon({ status }: { status?: string }) {
     }
 }
 
-export default function StepList({ steps, selectedStepId, onStepSelect, onClear, onActionUpdate, simpleMode = false }: StepListProps) {
+export default function StepList({ steps, selectedStepId, onStepSelect, onClear, onActionUpdate, onDeleteStep, isExecuting = false, simpleMode = false }: StepListProps) {
     const [expandedSteps, setExpandedSteps] = useState<Set<string | number>>(new Set())
+    const [stepToDelete, setStepToDelete] = useState<TestStep | null>(null)
+    const [isDeleting, setIsDeleting] = useState(false)
+
+    const handleDeleteClick = (e: React.MouseEvent, step: TestStep) => {
+        e.stopPropagation()
+        setStepToDelete(step)
+    }
+
+    const handleConfirmDelete = async () => {
+        if (!stepToDelete || !onDeleteStep) return
+        setIsDeleting(true)
+        try {
+            await onDeleteStep(String(stepToDelete.id))
+            setStepToDelete(null)
+        } catch (error) {
+            console.error('Failed to delete step:', error)
+        } finally {
+            setIsDeleting(false)
+        }
+    }
+
+    const handleCancelDelete = () => {
+        setStepToDelete(null)
+    }
 
     const toggleExpand = (id: string | number) => {
         setExpandedSteps(prev => {
@@ -309,11 +335,27 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                                         onActionUpdate?.(String(step.id), updatedAction)
                                     }
                                     return (
-                                        <SimpleActionRow
-                                            key={action.id || idx}
-                                            action={action}
-                                            onTextUpdate={handleTextUpdate}
-                                        />
+                                        <div key={action.id || idx} className="flex items-start gap-2 group">
+                                            <span className="font-mono text-muted-foreground text-sm w-5 pt-2 flex-shrink-0">
+                                                {step.step_number || index + 1}
+                                            </span>
+                                            <div className="flex-1">
+                                                <SimpleActionRow
+                                                    action={action}
+                                                    onTextUpdate={handleTextUpdate}
+                                                />
+                                            </div>
+                                            {onDeleteStep && (
+                                                <button
+                                                    onClick={(e) => handleDeleteClick(e, step)}
+                                                    disabled={isExecuting}
+                                                    className="p-1.5 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0 mt-1"
+                                                    title={isExecuting ? "Cannot delete while executing" : "Delete step"}
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </button>
+                                            )}
+                                        </div>
                                     )
                                 })}
                             </div>
@@ -324,7 +366,7 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                     return (
                         <div key={step.id}>
                             <Card
-                                className={`border-l-4 transition-all cursor-pointer ${step.status === 'completed' ? 'border-l-green-500' :
+                                className={`group border-l-4 transition-all cursor-pointer ${step.status === 'completed' ? 'border-l-green-500' :
                                     step.status === 'failed' ? 'border-l-red-500' :
                                         step.status === 'running' ? 'border-l-yellow-500' :
                                             'border-l-primary/50'
@@ -376,6 +418,18 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                                                 </div>
                                             )}
                                         </div>
+
+                                        {/* Delete Button */}
+                                        {onDeleteStep && (
+                                            <button
+                                                onClick={(e) => handleDeleteClick(e, step)}
+                                                disabled={isExecuting}
+                                                className="p-1 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                title={isExecuting ? "Cannot delete while executing" : "Delete step"}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </button>
+                                        )}
 
                                         {/* Expand Toggle */}
                                         {showDetails && (
@@ -507,6 +561,43 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                     </div>
                 )}
             </div>
+
+            {/* Delete Confirmation Dialog */}
+            {stepToDelete && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-background rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+                        <div className="flex items-start gap-4">
+                            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                                <AlertTriangle className="h-5 w-5 text-red-600" />
+                            </div>
+                            <div className="flex-1">
+                                <h3 className="text-lg font-semibold text-foreground">
+                                    Delete Step {stepToDelete.step_number}?
+                                </h3>
+                                <p className="mt-2 text-sm text-muted-foreground">
+                                    Are you sure you want to delete this step? Deleting steps may cause the test case to fail during execution as subsequent steps may depend on this action.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-6 flex justify-end gap-3">
+                            <button
+                                onClick={handleCancelDelete}
+                                disabled={isDeleting}
+                                className="px-4 py-2 text-sm font-medium rounded-md border border-input bg-background hover:bg-muted transition-colors disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmDelete}
+                                disabled={isDeleting}
+                                className="px-4 py-2 text-sm font-medium rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                            >
+                                {isDeleting ? 'Deleting...' : 'Delete'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

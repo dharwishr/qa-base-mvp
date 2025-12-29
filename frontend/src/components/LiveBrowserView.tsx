@@ -115,7 +115,7 @@ export default function LiveBrowserView({
     }
 
     return (
-        <div className={`rounded-lg border bg-card shadow-sm overflow-hidden flex flex-col ${isExpanded ? 'fixed inset-4 z-50' : ''} ${isRecording ? 'ring-2 ring-red-500 ring-offset-2' : ''} ${className}`}>
+        <div className={`rounded-lg border bg-card shadow-sm overflow-hidden flex flex-col h-full ${isExpanded ? 'fixed inset-4 z-50' : ''} ${isRecording ? 'ring-2 ring-red-500 ring-offset-2' : ''} ${className}`}>
             {/* Header */}
             <div className={`border-b px-4 py-2 flex items-center justify-between ${isRecording ? 'bg-red-50' : 'bg-muted/30'}`}>
                 <div className="flex items-center gap-2">
@@ -144,8 +144,8 @@ export default function LiveBrowserView({
                         <button
                             onClick={onToggleInteraction}
                             className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${isInteractionEnabled
-                                    ? 'bg-blue-500 text-white hover:bg-blue-600'
-                                    : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                                ? 'bg-blue-500 text-white hover:bg-blue-600'
+                                : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
                                 }`}
                             title={isInteractionEnabled ? 'Disable Browser Interaction' : 'Enable Browser Interaction'}
                         >
@@ -216,7 +216,7 @@ export default function LiveBrowserView({
             </div>
 
             {/* Browser View */}
-            <div className={`relative flex-1 min-h-0 ${isExpanded ? '' : ''}`}>
+            <div className={`relative flex-1 min-h-[500px] ${isExpanded ? '' : ''}`}>
                 {isLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-10">
                         <div className="text-center">

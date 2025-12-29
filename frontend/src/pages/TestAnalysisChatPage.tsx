@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList } from 'lucide-react';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
 import LiveBrowserView from '@/components/LiveBrowserView';
 import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
 import { useChatSession } from '@/hooks/useChatSession';
-import { getScreenshotUrl } from '@/services/api';
+import { getScreenshotUrl, scriptsApi } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
 import type { QueueFailure } from '@/types/chat';
+import type { PlaywrightScript } from '@/types/scripts';
 
 const LLM_OPTIONS: { value: LlmModel; label: string }[] = [
   { value: 'browser-use-llm', label: 'Browser Use LLM' },
@@ -144,6 +145,25 @@ export default function TestAnalysisChatPage() {
   const [isResizing, setIsResizing] = useState(false);
   const [isInteractionEnabled, setIsInteractionEnabled] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
+  const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null);
+
+  // Check for existing script linked to this session
+  useEffect(() => {
+    const checkForLinkedScript = async () => {
+      if (!sessionId) {
+        setLinkedScript(null);
+        return;
+      }
+      try {
+        const scripts = await scriptsApi.listScripts();
+        const existingScript = scripts.find(s => s.session_id === sessionId);
+        setLinkedScript(existingScript || null);
+      } catch (e) {
+        console.error('Error checking for linked script:', e);
+      }
+    };
+    checkForLinkedScript();
+  }, [sessionId]);
 
   // Get selected step for screenshot display
   const selectedStep = messages
@@ -232,13 +252,31 @@ export default function TestAnalysisChatPage() {
                 Reset
               </Button>
             )}
-            {canGenerateScript && (
+            {linkedScript ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate(`/scripts/${linkedScript.id}`)}
+                className="h-7 text-xs"
+              >
+                <ExternalLink className="h-3 w-3 mr-1" />
+                Open Script
+              </Button>
+            ) : canGenerateScript && (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={async () => {
                   const scriptId = await generateScript();
                   if (scriptId) {
+                    // Refresh linked script after generation
+                    try {
+                      const scripts = await scriptsApi.listScripts();
+                      const newScript = scripts.find(s => s.id === scriptId);
+                      if (newScript) setLinkedScript(newScript);
+                    } catch (e) {
+                      console.error('Error fetching new script:', e);
+                    }
                     navigate(`/scripts/${scriptId}`);
                   }
                 }}

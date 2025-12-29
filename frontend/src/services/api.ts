@@ -145,6 +145,24 @@ export const analysisApi = {
   },
 
   /**
+   * Delete a single step and renumber remaining steps.
+   */
+  async deleteStep(stepId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/analysis/steps/${stepId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) {
+      if (response.status === 204) return;
+      if (response.status === 401) {
+        handleUnauthorized();
+        throw new ApiError(401, 'Unauthorized');
+      }
+      await handleResponse(response);
+    }
+  },
+
+  /**
    * Start test execution via Celery task.
    */
   async startExecution(sessionId: string): Promise<ExecuteResponse> {

@@ -2218,7 +2218,10 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 
 			# Normally there was no try catch here but the callback can raise an InterruptedError
 			try:
-				await self._execute_initial_actions()
+				await self._execute_initial_actions(
+					on_step_start=on_step_start,
+					on_step_end=on_step_end,
+				)
 			except InterruptedError:
 				pass
 			except Exception as e:
@@ -2818,9 +2821,17 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 			# Always close resources, even on failure
 			await self.close()
 
-	async def _execute_initial_actions(self) -> None:
+	async def _execute_initial_actions(
+		self,
+		on_step_start: AgentHookFunc | None = None,
+		on_step_end: AgentHookFunc | None = None,
+	) -> None:
 		# Execute initial actions if provided
 		if self.initial_actions and not self.state.follow_up_task:
+			# Call on_step_start callback for initial actions
+			if on_step_start is not None:
+				await on_step_start(self)
+
 			self.logger.debug(f'⚡ Executing {len(self.initial_actions)} initial actions...')
 			result = await self.multi_act(self.initial_actions)
 			# update result 1 to mention that its was automatically loaded
@@ -2865,6 +2876,11 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 
 			self.history.add_item(history_item)
 			self.logger.debug('📝 Saved initial actions to history as step 0')
+
+			# Call on_step_end callback for initial actions
+			if on_step_end is not None:
+				await on_step_end(self)
+
 			self.logger.debug('Initial actions completed')
 
 	async def _execute_history_step(

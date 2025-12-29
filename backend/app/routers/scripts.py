@@ -54,8 +54,8 @@ async def create_script(request: CreateScriptRequest, db: Session = Depends(get_
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
 	
-	if session.status != "completed":
-		raise HTTPException(status_code=400, detail="Session must be completed to generate script")
+	if session.status not in ("completed", "stopped"):
+		raise HTTPException(status_code=400, detail="Session must be completed or stopped to generate script")
 	
 	# Check if script with this name already exists for this session
 	existing = db.query(PlaywrightScript).filter(
@@ -258,11 +258,12 @@ async def start_run(
 	if runner_type not in ["playwright", "cdp"]:
 		raise HTTPException(status_code=400, detail=f"Invalid runner type: {runner_type}. Must be 'playwright' or 'cdp'")
 
-	# Create run record with runner type
+	# Create run record with runner type and headless setting
 	run = TestRun(
 		script_id=script_id,
 		status="pending",
 		runner_type=runner_type,
+		headless=request.headless,
 		total_steps=len(script.steps_json),
 	)
 	db.add(run)
@@ -330,28 +331,40 @@ async def run_websocket(websocket: WebSocket, run_id: str, db: Session = Depends
 		run.started_at = datetime.utcnow()
 		db.commit()
 		
-		# Create remote browser session for live view
+		# Create remote browser session only for head mode (not headless)
 		cdp_url = None
-		try:
-			orchestrator = get_orchestrator()
-			remote_session = await orchestrator.create_session(
-				phase=BrowserPhase.EXECUTION,
-				test_run_id=run_id,
-			)
-			cdp_url = remote_session.cdp_url
-			
-			# Send live view URL to frontend
+		remote_session = None
+
+		if not run.headless:
+			try:
+				orchestrator = get_orchestrator()
+				remote_session = await orchestrator.create_session(
+					phase=BrowserPhase.EXECUTION,
+					test_run_id=run_id,
+				)
+				cdp_url = remote_session.cdp_url
+
+				# Send live view URL to frontend
+				await websocket.send_json({
+					"type": "browser_session_started",
+					"session_id": remote_session.id,
+					"cdp_url": cdp_url,
+					"live_view_url": f"/browser/sessions/{remote_session.id}/view",
+					"headless": False,
+				})
+
+				logger.info(f"Created remote browser session for run: {remote_session.id}")
+
+			except Exception as e:
+				logger.warning(f"Failed to create remote browser, falling back to headless: {e}")
+		else:
+			# Headless mode - notify frontend (no live view)
 			await websocket.send_json({
 				"type": "browser_session_started",
-				"session_id": remote_session.id,
-				"cdp_url": cdp_url,
-				"live_view_url": f"/browser/sessions/{remote_session.id}/view",
+				"session_id": None,
+				"headless": True,
 			})
-			
-			logger.info(f"Created remote browser session for run: {remote_session.id}")
-			
-		except Exception as e:
-			logger.warning(f"Failed to create remote browser, using headless: {e}")
+			logger.info("Running in headless mode (no live browser view)")
 		
 		# Define callbacks
 		async def on_step_start(step_index: int, step: PlaywrightStep):

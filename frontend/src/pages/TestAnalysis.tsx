@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react"
-import { List, LayoutList } from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { List, LayoutList, FileCode, Loader2, ExternalLink } from "lucide-react"
 import StepList, { type TestStep as DisplayTestStep } from "@/components/analysis/StepList"
 import ConfigPanel from "@/components/analysis/ConfigPanel"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
 import LiveBrowserView from "@/components/LiveBrowserView"
 import ActionFooter from "@/components/analysis/ActionFooter"
-import { analysisApi, getScreenshotUrl } from "@/services/api"
+import { analysisApi, scriptsApi, getScreenshotUrl } from "@/services/api"
 import { getAuthToken } from "@/contexts/AuthContext"
-import { useAnalysisPolling } from "@/hooks/useAnalysisPolling"
+import { useSessionSubscription } from "@/hooks/useSessionSubscription"
 import type { TestSession, LlmModel } from "@/types/analysis"
+import type { PlaywrightScript } from "@/types/scripts"
 
 interface BrowserSessionInfo {
     id: string
@@ -19,6 +21,7 @@ interface BrowserSessionInfo {
 type AnalysisState = 'idle' | 'generating_plan' | 'plan_ready' | 'executing' | 'completed' | 'failed' | 'stopped'
 
 export default function TestAnalysis() {
+    const navigate = useNavigate()
     const [prompt, setPrompt] = useState("")
     const [session, setSession] = useState<TestSession | null>(null)
     const [analysisState, setAnalysisState] = useState<AnalysisState>('idle')
@@ -29,23 +32,48 @@ export default function TestAnalysis() {
     const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null)
     const [isRecording, setIsRecording] = useState(false)
     const [simpleMode, setSimpleMode] = useState(false)
+    const [generatingScript, setGeneratingScript] = useState(false)
+    const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null)
 
-    // Polling hook for step updates (replaces WebSocket)
+    // Check for existing script linked to this session
+    useEffect(() => {
+        const checkForLinkedScript = async () => {
+            if (!session?.id) {
+                setLinkedScript(null)
+                return
+            }
+            try {
+                const scripts = await scriptsApi.listScripts()
+                const existingScript = scripts.find(s => s.session_id === session.id)
+                setLinkedScript(existingScript || null)
+            } catch (e) {
+                console.error('Error checking for linked script:', e)
+            }
+        }
+        checkForLinkedScript()
+    }, [session?.id])
+
+    // WebSocket subscription hook with polling fallback
     const {
-        steps: pollingSteps,
+        steps: subscriptionSteps,
         isExecuting,
         isCompleted,
         isStopped,
         success,
-        error: pollingError,
+        error: subscriptionError,
         startExecution,
         stopExecution,
         clear,
         updateStepAction,
-    } = useAnalysisPolling(session?.id ?? null)
+        deleteStep,
+    } = useSessionSubscription({
+        sessionId: session?.id ?? null,
+        autoConnect: true,
+        autoFetchInitial: true,
+    })
 
-    // Convert polling steps to display format
-    const displaySteps: DisplayTestStep[] = pollingSteps.map((step) => ({
+    // Convert subscription steps to display format
+    const displaySteps: DisplayTestStep[] = subscriptionSteps.map((step) => ({
         ...step,
         description: step.next_goal || `Step ${step.step_number}`,
     }))
@@ -82,12 +110,12 @@ export default function TestAnalysis() {
         }
     }, [isExecuting, isCompleted, isStopped, success])
 
-    // Handle polling errors
+    // Handle subscription errors
     useEffect(() => {
-        if (pollingError) {
-            setError(pollingError)
+        if (subscriptionError) {
+            setError(subscriptionError)
         }
-    }, [pollingError])
+    }, [subscriptionError])
 
     // Poll for browser session when in non-headless mode
     // Keep polling even after execution to allow recording
@@ -207,6 +235,36 @@ export default function TestAnalysis() {
         } catch (e) {
             console.error('Error stopping recording:', e)
             setError(e instanceof Error ? e.message : 'Failed to stop recording')
+        }
+    }
+
+    // Generate script from completed session
+    const handleGenerateScript = async () => {
+        if (!session?.id) return
+        setGeneratingScript(true)
+        try {
+            const scriptName = session.title || prompt?.slice(0, 50) || `Test Script ${new Date().toISOString()}`
+            const script = await scriptsApi.createScript({
+                session_id: session.id,
+                name: scriptName,
+                description: `Generated from test analysis session`,
+            })
+            // Update linked script state
+            setLinkedScript(script)
+            // Navigate to the script detail page
+            navigate(`/scripts/${script.id}`)
+        } catch (e) {
+            console.error('Error generating script:', e)
+            setError(e instanceof Error ? e.message : 'Failed to generate script')
+        } finally {
+            setGeneratingScript(false)
+        }
+    }
+
+    // Open linked script
+    const handleOpenScript = () => {
+        if (linkedScript) {
+            navigate(`/scripts/${linkedScript.id}`)
         }
     }
 
@@ -333,31 +391,91 @@ export default function TestAnalysis() {
 
                     {/* Stopped Status */}
                     {analysisState === 'stopped' && (
-                        <div className="p-4 border-b bg-orange-50/50">
+                        <div className="p-4 border-b bg-orange-50/50 space-y-3">
                             <div className="text-sm font-medium text-orange-700">
                                 Test execution stopped ({displaySteps.length} steps completed)
                             </div>
-                            <button
-                                onClick={handleReset}
-                                className="mt-2 text-sm text-orange-600 underline"
-                            >
-                                Run another test
-                            </button>
+                            <div className="flex gap-2">
+                                {displaySteps.length > 0 && (
+                                    linkedScript ? (
+                                        <button
+                                            onClick={handleOpenScript}
+                                            className="flex-1 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2"
+                                        >
+                                            <ExternalLink className="h-4 w-4" />
+                                            Open Script
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handleGenerateScript}
+                                            disabled={generatingScript}
+                                            className="flex-1 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2 disabled:opacity-50"
+                                        >
+                                            {generatingScript ? (
+                                                <>
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                    Generating...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <FileCode className="h-4 w-4" />
+                                                    Generate Script
+                                                </>
+                                            )}
+                                        </button>
+                                    )
+                                )}
+                                <button
+                                    onClick={handleReset}
+                                    className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-4 py-2"
+                                >
+                                    New Test
+                                </button>
+                            </div>
                         </div>
                     )}
 
                     {/* Completion Status */}
                     {analysisState === 'completed' && (
-                        <div className="p-4 border-b bg-green-50/50">
+                        <div className="p-4 border-b bg-green-50/50 space-y-3">
                             <div className="text-sm font-medium text-green-700">
                                 Test completed successfully! ({displaySteps.length} steps)
                             </div>
-                            <button
-                                onClick={handleReset}
-                                className="mt-2 text-sm text-green-600 underline"
-                            >
-                                Run another test
-                            </button>
+                            <div className="flex gap-2">
+                                {linkedScript ? (
+                                    <button
+                                        onClick={handleOpenScript}
+                                        className="flex-1 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2"
+                                    >
+                                        <ExternalLink className="h-4 w-4" />
+                                        Open Script
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={handleGenerateScript}
+                                        disabled={generatingScript}
+                                        className="flex-1 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2 disabled:opacity-50"
+                                    >
+                                        {generatingScript ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                Generating...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <FileCode className="h-4 w-4" />
+                                                Generate Script
+                                            </>
+                                        )}
+                                    </button>
+                                )}
+                                <button
+                                    onClick={handleReset}
+                                    className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-4 py-2"
+                                >
+                                    New Test
+                                </button>
+                            </div>
                         </div>
                     )}
 
@@ -405,6 +523,8 @@ export default function TestAnalysis() {
                             onStepSelect={handleStepSelect}
                             onClear={clear}
                             onActionUpdate={updateStepAction}
+                            onDeleteStep={deleteStep}
+                            isExecuting={isExecuting}
                             simpleMode={simpleMode}
                         />
                     </div>

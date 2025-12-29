@@ -36,6 +36,7 @@ from app.schemas import (
 	UpdateSessionTitleRequest,
 	UpdateStepActionTextRequest,
 	WSError,
+	WSInitialState,
 )
 from app.services.plan_service import generate_plan
 
@@ -582,17 +583,57 @@ async def clear_session_steps(
 	# Delete actions for these steps first (manual cascade)
 	# We need to import StepAction if not already imported, or do a subquery delete
 	from app.models import StepAction
-	
+
 	# Get step IDs
 	step_ids = db.query(TestStep.id).filter(TestStep.session_id == session_id).subquery()
-	
+
 	# Delete actions
 	db.query(StepAction).filter(StepAction.step_id.in_(step_ids)).delete(synchronize_session=False)
-	
+
 	# Delete steps
 	db.query(TestStep).filter(TestStep.session_id == session_id).delete(synchronize_session=False)
 
 	db.commit()
+
+
+@router.delete("/steps/{step_id}", status_code=204)
+async def delete_step(
+	step_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Delete a single step and renumber remaining steps.
+
+	This deletes the specified step and its associated actions,
+	then renumbers all subsequent steps to maintain a continuous sequence.
+	"""
+	from app.models import StepAction
+
+	# Get the step
+	step = db.query(TestStep).filter(TestStep.id == step_id).first()
+	if not step:
+		raise HTTPException(status_code=404, detail="Step not found")
+
+	session_id = step.session_id
+	deleted_step_number = step.step_number
+
+	# Delete actions for this step
+	db.query(StepAction).filter(StepAction.step_id == step_id).delete(synchronize_session=False)
+
+	# Delete the step
+	db.delete(step)
+
+	# Renumber remaining steps (decrement step_number for all steps after the deleted one)
+	db.query(TestStep).filter(
+		TestStep.session_id == session_id,
+		TestStep.step_number > deleted_step_number
+	).update(
+		{TestStep.step_number: TestStep.step_number - 1},
+		synchronize_session=False
+	)
+
+	db.commit()
+	logger.info(f"Deleted step {step_id} (was step #{deleted_step_number}) from session {session_id}")
 
 
 # ============================================
@@ -1177,7 +1218,31 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 				data = await websocket.receive_json()
 				command = data.get("command")
 
-				if command == "start":
+				if command == "subscribe":
+					# Send initial state on subscribe request
+					include_initial = data.get("include_initial_state", True)
+					if include_initial:
+						db.refresh(session)
+						steps = (
+							db.query(TestStep)
+							.filter(TestStep.session_id == session_id)
+							.order_by(TestStep.step_number)
+							.all()
+						)
+
+						# Build response with current session and all steps
+						session_response = TestSessionResponse.model_validate(session)
+						steps_response = [TestStepResponse.model_validate(s) for s in steps]
+
+						await websocket.send_json(
+							WSInitialState(
+								session=session_response,
+								steps=steps_response
+							).model_dump(mode="json")
+						)
+						logger.info(f"Sent initial state for session {session_id}: {len(steps)} steps")
+
+				elif command == "start":
 					# Check if session is approved
 					db.refresh(session)
 					if session.status != "approved":

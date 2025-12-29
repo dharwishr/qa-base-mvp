@@ -95,7 +95,9 @@ export type WSMessageType =
   | 'completed'
   | 'error'
   | 'plan_generated'
-  | 'pong';
+  | 'pong'
+  | 'initial_state'
+  | 'status_changed';
 
 export interface WSStepStarted {
   type: 'step_started';
@@ -132,7 +134,27 @@ export interface WSBrowserSessionStarted {
   fallback?: boolean;
 }
 
-export type WSMessage = WSStepStarted | WSStepCompleted | WSCompleted | WSError | WSPong | WSBrowserSessionStarted;
+export interface WSInitialState {
+  type: 'initial_state';
+  session: TestSession;
+  steps: TestStep[];
+}
+
+export interface WSStatusChanged {
+  type: 'status_changed';
+  status: SessionStatus;
+  previous_status: SessionStatus | null;
+}
+
+export type WSMessage =
+  | WSStepStarted
+  | WSStepCompleted
+  | WSCompleted
+  | WSError
+  | WSPong
+  | WSBrowserSessionStarted
+  | WSInitialState
+  | WSStatusChanged;
 
 // Chat message types
 export type ChatMessageType = 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system';

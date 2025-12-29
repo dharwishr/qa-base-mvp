@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck, Code, Copy, Check, Monitor } from "lucide-react"
+import { ArrowLeft, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck, Code, Copy, Check, Monitor, Timer } from "lucide-react"
 import { runsApi, scriptsApi, getScreenshotUrl, getRunWebSocketUrl } from "@/services/api"
 import type { TestRun, RunStep, WSRunMessage, PlaywrightScript } from "@/types/scripts"
 import { getAuthToken } from "@/contexts/AuthContext"
@@ -41,6 +41,19 @@ function formatDuration(ms: number | null): string {
     if (!ms) return '-'
     if (ms < 1000) return `${ms}ms`
     return `${(ms / 1000).toFixed(1)}s`
+}
+
+function calculateRunDuration(startedAt: string | null, completedAt: string | null): string {
+    if (!startedAt) return '-'
+    const start = new Date(startedAt).getTime()
+    const end = completedAt ? new Date(completedAt).getTime() : Date.now()
+    const durationMs = end - start
+
+    if (durationMs < 1000) return `${durationMs}ms`
+    if (durationMs < 60000) return `${(durationMs / 1000).toFixed(1)}s`
+    const minutes = Math.floor(durationMs / 60000)
+    const seconds = ((durationMs % 60000) / 1000).toFixed(0)
+    return `${minutes}m ${seconds}s`
 }
 
 function formatDate(dateString: string): string {
@@ -107,20 +120,23 @@ export default function RunDetail() {
         setTimeout(() => setCopied(false), 2000)
     }
 
-    // WebSocket for live updates
+    // WebSocket for live updates - only connect for pending/running runs
     useEffect(() => {
-        if (!runId) return
+        // Only connect to WebSocket if run is pending or running
+        // Completed runs don't need WebSocket - just display existing data
+        if (!runId || !run) return
+        if (run.status !== 'pending' && run.status !== 'running') return
 
         const token = getAuthToken()
         const wsUrl = getRunWebSocketUrl(runId) + (token ? `?token=${encodeURIComponent(token)}` : '')
-        
+
         const ws = new WebSocket(wsUrl)
         wsRef.current = ws
 
         ws.onmessage = (event) => {
             try {
                 const message: WSRunMessage = JSON.parse(event.data)
-                
+
                 if (message.type === 'browser_session_started') {
                     // Live browser session started
                     setBrowserSession({
@@ -162,7 +178,7 @@ export default function RunDetail() {
         return () => {
             ws.close()
         }
-    }, [runId])
+    }, [runId, run?.status])
 
     useEffect(() => {
         fetchRun()
@@ -232,7 +248,7 @@ export default function RunDetail() {
 
             {/* Stats */}
             {run && (
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-5 gap-4">
                     <div className="rounded-lg border bg-card p-4">
                         <p className="text-sm text-muted-foreground">Total Steps</p>
                         <p className="text-2xl font-bold">{run.total_steps}</p>
@@ -248,6 +264,15 @@ export default function RunDetail() {
                     <div className="rounded-lg border bg-red-50 border-red-200 p-4">
                         <p className="text-sm text-red-700">Failed</p>
                         <p className="text-2xl font-bold text-red-700">{run.failed_steps}</p>
+                    </div>
+                    <div className="rounded-lg border bg-blue-50 border-blue-200 p-4">
+                        <div className="flex items-center gap-1.5 text-sm text-blue-700">
+                            <Timer className="h-4 w-4" />
+                            Duration
+                        </div>
+                        <p className="text-2xl font-bold text-blue-700">
+                            {calculateRunDuration(run.started_at, run.completed_at)}
+                        </p>
                     </div>
                 </div>
             )}

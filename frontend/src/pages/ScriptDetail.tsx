@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Play, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, ShieldCheck } from "lucide-react"
+import { ArrowLeft, Play, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, ShieldCheck, Eye, EyeOff } from "lucide-react"
 import { scriptsApi } from "@/services/api"
 import type { PlaywrightScript, PlaywrightStep, TestRun, RunStatus, RunnerType } from "@/types/scripts"
 
@@ -43,6 +43,18 @@ function formatDate(dateString: string): string {
     })
 }
 
+function calculateRunDuration(startedAt: string | null, completedAt: string | null): string | null {
+    if (!startedAt) return null
+    const start = new Date(startedAt).getTime()
+    const end = completedAt ? new Date(completedAt).getTime() : Date.now()
+    const durationMs = end - start
+    if (durationMs < 1000) return `${durationMs}ms`
+    if (durationMs < 60000) return `${(durationMs / 1000).toFixed(1)}s`
+    const minutes = Math.floor(durationMs / 60000)
+    const seconds = ((durationMs % 60000) / 1000).toFixed(0)
+    return `${minutes}m ${seconds}s`
+}
+
 
 
 export default function ScriptDetail() {
@@ -53,6 +65,7 @@ export default function ScriptDetail() {
     const [error, setError] = useState<string | null>(null)
     const [runningScript, setRunningScript] = useState(false)
     const [selectedRunner, setSelectedRunner] = useState<RunnerType>('playwright')
+    const [headlessMode, setHeadlessMode] = useState(true)
 
     const fetchScript = async () => {
         if (!scriptId) return
@@ -72,7 +85,7 @@ export default function ScriptDetail() {
         if (!scriptId) return
         setRunningScript(true)
         try {
-            const response = await scriptsApi.startRun(scriptId, { headless: true, runner: selectedRunner })
+            const response = await scriptsApi.startRun(scriptId, { headless: headlessMode, runner: selectedRunner })
             navigate(`/scripts/${scriptId}/runs/${response.run_id}`)
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to start run')
@@ -126,15 +139,41 @@ export default function ScriptDetail() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    <select
-                        value={selectedRunner}
-                        onChange={(e) => setSelectedRunner(e.target.value as RunnerType)}
+                    {/* Headless toggle */}
+                    <button
+                        onClick={() => setHeadlessMode(!headlessMode)}
                         disabled={runningScript}
-                        className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                        className={`inline-flex items-center gap-2 h-9 px-3 rounded-md border text-sm font-medium transition-colors disabled:opacity-50 ${
+                            headlessMode
+                                ? 'border-input bg-background hover:bg-accent'
+                                : 'border-blue-500 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                        }`}
+                        title={headlessMode ? 'Headless mode (fast, no live view)' : 'Live browser mode (with VNC view)'}
                     >
-                        <option value="playwright">Playwright</option>
-                        <option value="cdp">CDP</option>
-                    </select>
+                        {headlessMode ? (
+                            <>
+                                <EyeOff className="h-4 w-4" />
+                                Headless
+                            </>
+                        ) : (
+                            <>
+                                <Eye className="h-4 w-4" />
+                                Live View
+                            </>
+                        )}
+                    </button>
+                    {/* Runner type selector - only show when not headless */}
+                    {!headlessMode && (
+                        <select
+                            value={selectedRunner}
+                            onChange={(e) => setSelectedRunner(e.target.value as RunnerType)}
+                            disabled={runningScript}
+                            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                        >
+                            <option value="playwright">Playwright</option>
+                            <option value="cdp">CDP</option>
+                        </select>
+                    )}
                     <button
                         onClick={handleRunScript}
                         disabled={runningScript}
@@ -235,6 +274,12 @@ export default function ScriptDetail() {
                                                 {formatDate(run.created_at)}
                                             </span>
                                         </div>
+                                        {calculateRunDuration(run.started_at, run.completed_at) && (
+                                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                                <Clock className="h-3 w-3" />
+                                                {calculateRunDuration(run.started_at, run.completed_at)}
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                                         <span className="text-green-600">{run.passed_steps} passed</span>

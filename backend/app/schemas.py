@@ -156,6 +156,20 @@ class WSPlanGenerated(WSMessage):
 	plan: TestPlanResponse
 
 
+class WSInitialState(WSMessage):
+	"""Server sends initial session state on subscribe."""
+	type: str = "initial_state"
+	session: TestSessionResponse
+	steps: list[TestStepResponse] = []
+
+
+class WSStatusChanged(WSMessage):
+	"""Server sends when session status changes."""
+	type: str = "status_changed"
+	status: str
+	previous_status: str | None = None
+
+
 # Execution response schemas
 class ExecuteResponse(BaseModel):
 	task_id: str

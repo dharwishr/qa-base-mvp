@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { analysisApi, scriptsApi } from '../services/api';
+import { analysisApi, scriptsApi, getWebSocketUrl } from '../services/api';
 import { getAuthToken } from '../contexts/AuthContext';
 import { config } from '../config';
-import type { TestSession, LlmModel } from '../types/analysis';
+import type { TestSession, LlmModel, WSMessage, WSInitialState, WSStepCompleted, WSCompleted, WSError, WSStatusChanged } from '../types/analysis';
 import type {
   TimelineMessage,
   ChatMode,
@@ -67,6 +67,7 @@ interface UseChatSessionReturn {
   undoTargetStep: number | null;
   totalSteps: number;
   isRecording: boolean;
+  wsConnectionMode: 'websocket' | 'polling' | 'disconnected';
 
   // Actions
   sendMessage: (text: string, messageMode: ChatMode) => Promise<void>;
@@ -139,6 +140,18 @@ export function useChatSession(): UseChatSessionReturn {
   const lastStepCountRef = useRef(0);
   const browserPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inactivityTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsReconnectAttempts = useRef(0);
+  const wsHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // WebSocket connection state
+  const [wsConnectionMode, setWsConnectionMode] = useState<'websocket' | 'polling' | 'disconnected'>('disconnected');
+
+  // WebSocket constants
+  const WS_INITIAL_RECONNECT_DELAY = 1000;
+  const WS_MAX_RECONNECT_DELAY = 16000;
+  const WS_MAX_RECONNECT_ATTEMPTS = 5;
+  const WS_HEARTBEAT_INTERVAL = 30000;
 
   // Stop polling
   const stopPolling = useCallback(() => {
@@ -147,6 +160,170 @@ export function useChatSession(): UseChatSessionReturn {
       pollIntervalRef.current = null;
     }
   }, []);
+
+  // Clear WebSocket timers
+  const clearWsTimers = useCallback(() => {
+    if (wsReconnectTimeoutRef.current) {
+      clearTimeout(wsReconnectTimeoutRef.current);
+      wsReconnectTimeoutRef.current = null;
+    }
+    if (wsHeartbeatRef.current) {
+      clearInterval(wsHeartbeatRef.current);
+      wsHeartbeatRef.current = null;
+    }
+  }, []);
+
+  // Disconnect WebSocket
+  const disconnectWebSocket = useCallback(() => {
+    clearWsTimers();
+    if (wsRef.current) {
+      wsRef.current.close(1000, 'User disconnected');
+      wsRef.current = null;
+    }
+    setWsConnectionMode('disconnected');
+  }, [clearWsTimers]);
+
+  // Connect WebSocket for session
+  const connectWebSocket = useCallback((targetSessionId: string) => {
+    if (!targetSessionId || wsRef.current?.readyState === WebSocket.OPEN) return;
+
+    // Close existing connection
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
+    const ws = new WebSocket(getWebSocketUrl(targetSessionId));
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('ChatSession WebSocket connected');
+      setWsConnectionMode('websocket');
+      wsReconnectAttempts.current = 0;
+
+      // Stop polling fallback
+      stopPolling();
+
+      // Subscribe with initial state
+      ws.send(JSON.stringify({ command: 'subscribe', include_initial_state: true }));
+
+      // Start heartbeat
+      wsHeartbeatRef.current = setInterval(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ command: 'ping' }));
+        }
+      }, WS_HEARTBEAT_INTERVAL);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data) as WSMessage;
+
+        switch (message.type) {
+          case 'initial_state': {
+            const initMsg = message as WSInitialState;
+            if (initMsg.session) {
+              setCurrentSession(initMsg.session);
+              setSessionStatus(initMsg.session.status);
+            }
+            if (initMsg.steps && initMsg.steps.length > lastStepCountRef.current) {
+              const newSteps = initMsg.steps.slice(lastStepCountRef.current);
+              setMessages((prev) => [
+                ...prev,
+                ...newSteps.map((step) => createTimelineMessage('step', { step })),
+              ]);
+              lastStepCountRef.current = initMsg.steps.length;
+              if (newSteps.length > 0) {
+                setSelectedStepId(newSteps[newSteps.length - 1].id);
+              }
+            }
+            break;
+          }
+
+          case 'step_completed': {
+            const stepMsg = message as WSStepCompleted;
+            if (stepMsg.step) {
+              setMessages((prev) => [...prev, createTimelineMessage('step', { step: stepMsg.step })]);
+              lastStepCountRef.current++;
+              setSelectedStepId(stepMsg.step.id);
+            }
+            break;
+          }
+
+          case 'status_changed': {
+            const statusMsg = message as WSStatusChanged;
+            setSessionStatus(statusMsg.status);
+            break;
+          }
+
+          case 'completed': {
+            const completeMsg = message as WSCompleted;
+            setIsExecuting(false);
+            setMessages((prev) => [
+              ...prev,
+              createTimelineMessage('system', {
+                content: completeMsg.success
+                  ? `Test completed successfully with ${completeMsg.total_steps} steps`
+                  : 'Test execution failed',
+              }),
+            ]);
+            // Update plan status
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.type === 'plan' && msg.status === 'executing'
+                  ? { ...msg, status: 'approved' as const }
+                  : msg
+              )
+            );
+            break;
+          }
+
+          case 'error': {
+            const errorMsg = message as WSError;
+            setError(errorMsg.message);
+            break;
+          }
+
+          case 'pong':
+            // Heartbeat response
+            break;
+        }
+      } catch (e) {
+        console.error('Error parsing WebSocket message:', e);
+      }
+    };
+
+    ws.onclose = (event) => {
+      console.log('ChatSession WebSocket closed:', event.code, event.reason);
+      wsRef.current = null;
+      clearWsTimers();
+
+      // Attempt reconnection if not intentional close
+      if (event.code !== 1000 && sessionIdRef.current) {
+        if (wsReconnectAttempts.current >= WS_MAX_RECONNECT_ATTEMPTS) {
+          console.log('Max WS reconnection attempts, falling back to polling');
+          setWsConnectionMode('polling');
+          // Start polling fallback
+          pollSession();
+          pollIntervalRef.current = setInterval(() => pollSession(), POLL_INTERVAL);
+        } else {
+          const delay = Math.min(
+            WS_INITIAL_RECONNECT_DELAY * Math.pow(2, wsReconnectAttempts.current),
+            WS_MAX_RECONNECT_DELAY
+          );
+          console.log(`WS reconnecting in ${delay}ms`);
+          wsReconnectTimeoutRef.current = setTimeout(() => {
+            wsReconnectAttempts.current++;
+            const sid = sessionIdRef.current;
+            if (sid) connectWebSocket(sid);
+          }, delay);
+        }
+      }
+    };
+
+    ws.onerror = (event) => {
+      console.error('ChatSession WebSocket error:', event);
+    };
+  }, [stopPolling, clearWsTimers]);
 
   // Stop browser session polling
   const stopBrowserPolling = useCallback(() => {
@@ -308,16 +485,32 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, [stopPolling, browserSession, clearInactivityTimeout, stopBrowserPolling]);
 
-  // Start polling - accepts optional session ID for new sessions where state hasn't updated yet
+  // Start real-time updates - tries WebSocket first, falls back to polling
   const startPolling = useCallback((overrideSessionId?: string) => {
     stopPolling();
-    // If override provided, update the ref immediately so interval callbacks use it
+    disconnectWebSocket();
+
+    // If override provided, update the ref immediately
     if (overrideSessionId) {
       sessionIdRef.current = overrideSessionId;
     }
-    pollSession(overrideSessionId);
-    pollIntervalRef.current = setInterval(() => pollSession(), POLL_INTERVAL);
-  }, [pollSession, stopPolling]);
+
+    const targetSessionId = overrideSessionId || sessionIdRef.current;
+    if (!targetSessionId) return;
+
+    // Try WebSocket first
+    connectWebSocket(targetSessionId);
+
+    // If WebSocket doesn't connect within 2 seconds, start polling as fallback
+    setTimeout(() => {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) {
+        console.log('WebSocket not connected, starting polling fallback');
+        setWsConnectionMode('polling');
+        pollSession(overrideSessionId);
+        pollIntervalRef.current = setInterval(() => pollSession(), POLL_INTERVAL);
+      }
+    }, 2000);
+  }, [pollSession, stopPolling, connectWebSocket, disconnectWebSocket]);
 
   // Persist message to backend
   const persistMessage = useCallback(async (
@@ -519,10 +712,24 @@ export function useChatSession(): UseChatSessionReturn {
             if (session.status === 'plan_ready') {
               await analysisApi.approvePlan(targetSessionId);
             }
-            await analysisApi.startExecution(targetSessionId);
 
             setIsExecuting(true);
-            startPolling(targetSessionId);
+
+            // Connect WebSocket first, then send start command through it
+            // This ensures we receive real-time step updates
+            connectWebSocket(targetSessionId);
+
+            // Wait a bit for WebSocket to connect, then send start or fall back to REST
+            setTimeout(() => {
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ command: 'start' }));
+              } else {
+                // Fallback to REST API + polling
+                analysisApi.startExecution(targetSessionId).then(() => {
+                  startPolling(targetSessionId);
+                });
+              }
+            }, 500);
 
             // Start browser polling if not headless
             if (!headless) {
@@ -625,15 +832,25 @@ export function useChatSession(): UseChatSessionReturn {
         setIsPlanPending(false);
         setPendingPlanId(null);
 
-        // Approve and start execution
+        // Approve the plan
         await analysisApi.approvePlan(sessionId);
-        await analysisApi.startExecution(sessionId);
 
         setIsExecuting(true);
-        // DON'T reset lastStepCountRef - it should already have the correct count
-        // from previous steps (for continuations) or be 0 (for new sessions).
-        // Resetting to 0 would cause ALL steps to be re-fetched including old ones.
-        startPolling(sessionId);
+
+        // Connect WebSocket and send start command for real-time updates
+        connectWebSocket(sessionId);
+
+        // Wait for WebSocket to connect, then send start or fall back to REST
+        setTimeout(() => {
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ command: 'start' }));
+          } else {
+            // Fallback to REST API + polling
+            analysisApi.startExecution(sessionId).then(() => {
+              startPolling(sessionId);
+            });
+          }
+        }, 500);
 
         // Start browser polling if not headless
         if (!headless) {
@@ -785,11 +1002,7 @@ export function useChatSession(): UseChatSessionReturn {
     stopPolling();
     stopBrowserPolling();
     clearInactivityTimeout();
-
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
+    disconnectWebSocket();
 
     setMessages([]);
     setSessionId(null);
@@ -804,8 +1017,9 @@ export function useChatSession(): UseChatSessionReturn {
     setError(null);
     setMessageQueue([]);
     setQueueFailure(null);
+    setWsConnectionMode('disconnected');
     lastStepCountRef.current = 0;
-  }, [stopPolling, stopBrowserPolling, clearInactivityTimeout]);
+  }, [stopPolling, stopBrowserPolling, clearInactivityTimeout, disconnectWebSocket]);
 
   // Generate test script from session steps
   const generateScript = useCallback(async (): Promise<string | null> => {
@@ -861,11 +1075,9 @@ export function useChatSession(): UseChatSessionReturn {
       stopPolling();
       stopBrowserPolling();
       clearInactivityTimeout();
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      disconnectWebSocket();
     };
-  }, [stopPolling, stopBrowserPolling, clearInactivityTimeout]);
+  }, [stopPolling, stopBrowserPolling, clearInactivityTimeout, disconnectWebSocket]);
 
   // Start/reset inactivity timer when browser session becomes active
   useEffect(() => {
@@ -1037,6 +1249,7 @@ export function useChatSession(): UseChatSessionReturn {
     undoTargetStep,
     totalSteps,
     isRecording,
+    wsConnectionMode,
 
     // Actions
     sendMessage,

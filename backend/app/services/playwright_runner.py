@@ -247,7 +247,10 @@ class PlaywrightRunner(BaseRunner):
 				
 				step_result = await self._execute_step(step, run_id)
 				result.step_results.append(step_result)
-				
+
+				# Small delay between steps for stability
+				await asyncio.sleep(0.3)
+
 				logger.debug(f"Step {step.index} result: {step_result.status}")
 				
 				if step_result.status == "passed":

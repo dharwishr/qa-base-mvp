@@ -62,10 +62,11 @@ interface UseExistingSessionReturn {
   error: string | null;
   totalSteps: number;
   replayFailure: ReplayFailure | null;
+  isRecording: boolean;
 
   // Actions
   loadSession: (id: string) => Promise<void>;
-  replaySession: () => Promise<void>;
+  replaySession: (startRecordingAfterReplay?: boolean) => Promise<void>;
   sendMessage: (text: string, messageMode: ChatMode) => Promise<void>;
   approvePlan: (planId: string) => Promise<void>;
   rejectPlan: (planId: string, reason?: string) => Promise<void>;
@@ -74,6 +75,8 @@ interface UseExistingSessionReturn {
   forkFromStep: (stepNumber: number) => Promise<void>;
   undoToStep: (stepNumber: number) => Promise<void>;
   clearReplayFailure: () => void;
+  startRecording: () => Promise<void>;
+  stopRecording: () => Promise<void>;
   setMode: (mode: ChatMode) => void;
   setSelectedLlm: (llm: LlmModel) => void;
   setHeadless: (headless: boolean) => void;
@@ -98,6 +101,8 @@ export function useExistingSession(): UseExistingSessionReturn {
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [replayFailure, setReplayFailure] = useState<ReplayFailure | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const startRecordingAfterReplayRef = useRef(false);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const browserPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -237,17 +242,20 @@ export function useExistingSession(): UseExistingSessionReturn {
   }, []);
 
   // Replay all steps in the session
-  const replaySession = useCallback(async () => {
+  const replaySession = useCallback(async (startRecordingAfterReplay = false) => {
     if (!sessionId) return;
 
     setIsReplaying(true);
     setError(null);
     setReplayFailure(null);
+    startRecordingAfterReplayRef.current = startRecordingAfterReplay;
 
     setMessages((prev) => [
       ...prev,
       createTimelineMessage('system', {
-        content: 'Re-initiating session... Starting browser and replaying steps.',
+        content: startRecordingAfterReplay
+          ? 'Re-initiating session with recording... Starting browser and replaying steps.'
+          : 'Re-initiating session... Starting browser and replaying steps.',
       }),
     ]);
 
@@ -269,6 +277,28 @@ export function useExistingSession(): UseExistingSessionReturn {
             liveViewUrl: `/browser/sessions/${result.browser_session_id}/view`,
           });
           startBrowserPolling(sessionId);
+
+          // Start recording if requested after successful replay
+          if (startRecordingAfterReplay) {
+            try {
+              await analysisApi.startRecording(sessionId, result.browser_session_id, 'playwright');
+              setIsRecording(true);
+              setMessages((prev) => [
+                ...prev,
+                createTimelineMessage('system', {
+                  content: 'Recording started. Your interactions will be captured as new test steps.',
+                }),
+              ]);
+            } catch (recordError) {
+              console.error('Error starting recording:', recordError);
+              setMessages((prev) => [
+                ...prev,
+                createTimelineMessage('error', {
+                  content: 'Failed to start recording, but browser is ready for interaction.',
+                }),
+              ]);
+            }
+          }
         }
       } else {
         // Handle failure - show dialog for user choice
@@ -628,6 +658,16 @@ export function useExistingSession(): UseExistingSessionReturn {
     if (!sessionId) return;
 
     try {
+      // Stop recording if active
+      if (isRecording) {
+        try {
+          await analysisApi.stopRecording(sessionId);
+          setIsRecording(false);
+        } catch (e) {
+          console.error('Error stopping recording:', e);
+        }
+      }
+
       await fetch(`${config.API_URL}/api/analysis/sessions/${sessionId}/end-browser`, {
         method: 'POST',
         headers: {
@@ -639,7 +679,57 @@ export function useExistingSession(): UseExistingSessionReturn {
     } catch (e) {
       console.error('Error ending browser session:', e);
     }
-  }, [sessionId, stopBrowserPolling]);
+  }, [sessionId, stopBrowserPolling, isRecording]);
+
+  // Start recording user interactions
+  const startRecording = useCallback(async () => {
+    if (!sessionId || !browserSession?.id) return;
+
+    try {
+      await analysisApi.startRecording(sessionId, browserSession.id, 'playwright');
+      setIsRecording(true);
+      setMessages((prev) => [
+        ...prev,
+        createTimelineMessage('system', {
+          content: 'Recording started. Your interactions will be captured as new test steps.',
+        }),
+      ]);
+    } catch (e) {
+      console.error('Error starting recording:', e);
+      setMessages((prev) => [
+        ...prev,
+        createTimelineMessage('error', {
+          content: e instanceof Error ? e.message : 'Failed to start recording',
+        }),
+      ]);
+    }
+  }, [sessionId, browserSession?.id]);
+
+  // Stop recording user interactions
+  const stopRecording = useCallback(async () => {
+    if (!sessionId) return;
+
+    try {
+      await analysisApi.stopRecording(sessionId);
+      setIsRecording(false);
+      setMessages((prev) => [
+        ...prev,
+        createTimelineMessage('system', {
+          content: 'Recording stopped.',
+        }),
+      ]);
+      // Reload session to get any new steps that were recorded
+      await loadSession(sessionId);
+    } catch (e) {
+      console.error('Error stopping recording:', e);
+      setMessages((prev) => [
+        ...prev,
+        createTimelineMessage('error', {
+          content: e instanceof Error ? e.message : 'Failed to stop recording',
+        }),
+      ]);
+    }
+  }, [sessionId, loadSession]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -666,6 +756,7 @@ export function useExistingSession(): UseExistingSessionReturn {
     error,
     totalSteps,
     replayFailure,
+    isRecording,
 
     loadSession,
     replaySession,
@@ -677,6 +768,8 @@ export function useExistingSession(): UseExistingSessionReturn {
     forkFromStep,
     undoToStep,
     clearReplayFailure,
+    startRecording,
+    stopRecording,
     setMode,
     setSelectedLlm,
     setHeadless,
