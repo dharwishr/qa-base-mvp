@@ -41,6 +41,7 @@ interface ChatMessageProps {
   totalSteps?: number;
   simpleMode?: boolean;
   stepIndex?: number;
+  startingActionNumber?: number;
   // Run Till End props
   runTillEndPaused?: RunTillEndPausedState | null;
   skippedSteps?: number[];
@@ -244,6 +245,7 @@ function StepMessageCard({
   totalSteps = 0,
   simpleMode = false,
   stepIndex,
+  startingActionNumber = 0,
   runTillEndPaused,
   skippedSteps = [],
   onSkipStep,
@@ -257,6 +259,7 @@ function StepMessageCard({
   totalSteps?: number;
   simpleMode?: boolean;
   stepIndex?: number;
+  startingActionNumber?: number;
   runTillEndPaused?: RunTillEndPausedState | null;
   skippedSteps?: number[];
   onSkipStep?: (stepNumber: number) => void;
@@ -302,52 +305,29 @@ function StepMessageCard({
   if (simpleMode) {
     const actions = step.actions || []
 
-    // Determine simple mode styling based on execution state
-    const simpleModeBorderClass = isCurrentlyExecuting
-      ? 'border-2 border-blue-500 ring-2 ring-blue-200 bg-blue-50'
-      : 'border bg-muted/20';
-
+    // Skip steps without actions in simple mode
     if (actions.length === 0) {
-      return (
-        <div className="flex justify-start w-full" data-step-number={step.step_number}>
-          <div className={`flex items-center gap-2 max-w-[80%] rounded-lg p-2 transition-all ${simpleModeBorderClass}`}>
-            <StatusIcon />
-            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full font-semibold text-xs ${
-              isCurrentlyExecuting ? 'bg-blue-500 text-white' : 'bg-primary/10 text-primary'
-            }`}>
-              {displayStepNumber}
-            </span>
-            <span className="text-sm">{step.next_goal || `Step ${displayStepNumber}`}</span>
-            {isCurrentlyExecuting && (
-              <span className="text-xs text-blue-600 font-medium animate-pulse">Running...</span>
-            )}
-          </div>
-        </div>
-      )
+      return null;
     }
 
     return (
       <div className="flex justify-start w-full" data-step-number={step.step_number}>
-        <div className={`space-y-1.5 w-full max-w-[80%] rounded-lg p-2 transition-all ${simpleModeBorderClass}`}>
-          {/* Step number header for simple mode with actions */}
-          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-            <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full font-semibold text-xs ${
-              isCurrentlyExecuting ? 'bg-blue-500 text-white' : 'bg-primary/10 text-primary'
-            }`}>
-              {displayStepNumber}
-            </span>
-            <span>{step.next_goal || `Step ${displayStepNumber}`}</span>
-            {isCurrentlyExecuting && (
-              <span className="text-xs text-blue-600 font-medium animate-pulse ml-2">Running...</span>
-            )}
-          </div>
-          {actions.map((action, idx) => (
-            <SimpleActionRow
-              key={action.id || idx}
-              action={action}
-            // Note: Chat view doesn't support action updates directly for now
-            />
-          ))}
+        <div className="space-y-1.5 w-full">
+          {actions.map((action, idx) => {
+            const actionNumber = startingActionNumber + idx + 1;
+            return (
+              <div key={action.id || idx} className="flex items-start gap-2">
+                <span className="font-mono text-muted-foreground text-sm w-6 pt-2 flex-shrink-0 text-right">
+                  {actionNumber}
+                </span>
+                <div className="flex-1">
+                  <SimpleActionRow
+                    action={action}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     )
@@ -589,6 +569,7 @@ export default function ChatMessage({
   totalSteps,
   simpleMode,
   stepIndex,
+  startingActionNumber,
   runTillEndPaused,
   skippedSteps,
   onSkipStep,
@@ -618,6 +599,7 @@ export default function ChatMessage({
           totalSteps={totalSteps}
           simpleMode={simpleMode}
           stepIndex={stepIndex}
+          startingActionNumber={startingActionNumber}
           runTillEndPaused={runTillEndPaused}
           skippedSteps={skippedSteps}
           onSkipStep={onSkipStep}

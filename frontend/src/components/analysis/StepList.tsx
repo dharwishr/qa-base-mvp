@@ -241,6 +241,15 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
     const [stepToDelete, setStepToDelete] = useState<TestStep | null>(null)
     const [isDeleting, setIsDeleting] = useState(false)
 
+    // Calculate action numbers for simple mode (sequential across all steps)
+    const getActionNumber = (stepIndex: number, actionIndex: number): number => {
+        let count = 0
+        for (let i = 0; i < stepIndex; i++) {
+            count += steps[i].actions?.length || 0
+        }
+        return count + actionIndex + 1
+    }
+
     const handleDeleteClick = (e: React.MouseEvent, step: TestStep) => {
         e.stopPropagation()
         setStepToDelete(step)
@@ -313,31 +322,24 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                     const isSelected = selectedStepId === step.id
                     const isUserStep = isUserRecorded(step)
 
-                    // Simple Mode: Show actions directly as compact rows
+                    // Simple Mode: Show actions directly as compact rows with sequential numbering
                     if (simpleMode) {
                         const actions = step.actions || []
                         if (actions.length === 0) {
-                            return (
-                                <div key={step.id} className="border rounded-lg p-3 bg-muted/20">
-                                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                        <StatusIcon status={step.status} />
-                                        <span className="font-mono text-xs">{step.step_number || index + 1}</span>
-                                        <span>{step.description}</span>
-                                    </div>
-                                </div>
-                            )
+                            return null // Skip steps without actions in simple mode
                         }
                         return (
                             <div key={step.id} className="space-y-1.5">
-                                {actions.map((action, idx) => {
+                                {actions.map((action, actionIdx) => {
                                     const handleTextUpdate = async (newText: string) => {
                                         const updatedAction = await analysisApi.updateActionText(action.id, newText)
                                         onActionUpdate?.(String(step.id), updatedAction)
                                     }
+                                    const actionNumber = getActionNumber(index, actionIdx)
                                     return (
-                                        <div key={action.id || idx} className="flex items-start gap-2 group">
-                                            <span className="font-mono text-muted-foreground text-sm w-5 pt-2 flex-shrink-0">
-                                                {step.step_number || index + 1}
+                                        <div key={action.id || actionIdx} className="flex items-start gap-2 group">
+                                            <span className="font-mono text-muted-foreground text-sm w-6 pt-2 flex-shrink-0 text-right">
+                                                {actionNumber}
                                             </span>
                                             <div className="flex-1">
                                                 <SimpleActionRow
@@ -349,7 +351,7 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                                                 <button
                                                     onClick={(e) => handleDeleteClick(e, step)}
                                                     disabled={isExecuting}
-                                                    className="p-1.5 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0 mt-1"
+                                                    className="p-1.5 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0 mt-1 opacity-0 group-hover:opacity-100"
                                                     title={isExecuting ? "Cannot delete while executing" : "Delete step"}
                                                 >
                                                     <Trash2 className="h-4 w-4" />

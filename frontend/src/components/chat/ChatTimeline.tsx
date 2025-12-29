@@ -108,10 +108,19 @@ export default function ChatTimeline({
       {messages.map((message, index) => {
         // Calculate step index (1-based) for step messages
         let stepIndex: number | undefined;
+        let startingActionNumber: number | undefined;
         if (message.type === 'step') {
-          stepIndex = messages
-            .slice(0, index + 1)
-            .filter((m) => m.type === 'step').length;
+          const previousStepMessages = messages
+            .slice(0, index)
+            .filter((m) => m.type === 'step');
+          stepIndex = previousStepMessages.length + 1;
+          // Calculate starting action number (sum of all actions in previous steps)
+          startingActionNumber = previousStepMessages.reduce((sum, m) => {
+            if (m.type === 'step') {
+              return sum + (m.step.actions?.length || 0);
+            }
+            return sum;
+          }, 0);
         }
 
         return (
@@ -128,6 +137,7 @@ export default function ChatTimeline({
             totalSteps={totalSteps}
             simpleMode={simpleMode}
             stepIndex={stepIndex}
+            startingActionNumber={startingActionNumber}
             runTillEndPaused={runTillEndPaused}
             skippedSteps={skippedSteps}
             onSkipStep={onSkipStep}
