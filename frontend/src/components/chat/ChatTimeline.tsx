@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import ChatMessage from './ChatMessage';
-import type { TimelineMessage } from '@/types/chat';
+import type { TimelineMessage, RunTillEndPausedState } from '@/types/chat';
 
 interface ChatTimelineProps {
   messages: TimelineMessage[];
@@ -14,6 +14,12 @@ interface ChatTimelineProps {
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
   simpleMode?: boolean;
+  // Run Till End props
+  runTillEndPaused?: RunTillEndPausedState | null;
+  skippedSteps?: number[];
+  onSkipStep?: (stepNumber: number) => void;
+  onContinueRunTillEnd?: () => void;
+  currentExecutingStepNumber?: number | null;
 }
 
 export default function ChatTimeline({
@@ -27,6 +33,11 @@ export default function ChatTimeline({
   onUndoToStep,
   totalSteps = 0,
   simpleMode = false,
+  runTillEndPaused,
+  skippedSteps = [],
+  onSkipStep,
+  onContinueRunTillEnd,
+  currentExecutingStepNumber,
 }: ChatTimelineProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -37,6 +48,30 @@ export default function ChatTimeline({
       bottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages.length]);
+
+  // Auto-scroll to failed step when Run Till End pauses
+  useEffect(() => {
+    if (runTillEndPaused) {
+      const stepElement = document.querySelector(
+        `[data-step-number="${runTillEndPaused.stepNumber}"]`
+      );
+      if (stepElement) {
+        stepElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [runTillEndPaused]);
+
+  // Auto-scroll to currently executing step during Run Till End
+  useEffect(() => {
+    if (currentExecutingStepNumber) {
+      const stepElement = document.querySelector(
+        `[data-step-number="${currentExecutingStepNumber}"]`
+      );
+      if (stepElement) {
+        stepElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [currentExecutingStepNumber]);
 
   return (
     <div
@@ -70,21 +105,37 @@ export default function ChatTimeline({
       )}
 
       {/* Messages */}
-      {messages.map((message) => (
-        <ChatMessage
-          key={message.id}
-          message={message}
-          onApprove={onApprove}
-          onReject={onReject}
-          onStepSelect={onStepSelect}
-          isSelected={
-            message.type === 'step' && message.step.id === selectedStepId
-          }
-          onUndoToStep={onUndoToStep}
-          totalSteps={totalSteps}
-          simpleMode={simpleMode}
-        />
-      ))}
+      {messages.map((message, index) => {
+        // Calculate step index (1-based) for step messages
+        let stepIndex: number | undefined;
+        if (message.type === 'step') {
+          stepIndex = messages
+            .slice(0, index + 1)
+            .filter((m) => m.type === 'step').length;
+        }
+
+        return (
+          <ChatMessage
+            key={message.id}
+            message={message}
+            onApprove={onApprove}
+            onReject={onReject}
+            onStepSelect={onStepSelect}
+            isSelected={
+              message.type === 'step' && message.step.id === selectedStepId
+            }
+            onUndoToStep={onUndoToStep}
+            totalSteps={totalSteps}
+            simpleMode={simpleMode}
+            stepIndex={stepIndex}
+            runTillEndPaused={runTillEndPaused}
+            skippedSteps={skippedSteps}
+            onSkipStep={onSkipStep}
+            onContinueRunTillEnd={onContinueRunTillEnd}
+            currentExecutingStepNumber={currentExecutingStepNumber}
+          />
+        );
+      })}
 
       {/* Loading indicator */}
       {isLoading && (

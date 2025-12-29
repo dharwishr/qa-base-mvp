@@ -14,8 +14,10 @@ import {
   RotateCcw,
   Check,
   X,
+  SkipForward,
 } from 'lucide-react';
 import { SimpleActionRow } from '@/components/analysis/StepList';
+import StepFailureOptions from '@/components/analysis/StepFailureOptions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import type {
@@ -26,6 +28,7 @@ import type {
   StepMessage,
   ErrorMessage,
   SystemMessage,
+  RunTillEndPausedState,
 } from '@/types/chat';
 
 interface ChatMessageProps {
@@ -37,6 +40,13 @@ interface ChatMessageProps {
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
   simpleMode?: boolean;
+  stepIndex?: number;
+  // Run Till End props
+  runTillEndPaused?: RunTillEndPausedState | null;
+  skippedSteps?: number[];
+  onSkipStep?: (stepNumber: number) => void;
+  onContinueRunTillEnd?: () => void;
+  currentExecutingStepNumber?: number | null;
 }
 
 function formatTime(timestamp: string): string {
@@ -233,6 +243,12 @@ function StepMessageCard({
   onUndoToStep,
   totalSteps = 0,
   simpleMode = false,
+  stepIndex,
+  runTillEndPaused,
+  skippedSteps = [],
+  onSkipStep,
+  onContinueRunTillEnd,
+  currentExecutingStepNumber,
 }: {
   message: StepMessage;
   onStepSelect?: (stepId: string) => void;
@@ -240,15 +256,37 @@ function StepMessageCard({
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
   simpleMode?: boolean;
+  stepIndex?: number;
+  runTillEndPaused?: RunTillEndPausedState | null;
+  skippedSteps?: number[];
+  onSkipStep?: (stepNumber: number) => void;
+  onContinueRunTillEnd?: () => void;
+  currentExecutingStepNumber?: number | null;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showUndoHint, setShowUndoHint] = useState(false);
   const step = message.step;
 
+  // Use stepIndex (1-based position in timeline) when available, otherwise fall back to step.step_number
+  const displayStepNumber = stepIndex ?? step.step_number;
+
   const hasDetails = step.thinking || step.evaluation || step.actions?.length;
   const canUndo = onUndoToStep && step.step_number < totalSteps && step.status === 'completed';
 
+  // Run Till End: check if this step is skipped, has failure options, or is currently executing
+  const isStepSkipped = skippedSteps.includes(step.step_number);
+  const showFailureOptions = runTillEndPaused?.stepNumber === step.step_number;
+  const isCurrentlyExecuting = currentExecutingStepNumber === step.step_number;
+
   const StatusIcon = () => {
+    // Show executing animation for currently executing step
+    if (isCurrentlyExecuting) {
+      return <Clock className="h-4 w-4 text-blue-500 animate-pulse" />;
+    }
+    // Show skipped icon for skipped steps
+    if (isStepSkipped) {
+      return <SkipForward className="h-4 w-4 text-gray-400" />;
+    }
     switch (step.status) {
       case 'completed':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
@@ -264,21 +302,45 @@ function StepMessageCard({
   if (simpleMode) {
     const actions = step.actions || []
 
+    // Determine simple mode styling based on execution state
+    const simpleModeBorderClass = isCurrentlyExecuting
+      ? 'border-2 border-blue-500 ring-2 ring-blue-200 bg-blue-50'
+      : 'border bg-muted/20';
+
     if (actions.length === 0) {
       return (
-        <div className="flex justify-start w-full">
-          <div className="flex items-center gap-2 max-w-[80%] border rounded-lg p-2 bg-muted/20">
+        <div className="flex justify-start w-full" data-step-number={step.step_number}>
+          <div className={`flex items-center gap-2 max-w-[80%] rounded-lg p-2 transition-all ${simpleModeBorderClass}`}>
             <StatusIcon />
-            <span className="font-mono text-xs">{step.step_number}</span>
-            <span className="text-sm">{step.next_goal || `Step ${step.step_number}`}</span>
+            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full font-semibold text-xs ${
+              isCurrentlyExecuting ? 'bg-blue-500 text-white' : 'bg-primary/10 text-primary'
+            }`}>
+              {displayStepNumber}
+            </span>
+            <span className="text-sm">{step.next_goal || `Step ${displayStepNumber}`}</span>
+            {isCurrentlyExecuting && (
+              <span className="text-xs text-blue-600 font-medium animate-pulse">Running...</span>
+            )}
           </div>
         </div>
       )
     }
 
     return (
-      <div className="flex justify-start w-full">
-        <div className="space-y-1.5 w-full max-w-[80%]">
+      <div className="flex justify-start w-full" data-step-number={step.step_number}>
+        <div className={`space-y-1.5 w-full max-w-[80%] rounded-lg p-2 transition-all ${simpleModeBorderClass}`}>
+          {/* Step number header for simple mode with actions */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full font-semibold text-xs ${
+              isCurrentlyExecuting ? 'bg-blue-500 text-white' : 'bg-primary/10 text-primary'
+            }`}>
+              {displayStepNumber}
+            </span>
+            <span>{step.next_goal || `Step ${displayStepNumber}`}</span>
+            {isCurrentlyExecuting && (
+              <span className="text-xs text-blue-600 font-medium animate-pulse ml-2">Running...</span>
+            )}
+          </div>
           {actions.map((action, idx) => (
             <SimpleActionRow
               key={action.id || idx}
@@ -291,34 +353,48 @@ function StepMessageCard({
     )
   }
 
+  // Determine border color based on status, skipped state, and executing state
+  const getBorderColor = () => {
+    if (isCurrentlyExecuting) return 'border-l-blue-500';
+    if (isStepSkipped) return 'border-l-gray-400';
+    switch (step.status) {
+      case 'completed': return 'border-l-green-500';
+      case 'failed': return 'border-l-red-500';
+      case 'running': return 'border-l-yellow-500';
+      default: return 'border-l-primary/50';
+    }
+  };
+
+  // Determine background color for the status icon
+  const getStatusBgColor = () => {
+    if (isCurrentlyExecuting) return 'bg-blue-100';
+    if (isStepSkipped) return 'bg-gray-100';
+    switch (step.status) {
+      case 'completed': return 'bg-green-100';
+      case 'failed': return 'bg-red-100';
+      case 'running': return 'bg-yellow-100';
+      default: return 'bg-muted';
+    }
+  };
+
   return (
-    <div className="flex justify-start">
+    <div className="flex justify-start" data-step-number={step.step_number}>
       <div className="flex items-start gap-2 w-full min-w-0">
         <div
-          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${step.status === 'completed'
-            ? 'bg-green-100'
-            : step.status === 'failed'
-              ? 'bg-red-100'
-              : step.status === 'running'
-                ? 'bg-yellow-100'
-                : 'bg-muted'
-            }`}
+          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${getStatusBgColor()}`}
         >
           <StatusIcon />
         </div>
         <div className="flex-1 min-w-0 overflow-hidden">
           <span className="text-xs text-muted-foreground mb-1 block">
-            Step {step.step_number} - {formatTime(message.timestamp)}
+            Step {displayStepNumber} - {formatTime(message.timestamp)}
+            {isStepSkipped && <span className="ml-2 text-gray-400">(Skipped)</span>}
+            {isCurrentlyExecuting && <span className="ml-2 text-blue-600 font-medium animate-pulse">(Running...)</span>}
           </span>
           <Card
-            className={`border-l-4 cursor-pointer transition-all ${step.status === 'completed'
-              ? 'border-l-green-500'
-              : step.status === 'failed'
-                ? 'border-l-red-500'
-                : step.status === 'running'
-                  ? 'border-l-yellow-500'
-                  : 'border-l-primary/50'
-              } ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'}`}
+            className={`border-l-4 cursor-pointer transition-all ${getBorderColor()} ${
+              isStepSkipped ? 'opacity-60' : ''
+            } ${isCurrentlyExecuting ? 'ring-2 ring-blue-300 bg-blue-50' : ''} ${isSelected && !isCurrentlyExecuting ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'}`}
             onClick={() => onStepSelect?.(step.id)}
           >
             <CardContent className="p-3 overflow-hidden">
@@ -334,7 +410,7 @@ function StepMessageCard({
               >
                 <div className="flex-1 min-w-0 overflow-hidden">
                   <p className="text-sm font-medium break-words">
-                    {step.next_goal || `Step ${step.step_number}`}
+                    {step.next_goal || `Step ${displayStepNumber}`}
                   </p>
                   {step.url && (
                     <div className="flex items-center gap-1 mt-1 min-w-0">
@@ -424,7 +500,7 @@ function StepMessageCard({
               )}
 
               {/* Undo button - shown on hover when this isn't the last step */}
-              {canUndo && (
+              {canUndo && !showFailureOptions && (
                 <div
                   className="mt-2 pt-2 border-t flex justify-end"
                   onMouseEnter={() => setShowUndoHint(true)}
@@ -448,6 +524,18 @@ function StepMessageCard({
                     </span>
                   )}
                 </div>
+              )}
+
+              {/* Run Till End failure options - shown inline when this step failed */}
+              {showFailureOptions && runTillEndPaused && (
+                <StepFailureOptions
+                  stepNumber={step.step_number}
+                  error={runTillEndPaused.error}
+                  isSkipped={runTillEndPaused.isSkipped}
+                  onUndo={() => onUndoToStep?.(step.step_number)}
+                  onSkip={() => onSkipStep?.(step.step_number)}
+                  onContinue={() => onContinueRunTillEnd?.()}
+                />
               )}
             </CardContent>
           </Card>
@@ -500,6 +588,12 @@ export default function ChatMessage({
   onUndoToStep,
   totalSteps,
   simpleMode,
+  stepIndex,
+  runTillEndPaused,
+  skippedSteps,
+  onSkipStep,
+  onContinueRunTillEnd,
+  currentExecutingStepNumber,
 }: ChatMessageProps) {
   switch (message.type) {
     case 'user':
@@ -523,6 +617,12 @@ export default function ChatMessage({
           onUndoToStep={onUndoToStep}
           totalSteps={totalSteps}
           simpleMode={simpleMode}
+          stepIndex={stepIndex}
+          runTillEndPaused={runTillEndPaused}
+          skippedSteps={skippedSteps}
+          onSkipStep={onSkipStep}
+          onContinueRunTillEnd={onContinueRunTillEnd}
+          currentExecutingStepNumber={currentExecutingStepNumber}
         />
       );
     case 'error':

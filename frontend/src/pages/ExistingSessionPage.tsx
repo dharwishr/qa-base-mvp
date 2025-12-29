@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Square, Settings2, Bot, Monitor, EyeOff, ArrowLeft, Play, FileCode, List, LayoutList, ExternalLink, Circle } from 'lucide-react';
+import { Square, Settings2, Bot, Monitor, EyeOff, ArrowLeft, FileCode, List, LayoutList, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
@@ -37,6 +37,7 @@ export default function ExistingSessionPage() {
     isReplaying,
     isExecuting,
     isPlanPending,
+    isGeneratingPlan,
     selectedStepId,
     totalSteps,
     replayFailure,
@@ -159,10 +160,12 @@ export default function ExistingSessionPage() {
 
   // Loading text for timeline
   const loadingText = isReplaying
-    ? 'Replaying steps...'
-    : isExecuting
-      ? 'Executing test...'
-      : '';
+    ? `Starting browser and replaying ${totalSteps} step${totalSteps !== 1 ? 's' : ''}...`
+    : isGeneratingPlan
+      ? 'Processing request...'
+      : isExecuting
+        ? 'Executing test...'
+        : '';
 
   if (isLoading) {
     return (
@@ -353,7 +356,7 @@ export default function ExistingSessionPage() {
         {/* Chat Timeline */}
         <ChatTimeline
           messages={messages}
-          isLoading={isReplaying || (isExecuting && messages.filter(m => m.type === 'step').length === 0)}
+          isLoading={isReplaying || isGeneratingPlan || (isExecuting && messages.filter(m => m.type === 'step').length === 0)}
           loadingText={loadingText}
           onApprove={approvePlan}
           onReject={rejectPlan}
@@ -366,31 +369,20 @@ export default function ExistingSessionPage() {
 
         {/* Chat Input with Re-initiate Button */}
         <div className="border-t bg-background">
-          {/* Re-initiate Session Buttons */}
+          {/* Re-initiate Session Button */}
           {!browserSession && !isExecuting && !isReplaying && totalSteps > 0 && (
             <div className="px-4 pt-3 space-y-2">
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => replaySession(false)}
-                  disabled={isReplaying}
-                  className="flex-1"
-                  variant="secondary"
-                >
-                  <Monitor className="h-4 w-4 mr-2" />
-                  Browser
-                </Button>
-                <Button
-                  onClick={() => replaySession(true)}
-                  disabled={isReplaying}
-                  className="flex-1"
-                  variant="default"
-                >
-                  <Circle className="h-4 w-4 mr-2 fill-red-500 text-red-500" />
-                  Record
-                </Button>
-              </div>
+              <Button
+                onClick={() => replaySession(false)}
+                disabled={isReplaying}
+                className="w-full"
+                variant="secondary"
+              >
+                <Monitor className="h-4 w-4 mr-2" />
+                Re-initiate Browser
+              </Button>
               <p className="text-xs text-muted-foreground text-center">
-                Replay {totalSteps} steps, then browse or record new steps
+                Replay {totalSteps} steps, then continue testing
               </p>
             </div>
           )}
@@ -399,16 +391,18 @@ export default function ExistingSessionPage() {
             onSend={sendMessage}
             mode={mode}
             onModeChange={setMode}
-            disabled={isReplaying || isPlanPending}
+            disabled={isReplaying || isPlanPending || isGeneratingPlan}
             isExecuting={isExecuting}
             placeholder={
-              isExecuting
-                ? 'Send additional instructions...'
-                : !browserSession
-                  ? 'Re-initiate session to interact with the browser...'
-                  : mode === 'plan'
-                    ? 'Describe your test case...'
-                    : 'Describe what you want to do...'
+              isGeneratingPlan
+                ? 'Processing your request...'
+                : isExecuting
+                  ? 'Send additional instructions...'
+                  : !browserSession
+                    ? 'Re-initiate session to interact with the browser...'
+                    : mode === 'plan'
+                      ? 'Describe your test case...'
+                      : 'Describe what you want to do...'
             }
           />
         </div>
@@ -444,9 +438,15 @@ export default function ExistingSessionPage() {
         ) : !headless && isReplaying ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
+              <div className="animate-spin h-10 w-10 border-3 border-primary border-t-transparent rounded-full mx-auto mb-4" />
+              <p className="text-base font-medium text-foreground mb-1">
+                Starting Browser
+              </p>
               <p className="text-sm text-muted-foreground">
-                Starting live browser and replaying steps...
+                Replaying {totalSteps} step{totalSteps !== 1 ? 's' : ''}...
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                This may take a moment
               </p>
             </div>
           </div>
@@ -490,24 +490,15 @@ export default function ExistingSessionPage() {
                             : 'Select a step to view its screenshot'}
                       </p>
                       {totalSteps > 0 && !browserSession && (
-                        <div className="flex gap-2 mt-4">
-                          <Button
-                            onClick={() => replaySession(false)}
-                            disabled={isReplaying}
-                            variant="outline"
-                          >
-                            <Monitor className="h-4 w-4 mr-2" />
-                            Browser
-                          </Button>
-                          <Button
-                            onClick={() => replaySession(true)}
-                            disabled={isReplaying}
-                            variant="default"
-                          >
-                            <Circle className="h-4 w-4 mr-2 fill-red-500 text-red-500" />
-                            Record
-                          </Button>
-                        </div>
+                        <Button
+                          onClick={() => replaySession(false)}
+                          disabled={isReplaying}
+                          variant="outline"
+                          className="mt-4"
+                        >
+                          <Monitor className="h-4 w-4 mr-2" />
+                          Re-initiate Browser
+                        </Button>
                       )}
                     </div>
                   )}

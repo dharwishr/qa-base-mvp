@@ -465,6 +465,49 @@ class UndoResponse(BaseModel):
 
 
 # ============================================
+# Run Till End Schemas
+# ============================================
+
+class WSRunTillEndStarted(WSMessage):
+	"""Server sends when Run Till End execution starts."""
+	type: str = "run_till_end_started"
+	total_steps: int
+
+
+class WSRunTillEndProgress(WSMessage):
+	"""Server sends progress updates during Run Till End."""
+	type: str = "run_till_end_progress"
+	current_step: int
+	total_steps: int
+	status: str = Field(..., description="Status: running | completed")
+
+
+class WSRunTillEndPaused(WSMessage):
+	"""Server sends when Run Till End pauses on a failure."""
+	type: str = "run_till_end_paused"
+	failed_step: int
+	error_message: str
+	options: list[str] = Field(default_factory=lambda: ["auto_heal", "undo", "skip"])
+
+
+class WSRunTillEndCompleted(WSMessage):
+	"""Server sends when Run Till End completes."""
+	type: str = "run_till_end_completed"
+	success: bool
+	total_steps: int
+	completed_steps: int
+	skipped_steps: list[int] = []
+	error_message: str | None = None
+	cancelled: bool = False
+
+
+class WSStepSkipped(WSMessage):
+	"""Server sends when a step is skipped during Run Till End."""
+	type: str = "step_skipped"
+	step_number: int
+
+
+# ============================================
 # Replay Session Schemas
 # ============================================
 

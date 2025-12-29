@@ -58,6 +58,7 @@ interface UseExistingSessionReturn {
   isReplaying: boolean;
   isExecuting: boolean;
   isPlanPending: boolean;
+  isGeneratingPlan: boolean;
   selectedStepId: string | null;
   error: string | null;
   totalSteps: number;
@@ -98,6 +99,7 @@ export function useExistingSession(): UseExistingSessionReturn {
   const [isReplaying, setIsReplaying] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [isPlanPending, setIsPlanPending] = useState(false);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [replayFailure, setReplayFailure] = useState<ReplayFailure | null>(null);
@@ -167,7 +169,12 @@ export function useExistingSession(): UseExistingSessionReturn {
     setReplayFailure(null);
 
     try {
-      const session = await analysisApi.getSession(id);
+      // Fetch session AND chat messages in parallel
+      const [session, chatMessages] = await Promise.all([
+        analysisApi.getSession(id),
+        analysisApi.getMessages(id),
+      ]);
+
       setSessionId(session.id);
       setSessionStatus(session.status);
       setCurrentSession(session);
@@ -177,28 +184,67 @@ export function useExistingSession(): UseExistingSessionReturn {
       // Build timeline messages from session data
       const timelineMessages: TimelineMessage[] = [];
 
-      // Add user message (original prompt)
-      timelineMessages.push(
-        createTimelineMessage('user', {
-          content: session.prompt,
-          mode: 'plan' as ChatMode,
-        })
-      );
-
-      // Add plan if exists
-      if (session.plan) {
-        const planSteps: PlanStep[] = session.plan.steps_json?.steps || [];
+      // If no stored chat messages, reconstruct from session data (backward compatibility)
+      if (chatMessages.length === 0) {
+        // Add user message (original prompt)
         timelineMessages.push(
-          createTimelineMessage('plan', {
-            planId: session.id,
-            planText: session.plan.plan_text,
-            planSteps,
-            status: session.plan.approval_status === 'approved' ? 'approved' as const : 'pending' as const,
+          createTimelineMessage('user', {
+            content: session.prompt,
+            mode: 'plan' as ChatMode,
           })
         );
+
+        // Add plan if exists
+        if (session.plan) {
+          const planSteps: PlanStep[] = session.plan.steps_json?.steps || [];
+          timelineMessages.push(
+            createTimelineMessage('plan', {
+              planId: session.id,
+              planText: session.plan.plan_text,
+              planSteps,
+              status: session.plan.approval_status === 'approved' ? 'approved' as const : 'pending' as const,
+            })
+          );
+        }
+      } else {
+        // Use stored chat messages for timeline reconstruction
+        for (const msg of chatMessages) {
+          if (msg.message_type === 'user') {
+            timelineMessages.push(
+              createTimelineMessage('user', {
+                content: msg.content || '',
+                mode: (msg.mode || 'plan') as ChatMode,
+              })
+            );
+          } else if (msg.message_type === 'plan') {
+            // Reconstruct plan message with current plan data for approval status
+            const planSteps: PlanStep[] = session.plan?.steps_json?.steps || [];
+            timelineMessages.push(
+              createTimelineMessage('plan', {
+                planId: session.id,
+                planText: msg.content || session.plan?.plan_text || '',
+                planSteps,
+                status: session.plan?.approval_status === 'approved' ? 'approved' as const : 'pending' as const,
+              })
+            );
+          } else if (msg.message_type === 'system') {
+            timelineMessages.push(
+              createTimelineMessage('system', {
+                content: msg.content || '',
+              })
+            );
+          } else if (msg.message_type === 'error') {
+            timelineMessages.push(
+              createTimelineMessage('error', {
+                content: msg.content || '',
+              })
+            );
+          }
+          // Note: 'step' messages are handled separately from session.steps
+        }
       }
 
-      // Add steps
+      // Add steps (always from session.steps for accurate step data)
       if (session.steps && session.steps.length > 0) {
         for (const step of session.steps) {
           timelineMessages.push(
@@ -211,25 +257,32 @@ export function useExistingSession(): UseExistingSessionReturn {
         setSelectedStepId(session.steps[session.steps.length - 1].id);
       }
 
-      // Add completion message based on status
-      if (session.status === 'completed') {
-        timelineMessages.push(
-          createTimelineMessage('system', {
-            content: `Test completed successfully with ${session.steps?.length || 0} steps`,
-          })
-        );
-      } else if (session.status === 'failed') {
-        timelineMessages.push(
-          createTimelineMessage('system', {
-            content: 'Test execution failed',
-          })
-        );
-      } else if (session.status === 'stopped') {
-        timelineMessages.push(
-          createTimelineMessage('system', {
-            content: `Test stopped after ${session.steps?.length || 0} steps`,
-          })
-        );
+      // Add completion message based on status (only if not already in chat messages)
+      const hasCompletionMessage = chatMessages.some(
+        (msg) => msg.message_type === 'system' &&
+        (msg.content?.includes('completed') || msg.content?.includes('failed') || msg.content?.includes('stopped'))
+      );
+
+      if (!hasCompletionMessage) {
+        if (session.status === 'completed') {
+          timelineMessages.push(
+            createTimelineMessage('system', {
+              content: `Test completed successfully with ${session.steps?.length || 0} steps`,
+            })
+          );
+        } else if (session.status === 'failed') {
+          timelineMessages.push(
+            createTimelineMessage('system', {
+              content: 'Test execution failed',
+            })
+          );
+        } else if (session.status === 'stopped') {
+          timelineMessages.push(
+            createTimelineMessage('system', {
+              content: `Test stopped after ${session.steps?.length || 0} steps`,
+            })
+          );
+        }
       }
 
       setMessages(timelineMessages);
@@ -446,8 +499,9 @@ export function useExistingSession(): UseExistingSessionReturn {
       if (!sessionId) return;
 
       setError(null);
+      setIsGeneratingPlan(true);
 
-      // Add user message to timeline
+      // Add user message to timeline (optimistic UI update)
       const userMessage = createTimelineMessage('user', {
         content: text,
         mode: messageMode,
@@ -457,6 +511,14 @@ export function useExistingSession(): UseExistingSessionReturn {
       try {
         // Continue the existing session
         const session = await analysisApi.continueSession(sessionId, text, selectedLlm, messageMode);
+
+        // Persist user message to database
+        await analysisApi.createMessage(sessionId, {
+          message_type: 'user',
+          content: text,
+          mode: messageMode,
+        });
+
         setCurrentSession(session);
         setSessionStatus(session.status);
 
@@ -471,6 +533,14 @@ export function useExistingSession(): UseExistingSessionReturn {
               status: 'pending' as const,
             }),
           ]);
+
+          // Persist plan message to database
+          await analysisApi.createMessage(sessionId, {
+            message_type: 'plan',
+            content: session.plan!.plan_text,
+            mode: 'plan',
+          });
+
           setIsPlanPending(true);
         } else if (session.status === 'approved') {
           // Start execution
@@ -489,8 +559,11 @@ export function useExistingSession(): UseExistingSessionReturn {
             content: e instanceof Error ? e.message : 'Failed to continue session',
           }),
         ]);
+      } finally {
+        setIsGeneratingPlan(false);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessionId, selectedLlm, headless, startBrowserPolling]
   );
 
@@ -752,6 +825,7 @@ export function useExistingSession(): UseExistingSessionReturn {
     isReplaying,
     isExecuting,
     isPlanPending,
+    isGeneratingPlan,
     selectedStepId,
     error,
     totalSteps,

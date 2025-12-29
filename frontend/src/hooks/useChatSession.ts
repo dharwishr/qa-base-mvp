@@ -2,7 +2,21 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { analysisApi, scriptsApi, getWebSocketUrl } from '../services/api';
 import { getAuthToken } from '../contexts/AuthContext';
 import { config } from '../config';
-import type { TestSession, LlmModel, WSMessage, WSInitialState, WSStepCompleted, WSCompleted, WSError, WSStatusChanged } from '../types/analysis';
+import type {
+  TestSession,
+  LlmModel,
+  WSMessage,
+  WSInitialState,
+  WSStepCompleted,
+  WSCompleted,
+  WSError,
+  WSStatusChanged,
+  WSRunTillEndStarted,
+  WSRunTillEndProgress,
+  WSRunTillEndPaused,
+  WSRunTillEndCompleted,
+  WSStepSkipped,
+} from '../types/analysis';
 import type {
   TimelineMessage,
   ChatMode,
@@ -10,6 +24,7 @@ import type {
   QueuedMessage,
   QueueFailure,
   WaitingMessage,
+  RunTillEndPausedState,
 } from '../types/chat';
 
 // Generate UUID with fallback for non-secure contexts (HTTP)
@@ -68,6 +83,11 @@ interface UseChatSessionReturn {
   totalSteps: number;
   isRecording: boolean;
   wsConnectionMode: 'websocket' | 'polling' | 'disconnected';
+  // Run Till End state
+  isRunningTillEnd: boolean;
+  runTillEndPaused: RunTillEndPausedState | null;
+  skippedSteps: number[];
+  currentExecutingStepNumber: number | null;
 
   // Actions
   sendMessage: (text: string, messageMode: ChatMode) => Promise<void>;
@@ -89,6 +109,11 @@ interface UseChatSessionReturn {
   setSelectedLlm: (llm: LlmModel) => void;
   setHeadless: (headless: boolean) => void;
   setSelectedStepId: (stepId: string | null) => void;
+  // Run Till End actions
+  startRunTillEnd: () => void;
+  skipFailedStep: (stepNumber: number) => void;
+  continueRunTillEnd: () => void;
+  cancelRunTillEnd: () => void;
 }
 
 const POLL_INTERVAL = 2000;
@@ -122,6 +147,12 @@ export function useChatSession(): UseChatSessionReturn {
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
   const isRecordingRef = useRef(false);
+
+  // Run Till End state
+  const [isRunningTillEnd, setIsRunningTillEnd] = useState(false);
+  const [runTillEndPaused, setRunTillEndPaused] = useState<RunTillEndPausedState | null>(null);
+  const [skippedSteps, setSkippedSteps] = useState<number[]>([]);
+  const [currentExecutingStepNumber, setCurrentExecutingStepNumber] = useState<number | null>(null);
 
   // Keep recording ref in sync
   useEffect(() => {
@@ -286,6 +317,68 @@ export function useChatSession(): UseChatSessionReturn {
           case 'pong':
             // Heartbeat response
             break;
+
+          // Run Till End message handlers
+          case 'run_till_end_started': {
+            const msg = message as WSRunTillEndStarted;
+            setIsRunningTillEnd(true);
+            setSkippedSteps([]);
+            setCurrentExecutingStepNumber(null);
+            setMessages(prev => [
+              ...prev,
+              createTimelineMessage('system', {
+                content: `Run Till End started: executing ${msg.total_steps} steps...`,
+              }),
+            ]);
+            break;
+          }
+
+          case 'run_till_end_progress': {
+            const msg = message as WSRunTillEndProgress;
+            // Set current executing step for highlighting
+            setCurrentExecutingStepNumber(msg.current_step);
+            break;
+          }
+
+          case 'run_till_end_paused': {
+            const msg = message as WSRunTillEndPaused;
+            setRunTillEndPaused({
+              stepNumber: msg.failed_step,
+              error: msg.error_message,
+            });
+            break;
+          }
+
+          case 'run_till_end_completed': {
+            const msg = message as WSRunTillEndCompleted;
+            setIsRunningTillEnd(false);
+            setRunTillEndPaused(null);
+            setCurrentExecutingStepNumber(null);
+
+            const statusText = msg.cancelled
+              ? 'Run Till End cancelled'
+              : msg.success
+                ? `Run Till End completed: ${msg.completed_steps}/${msg.total_steps} steps successful`
+                : `Run Till End stopped at step ${msg.completed_steps}`;
+
+            const skippedText = msg.skipped_steps.length > 0
+              ? ` (${msg.skipped_steps.length} skipped)`
+              : '';
+
+            setMessages(prev => [
+              ...prev,
+              createTimelineMessage(msg.success ? 'system' : 'error', {
+                content: statusText + skippedText,
+              }),
+            ]);
+            break;
+          }
+
+          case 'step_skipped': {
+            const msg = message as WSStepSkipped;
+            setSkippedSteps(prev => [...prev, msg.step_number]);
+            break;
+          }
         }
       } catch (e) {
         console.error('Error parsing WebSocket message:', e);
@@ -1226,6 +1319,54 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, [sessionId, stopPolling]);
 
+  // Run Till End - start execution of all steps
+  const startRunTillEnd = useCallback(() => {
+    if (!sessionId || isRunningTillEnd) return;
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: 'run_till_end' }));
+    } else {
+      setMessages(prev => [
+        ...prev,
+        createTimelineMessage('error', {
+          content: 'WebSocket not connected. Please refresh the page.',
+        }),
+      ]);
+    }
+  }, [sessionId, isRunningTillEnd]);
+
+  // Skip a failed step during Run Till End
+  const skipFailedStep = useCallback((stepNumber: number) => {
+    if (!sessionId || !runTillEndPaused) return;
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: 'skip_step', step_number: stepNumber }));
+      setSkippedSteps(prev => [...prev, stepNumber]);
+      setRunTillEndPaused(prev => prev ? { ...prev, isSkipped: true } : null);
+    }
+  }, [sessionId, runTillEndPaused]);
+
+  // Continue execution after skip
+  const continueRunTillEnd = useCallback(() => {
+    if (!sessionId) return;
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: 'continue_run_till_end' }));
+      setRunTillEndPaused(null);
+    }
+  }, [sessionId]);
+
+  // Cancel Run Till End execution
+  const cancelRunTillEnd = useCallback(() => {
+    if (!sessionId) return;
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: 'cancel_run_till_end' }));
+    }
+    setIsRunningTillEnd(false);
+    setRunTillEndPaused(null);
+  }, [sessionId]);
+
   return {
     // State
     messages,
@@ -1250,6 +1391,11 @@ export function useChatSession(): UseChatSessionReturn {
     totalSteps,
     isRecording,
     wsConnectionMode,
+    // Run Till End state
+    isRunningTillEnd,
+    runTillEndPaused,
+    skippedSteps,
+    currentExecutingStepNumber,
 
     // Actions
     sendMessage,
@@ -1271,5 +1417,10 @@ export function useChatSession(): UseChatSessionReturn {
     setSelectedLlm,
     setHeadless,
     setSelectedStepId,
+    // Run Till End actions
+    startRunTillEnd,
+    skipFailedStep,
+    continueRunTillEnd,
+    cancelRunTillEnd,
   };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink } from 'lucide-react';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
@@ -131,6 +131,15 @@ export default function TestAnalysisChatPage() {
     setSelectedLlm,
     setHeadless,
     setSelectedStepId,
+    // Run Till End
+    isRunningTillEnd,
+    runTillEndPaused,
+    skippedSteps,
+    currentExecutingStepNumber,
+    startRunTillEnd,
+    skipFailedStep,
+    continueRunTillEnd,
+    cancelRunTillEnd,
   } = useChatSession();
 
   // Determine if "Generate Script" button should show
@@ -241,7 +250,7 @@ export default function TestAnalysisChatPage() {
                 Stop
               </Button>
             )}
-            {(messages.length > 0 || sessionId) && !isExecuting && (
+            {(messages.length > 0 || sessionId) && !isExecuting && !isRunningTillEnd && (
               <Button
                 size="sm"
                 variant="outline"
@@ -250,6 +259,28 @@ export default function TestAnalysisChatPage() {
               >
                 <RotateCcw className="h-3 w-3 mr-1" />
                 Reset
+              </Button>
+            )}
+            {totalSteps > 0 && !isExecuting && !isRunningTillEnd && (
+              <Button
+                size="sm"
+                variant="default"
+                onClick={startRunTillEnd}
+                className="h-7 text-xs"
+              >
+                <Play className="h-3 w-3 mr-1" />
+                Run Till End
+              </Button>
+            )}
+            {isRunningTillEnd && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={cancelRunTillEnd}
+                className="h-7 text-xs"
+              >
+                <Square className="h-3 w-3 mr-1" />
+                Cancel
               </Button>
             )}
             {linkedScript ? (
@@ -391,6 +422,11 @@ export default function TestAnalysisChatPage() {
           onUndoToStep={undoToStep}
           totalSteps={totalSteps}
           simpleMode={simpleMode}
+          runTillEndPaused={runTillEndPaused}
+          skippedSteps={skippedSteps}
+          onSkipStep={skipFailedStep}
+          onContinueRunTillEnd={continueRunTillEnd}
+          currentExecutingStepNumber={currentExecutingStepNumber}
         />
 
         {/* Chat Input */}
@@ -398,14 +434,16 @@ export default function TestAnalysisChatPage() {
           onSend={sendMessage}
           mode={mode}
           onModeChange={setMode}
-          disabled={isGeneratingPlan || isPlanPending}
+          disabled={isGeneratingPlan || isPlanPending || isRunningTillEnd}
           isExecuting={isExecuting}
           placeholder={
-            isExecuting
-              ? 'Send additional instructions...'
-              : mode === 'plan'
-                ? 'Describe your test case...'
-                : 'Describe what you want to do...'
+            isRunningTillEnd
+              ? 'Running all steps... Please wait.'
+              : isExecuting
+                ? 'Send additional instructions...'
+                : mode === 'plan'
+                  ? 'Describe your test case...'
+                  : 'Describe what you want to do...'
           }
         />
       </div>

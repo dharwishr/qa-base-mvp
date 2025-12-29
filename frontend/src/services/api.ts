@@ -321,15 +321,29 @@ export const analysisApi = {
    * Use this to re-initiate an older test case analysis session.
    */
   async replaySession(sessionId: string, headless: boolean = false): Promise<ReplayResponse> {
-    const response = await fetch(
-      `${API_BASE}/api/analysis/sessions/${sessionId}/replay`,
-      {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ headless }),
+    // Use AbortController for timeout - replay can take a while for many steps
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/analysis/sessions/${sessionId}/replay`,
+        {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ headless }),
+          signal: controller.signal,
+        }
+      );
+      return handleResponse<ReplayResponse>(response);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Replay timed out after 5 minutes. Please try again.');
       }
-    );
-    return handleResponse<ReplayResponse>(response);
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   },
 
   /**

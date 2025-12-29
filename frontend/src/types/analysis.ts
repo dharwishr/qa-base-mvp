@@ -146,6 +146,41 @@ export interface WSStatusChanged {
   previous_status: SessionStatus | null;
 }
 
+// Run Till End WebSocket messages
+export interface WSRunTillEndStarted {
+  type: 'run_till_end_started';
+  total_steps: number;
+}
+
+export interface WSRunTillEndProgress {
+  type: 'run_till_end_progress';
+  current_step: number;
+  total_steps: number;
+  status: 'running' | 'completed';
+}
+
+export interface WSRunTillEndPaused {
+  type: 'run_till_end_paused';
+  failed_step: number;
+  error_message: string;
+  options: string[];
+}
+
+export interface WSRunTillEndCompleted {
+  type: 'run_till_end_completed';
+  success: boolean;
+  total_steps: number;
+  completed_steps: number;
+  skipped_steps: number[];
+  error_message?: string;
+  cancelled?: boolean;
+}
+
+export interface WSStepSkipped {
+  type: 'step_skipped';
+  step_number: number;
+}
+
 export type WSMessage =
   | WSStepStarted
   | WSStepCompleted
@@ -154,7 +189,12 @@ export type WSMessage =
   | WSPong
   | WSBrowserSessionStarted
   | WSInitialState
-  | WSStatusChanged;
+  | WSStatusChanged
+  | WSRunTillEndStarted
+  | WSRunTillEndProgress
+  | WSRunTillEndPaused
+  | WSRunTillEndCompleted
+  | WSStepSkipped;
 
 // Chat message types
 export type ChatMessageType = 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system';

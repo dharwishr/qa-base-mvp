@@ -1279,6 +1279,72 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 						# TODO: Implement actual command injection to running agent
 						# For now, we just acknowledge the command
 
+				elif command == "run_till_end":
+					# Start Run Till End execution
+					from app.services.run_till_end_service import (
+						RunTillEndService,
+						register_service,
+						unregister_service,
+					)
+
+					db.refresh(session)
+					logger.info(f"Starting Run Till End for session {session_id}")
+
+					async def send_ws_message(msg: dict):
+						await websocket.send_json(msg)
+
+					service = RunTillEndService(db, session, send_ws_message)
+					register_service(session_id, service)
+
+					try:
+						result = await service.execute()
+						logger.info(f"Run Till End completed for session {session_id}: {result}")
+					finally:
+						unregister_service(session_id)
+
+				elif command == "skip_step":
+					# Skip a failed step during Run Till End
+					from app.services.run_till_end_service import get_active_service
+
+					step_number = data.get("step_number")
+					if step_number is None:
+						await websocket.send_json(
+							WSError(message="Missing step_number parameter").model_dump()
+						)
+						continue
+
+					service = get_active_service(session_id)
+					if service:
+						await service.skip_step(step_number)
+					else:
+						await websocket.send_json(
+							WSError(message="No active Run Till End execution").model_dump()
+						)
+
+				elif command == "continue_run_till_end":
+					# Continue execution after skip
+					from app.services.run_till_end_service import get_active_service
+
+					service = get_active_service(session_id)
+					if service:
+						await service.continue_execution()
+					else:
+						await websocket.send_json(
+							WSError(message="No active Run Till End execution").model_dump()
+						)
+
+				elif command == "cancel_run_till_end":
+					# Cancel Run Till End execution
+					from app.services.run_till_end_service import get_active_service
+
+					service = get_active_service(session_id)
+					if service:
+						await service.cancel()
+					else:
+						await websocket.send_json(
+							WSError(message="No active Run Till End execution").model_dump()
+						)
+
 			except WebSocketDisconnect:
 				logger.info(f"WebSocket disconnected for session {session_id}")
 				break

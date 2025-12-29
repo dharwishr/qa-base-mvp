@@ -126,6 +126,13 @@ export interface WSPlanGenerated {
   plan: TestPlan;
 }
 
+// Run Till End types (state for UI, not WS messages - WS messages are in analysis.ts)
+export interface RunTillEndPausedState {
+  stepNumber: number;
+  error: string;
+  isSkipped?: boolean; // true after user clicks Skip, shows Continue button
+}
+
 // Generate UUID with fallback for non-secure contexts (HTTP)
 function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
