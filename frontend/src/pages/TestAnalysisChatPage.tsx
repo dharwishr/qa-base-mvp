@@ -221,7 +221,7 @@ export default function TestAnalysisChatPage() {
   }, [urlSessionId, sessionId, loadExistingSession]);
 
   // Determine if "Generate Script" button should show
-  const canGenerateScript = sessionStatus === 'completed' &&
+  const canGenerateScript = (sessionStatus === 'completed' || sessionStatus === 'stopped') &&
     messages.some(m => m.type === 'step');
 
   // Determine if "Re-initiate Browser" button should show
@@ -348,10 +348,10 @@ export default function TestAnalysisChatPage() {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/20">
-          <h2 className="font-semibold text-sm truncate max-w-[200px]" title={sessionTitle}>
+          <h2 className="font-semibold text-sm line-clamp-2 leading-tight" title={sessionTitle}>
             {sessionTitle}
           </h2>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             {/* Pause Button - Shows when AI is executing or Run Till End is active */}
             {(isExecuting || isRunningTillEnd) && (
               <Button

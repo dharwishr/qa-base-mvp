@@ -199,11 +199,11 @@ export default function ExistingSessionPage() {
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
-            <h2 className="font-semibold text-sm truncate max-w-[180px]" title={sessionTitle}>
+            <h2 className="font-semibold text-sm line-clamp-2 leading-tight" title={sessionTitle}>
               {sessionTitle}
             </h2>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             {isExecuting && (
               <Button
                 size="sm"
@@ -295,11 +295,10 @@ export default function ExistingSessionPage() {
                   type="button"
                   onClick={() => setHeadless(true)}
                   disabled={isExecuting || isReplaying}
-                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    headless
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${headless
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
-                  } disabled:opacity-50`}
+                    } disabled:opacity-50`}
                 >
                   <EyeOff className="h-3.5 w-3.5" />
                   Headless
@@ -308,11 +307,10 @@ export default function ExistingSessionPage() {
                   type="button"
                   onClick={() => setHeadless(false)}
                   disabled={isExecuting || isReplaying}
-                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    !headless
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${!headless
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
-                  } disabled:opacity-50`}
+                    } disabled:opacity-50`}
                 >
                   <Monitor className="h-3.5 w-3.5" />
                   Live
@@ -327,11 +325,10 @@ export default function ExistingSessionPage() {
                 <button
                   type="button"
                   onClick={() => setSimpleMode(false)}
-                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    !simpleMode
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${!simpleMode
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                    }`}
                 >
                   <LayoutList className="h-3.5 w-3.5" />
                   Detailed
@@ -339,11 +336,10 @@ export default function ExistingSessionPage() {
                 <button
                   type="button"
                   onClick={() => setSimpleMode(true)}
-                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    simpleMode
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${simpleMode
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                    }`}
                 >
                   <List className="h-3.5 w-3.5" />
                   Simple
@@ -386,7 +382,7 @@ export default function ExistingSessionPage() {
               </p>
             </div>
           )}
-          
+
           <ChatInput
             onSend={sendMessage}
             mode={mode}
@@ -410,9 +406,8 @@ export default function ExistingSessionPage() {
 
       {/* Resizer */}
       <div
-        className={`w-1 cursor-col-resize hover:bg-primary/50 transition-colors ${
-          isResizing ? 'bg-primary' : 'bg-transparent'
-        }`}
+        className={`w-1 cursor-col-resize hover:bg-primary/50 transition-colors ${isResizing ? 'bg-primary' : 'bg-transparent'
+          }`}
         onMouseDown={startResizing}
       />
 
