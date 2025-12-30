@@ -93,6 +93,11 @@ class BrowserService:
 		self.db = db
 		self.session = session
 		self.websocket = websocket
+		# Store immutable session data as plain values to avoid DetachedInstanceError
+		# when the WebSocket closes and the SQLAlchemy session becomes invalid
+		self._session_id: str = str(session.id)
+		self._llm_model: str = session.llm_model
+		self._headless: bool = getattr(session, 'headless', True)
 		# Initialize step counter from max existing step number for this session
 		# This ensures continuation executions don't restart step numbering from 1
 		max_step = db.query(func.max(TestStep.step_number)).filter(
@@ -112,22 +117,36 @@ class BrowserService:
 	def request_stop(self) -> None:
 		"""Request graceful stop after current step completes."""
 		self._stop_requested = True
-		logger.info(f"Stop requested for session {self.session.id}")
+		logger.info(f"Stop requested for session {self._session_id}")
 
 	def _create_chat_message(self, content: str, msg_type: str = "system") -> None:
 		"""Helper to create a chat message for the session."""
-		max_seq = self.db.query(func.max(ChatMessage.sequence_number)).filter(
-			ChatMessage.session_id == self.session.id
-		).scalar() or 0
+		try:
+			max_seq = self.db.query(func.max(ChatMessage.sequence_number)).filter(
+				ChatMessage.session_id == self._session_id
+			).scalar() or 0
 
-		msg = ChatMessage(
-			session_id=self.session.id,
-			message_type=msg_type,
-			content=content,
-			sequence_number=max_seq + 1
-		)
-		self.db.add(msg)
-		self.db.commit()
+			msg = ChatMessage(
+				session_id=self._session_id,
+				message_type=msg_type,
+				content=content,
+				sequence_number=max_seq + 1
+			)
+			self.db.add(msg)
+			self.db.commit()
+		except Exception as e:
+			logger.error(f"Error creating chat message: {e}")
+
+	def _update_session_status(self, status: str) -> None:
+		"""Helper to update session status using raw SQL to avoid detached instance issues."""
+		try:
+			from app.models import TestSession as TestSessionModel
+			self.db.query(TestSessionModel).filter(TestSessionModel.id == self._session_id).update(
+				{"status": status}, synchronize_session=False
+			)
+			self.db.commit()
+		except Exception as e:
+			logger.error(f"Error updating session status: {e}")
 
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
@@ -172,7 +191,7 @@ class BrowserService:
 				from app.config import settings
 				temp_path = Path(state.screenshot_path)
 				if temp_path.exists():
-					screenshot_filename = f"{self.session.id}_{self.current_step_number}.png"
+					screenshot_filename = f"{self._session_id}_{self.current_step_number}.png"
 					dest_dir = Path(settings.SCREENSHOTS_DIR)
 					dest_dir.mkdir(parents=True, exist_ok=True)
 					dest_path = dest_dir / screenshot_filename
@@ -181,7 +200,7 @@ class BrowserService:
 
 			# Create TestStep record
 			test_step = TestStep(
-				session_id=self.session.id,
+				session_id=self._session_id,
 				step_number=self.current_step_number,
 				url=state.url if state else None,
 				page_title=state.title if state else None,
@@ -287,12 +306,11 @@ class BrowserService:
 		remote_session: OrchestratorSession | None = None
 
 		# Register this service for pause/stop control
-		register_browser_service(str(self.session.id), self)
+		register_browser_service(self._session_id, self)
 
 		try:
-			# Update session status
-			self.session.status = "running"
-			self.db.commit()
+			# Update session status using helper method
+			self._update_session_status("running")
 
 			# Import browser-use components
 			from browser_use import Agent, BrowserSession
@@ -303,14 +321,16 @@ class BrowserService:
 			# Check if this is a continuation (session has previous steps)
 			is_continuation = self.current_step_number > 0
 			task = get_plan_as_task(plan, is_continuation=is_continuation)
-			logger.info(f"Task is continuation: {is_continuation}")
+			logger.info(f"[EXECUTION] is_continuation={is_continuation}, existing_steps={self.current_step_number}")
+			if is_continuation:
+				logger.info(f"[EXECUTION] CONTINUATION MODE: Browser will NOT navigate away from current page")
 
-			# Initialize LLM based on session's selected model
-			llm = get_llm_for_model(self.session.llm_model)
-			logger.info(f"Using LLM model: {self.session.llm_model}")
+			# Initialize LLM based on session's selected model (use cached value)
+			llm = get_llm_for_model(self._llm_model)
+			logger.info(f"Using LLM model: {self._llm_model}")
 
-			# Determine browser mode based on session.headless setting
-			use_headless = getattr(self.session, 'headless', True)
+			# Determine browser mode based on session.headless setting (use cached value)
+			use_headless = self._headless
 			logger.info(f"Browser mode: {'headless' if use_headless else 'live browser'}")
 
 			# Initialize browser session based on headless setting
@@ -323,7 +343,7 @@ class BrowserService:
 					# Include non-active sessions to detect pre-warming in progress
 					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS, active_only=False)
 					existing_session = next(
-						(s for s in existing_sessions if s.test_session_id == self.session.id),
+						(s for s in existing_sessions if s.test_session_id == self._session_id),
 						None
 					)
 
@@ -374,7 +394,7 @@ class BrowserService:
 						# CREATE new browser session (no existing one found)
 						remote_session = await orchestrator.create_session(
 							phase=BrowserPhase.ANALYSIS,
-							test_session_id=self.session.id,
+							test_session_id=self._session_id,
 						)
 						self.browser_session_id = remote_session.id
 
@@ -435,8 +455,7 @@ class BrowserService:
 			success = history.is_successful() if history.is_done() else False
 
 			# Update session status
-			self.session.status = "completed" if success else "failed"
-			self.db.commit()
+			self._update_session_status("completed" if success else "failed")
 
 			# Send completion message
 			await self.send_ws_message(
@@ -455,9 +474,8 @@ class BrowserService:
 
 		except StopExecutionException:
 			# User requested pause - don't mark as failed, set to paused
-			logger.info(f"Execution paused by user for session {self.session.id}")
-			self.session.status = "paused"
-			self.db.commit()
+			logger.info(f"Execution paused by user for session {self._session_id}")
+			self._update_session_status("paused")
 
 			await self.send_ws_message({
 				"type": "execution_paused",
@@ -469,8 +487,7 @@ class BrowserService:
 
 		except Exception as e:
 			logger.error(f"Error executing test: {e}")
-			self.session.status = "failed"
-			self.db.commit()
+			self._update_session_status("failed")
 
 			await self.send_ws_message(WSError(message=str(e)).model_dump())
 			# Persist error message for session history
@@ -479,23 +496,25 @@ class BrowserService:
 
 		finally:
 			# Unregister this service
-			unregister_browser_service(str(self.session.id))
-			# Clean up local browser session ONLY if headless (no live view)
-			# For remote sessions (non-headless), keep browser alive for reuse
-			if use_headless and browser_session:
+			unregister_browser_service(self._session_id)
+			# ALWAYS stop the browser_use BrowserSession to clean up CDP connection
+			# This does NOT kill the browser - it just disconnects the CDP client
+			# The browser container stays alive for reuse via the orchestrator
+			if browser_session:
 				try:
 					await browser_session.stop()
-					logger.info("Stopped local headless browser session")
+					logger.info("Stopped browser_use session (CDP connection cleaned up, browser still alive)")
 				except Exception as e:
 					logger.error(f"Error stopping browser session: {e}")
 
-			# DO NOT clean up remote browser session - keep it alive for user interaction
-			# Remote session will be cleaned up via:
+			# Remote browser session (container) stays alive for user interaction
+			# and will be reused when the next execution connects via CDP
+			# Cleanup happens via:
 			# 1. User clicking "Stop Browser" button
 			# 2. Frontend calling end-browser API on page close
 			# 3. Inactivity timeout (3 minutes, handled by frontend)
 			if remote_session:
-				logger.info(f"Keeping remote browser session alive: {remote_session.id}")
+				logger.info(f"Remote browser session still alive for reuse: {remote_session.id}")
 
 
 async def execute_test(db: Session, session: TestSession, plan: TestPlan, websocket: WebSocket) -> None:
@@ -510,6 +529,10 @@ class BrowserServiceSync:
 	def __init__(self, db: Session, session: TestSession):
 		self.db = db
 		self.session = session
+		# Store immutable session data as plain values to avoid DetachedInstanceError
+		self._session_id: str = str(session.id)
+		self._llm_model: str = session.llm_model
+		self._headless: bool = getattr(session, 'headless', True)
 		# Initialize step counter from max existing step number for this session
 		# This ensures continuation executions don't restart step numbering from 1
 		max_step = db.query(func.max(TestStep.step_number)).filter(
@@ -520,18 +543,32 @@ class BrowserServiceSync:
 
 	def _create_chat_message(self, content: str, msg_type: str = "system") -> None:
 		"""Helper to create a chat message for the session."""
-		max_seq = self.db.query(func.max(ChatMessage.sequence_number)).filter(
-			ChatMessage.session_id == self.session.id
-		).scalar() or 0
+		try:
+			max_seq = self.db.query(func.max(ChatMessage.sequence_number)).filter(
+				ChatMessage.session_id == self._session_id
+			).scalar() or 0
 
-		msg = ChatMessage(
-			session_id=self.session.id,
-			message_type=msg_type,
-			content=content,
-			sequence_number=max_seq + 1
-		)
-		self.db.add(msg)
-		self.db.commit()
+			msg = ChatMessage(
+				session_id=self._session_id,
+				message_type=msg_type,
+				content=content,
+				sequence_number=max_seq + 1
+			)
+			self.db.add(msg)
+			self.db.commit()
+		except Exception as e:
+			logger.error(f"Error creating chat message: {e}")
+
+	def _update_session_status(self, status: str) -> None:
+		"""Helper to update session status using raw SQL to avoid detached instance issues."""
+		try:
+			from app.models import TestSession as TestSessionModel
+			self.db.query(TestSessionModel).filter(TestSessionModel.id == self._session_id).update(
+				{"status": status}, synchronize_session=False
+			)
+			self.db.commit()
+		except Exception as e:
+			logger.error(f"Error updating session status: {e}")
 
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
@@ -564,7 +601,7 @@ class BrowserServiceSync:
 
 				temp_path = Path(state.screenshot_path)
 				if temp_path.exists():
-					screenshot_filename = f"{self.session.id}_{self.current_step_number}.png"
+					screenshot_filename = f"{self._session_id}_{self.current_step_number}.png"
 					dest_dir = Path(settings.SCREENSHOTS_DIR)
 					dest_dir.mkdir(parents=True, exist_ok=True)
 					dest_path = dest_dir / screenshot_filename
@@ -573,7 +610,7 @@ class BrowserServiceSync:
 
 			# Create TestStep record
 			test_step = TestStep(
-				session_id=self.session.id,
+				session_id=self._session_id,
 				step_number=self.current_step_number,
 				url=state.url if state else None,
 				page_title=state.title if state else None,
@@ -642,9 +679,8 @@ class BrowserServiceSync:
 		remote_session: OrchestratorSession | None = None
 
 		try:
-			# Update session status
-			self.session.status = "running"
-			self.db.commit()
+			# Update session status using helper method
+			self._update_session_status("running")
 
 			# Import browser-use components
 			from browser_use import Agent, BrowserSession
@@ -655,14 +691,16 @@ class BrowserServiceSync:
 			# Check if this is a continuation (session has previous steps)
 			is_continuation = self.current_step_number > 0
 			task = get_plan_as_task(plan, is_continuation=is_continuation)
-			logger.info(f"Task is continuation: {is_continuation}")
+			logger.info(f"[EXECUTION] is_continuation={is_continuation}, existing_steps={self.current_step_number}")
+			if is_continuation:
+				logger.info(f"[EXECUTION] CONTINUATION MODE: Browser will NOT navigate away from current page")
 
-			# Initialize LLM based on session's selected model
-			llm = get_llm_for_model(self.session.llm_model)
-			logger.info(f"Using LLM model: {self.session.llm_model}")
+			# Initialize LLM based on session's selected model (use cached value)
+			llm = get_llm_for_model(self._llm_model)
+			logger.info(f"Using LLM model: {self._llm_model}")
 
-			# Determine browser mode based on session.headless setting
-			use_headless = getattr(self.session, 'headless', True)
+			# Determine browser mode based on session.headless setting (use cached value)
+			use_headless = self._headless
 			logger.info(f"Browser mode: {'headless' if use_headless else 'live browser'}")
 
 			# Variable for remote session cleanup
@@ -678,7 +716,7 @@ class BrowserServiceSync:
 					# Include non-active sessions to detect pre-warming in progress
 					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS, active_only=False)
 					existing_session = next(
-						(s for s in existing_sessions if s.test_session_id == self.session.id),
+						(s for s in existing_sessions if s.test_session_id == self._session_id),
 						None
 					)
 
@@ -719,7 +757,7 @@ class BrowserServiceSync:
 						# CREATE new browser session (no existing one found)
 						remote_session = await orchestrator.create_session(
 							phase=BrowserPhase.ANALYSIS,
-							test_session_id=self.session.id,
+							test_session_id=self._session_id,
 						)
 						self.browser_session_id = remote_session.id
 						logger.info(f"Created new remote browser session: {remote_session.id}, CDP: {remote_session.cdp_url}")
@@ -760,9 +798,8 @@ class BrowserServiceSync:
 			# Check if successful
 			success = history.is_successful() if history.is_done() else False
 
-			# Update session status
-			self.session.status = "completed" if success else "failed"
-			self.db.commit()
+			# Update session status using helper method
+			self._update_session_status("completed" if success else "failed")
 
 			# Persist completion message for session history
 			if success:
@@ -780,29 +817,30 @@ class BrowserServiceSync:
 
 		except Exception as e:
 			logger.error(f"Error executing test: {e}")
-			self.session.status = "failed"
-			self.db.commit()
+			self._update_session_status("failed")
 			# Persist error message for session history
 			self._create_chat_message(f"Execution error: {str(e)}", "error")
 			raise
 
 		finally:
-			# Clean up local browser session ONLY if headless (no live view)
-			# For remote sessions (non-headless), keep browser alive for reuse
-			if use_headless and browser_session:
+			# ALWAYS stop the browser_use BrowserSession to clean up CDP connection
+			# This does NOT kill the browser - it just disconnects the CDP client
+			# The browser container stays alive for reuse via the orchestrator
+			if browser_session:
 				try:
 					await browser_session.stop()
-					logger.info("Stopped local headless browser session")
+					logger.info("Stopped browser_use session (CDP connection cleaned up, browser still alive)")
 				except Exception as e:
 					logger.error(f"Error stopping browser session: {e}")
 
-			# DO NOT clean up remote browser session - keep it alive for user interaction
-			# Remote session will be cleaned up via:
+			# Remote browser session (container) stays alive for user interaction
+			# and will be reused when the next execution connects via CDP
+			# Cleanup happens via:
 			# 1. User clicking "Stop Browser" button
 			# 2. Frontend calling end-browser API on page close
 			# 3. Inactivity timeout (3 minutes, handled by frontend)
 			if remote_session:
-				logger.info(f"Keeping remote browser session alive: {remote_session.id}")
+				logger.info(f"Remote browser session still alive for reuse: {remote_session.id}")
 
 	async def execute_act_mode(self, task: str, previous_context: str | None = None) -> dict[str, Any]:
 		"""Execute a single action in act mode.
@@ -836,7 +874,7 @@ class BrowserServiceSync:
 					# Include non-active sessions to detect pre-warming in progress
 					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS, active_only=False)
 					existing_session = next(
-						(s for s in existing_sessions if s.test_session_id == self.session.id),
+						(s for s in existing_sessions if s.test_session_id == self._session_id),
 						None
 					)
 
@@ -875,7 +913,7 @@ class BrowserServiceSync:
 						# CREATE new browser session
 						remote_session = await orchestrator.create_session(
 							phase=BrowserPhase.ANALYSIS,
-							test_session_id=self.session.id,
+							test_session_id=self._session_id,
 						)
 						self.browser_session_id = remote_session.id
 						logger.info(f"Act mode - Created new browser session: {remote_session.id}")
@@ -925,13 +963,20 @@ class BrowserServiceSync:
 			}
 
 		finally:
-			# For act mode, NEVER clean up browser session - keep it alive for next action
-			# Browser session cleanup is handled by:
-			# 1. User clicking "Stop Browser" button
-			# 2. Frontend calling end-browser API
-			# 3. Inactivity timeout
+			# ALWAYS stop the browser_use BrowserSession to clean up CDP connection
+			# This does NOT kill the browser - it just disconnects the CDP client
+			# The browser container stays alive for reuse via the orchestrator
+			if browser_session:
+				try:
+					await browser_session.stop()
+					logger.info("Act mode - Stopped browser_use session (CDP cleaned up, browser still alive)")
+				except Exception as e:
+					logger.error(f"Act mode - Error stopping browser session: {e}")
+
+			# Remote browser session (container) stays alive for next action
+			# Cleanup happens via user action or inactivity timeout
 			if remote_session:
-				logger.info(f"Act mode - Keeping browser session alive: {remote_session.id}")
+				logger.info(f"Act mode - Remote browser session still alive: {remote_session.id}")
 
 
 def execute_test_sync(db: Session, session: TestSession, plan: TestPlan) -> dict:
@@ -1045,6 +1090,19 @@ def execute_act_mode_sync(
 				"browser_session_id": remote_session.id if remote_session else None,
 				"error": str(e),
 			}
+
+		finally:
+			# ALWAYS stop the browser_use BrowserSession to clean up CDP connection
+			# This does NOT kill the browser - it just disconnects the CDP client
+			if browser_session:
+				try:
+					await browser_session.stop()
+					logger.info("Act mode sync - Stopped browser_use session (CDP cleaned up)")
+				except Exception as e:
+					logger.error(f"Act mode sync - Error stopping browser session: {e}")
+
+			if remote_session:
+				logger.info(f"Act mode sync - Remote browser session still alive: {remote_session.id}")
 
 	loop = asyncio.new_event_loop()
 	asyncio.set_event_loop(loop)

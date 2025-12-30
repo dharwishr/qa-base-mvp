@@ -291,29 +291,39 @@ async def continue_session(
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
 
-	# Allow continuing from completed, failed, or stopped states
-	if session.status not in ("completed", "failed", "stopped"):
+	# Log continuation detection
+	existing_steps = db.query(TestStep).filter(TestStep.session_id == session_id).count()
+	logger.info(f"[CONTINUATION] Session {session_id}: status={session.status}, existing_steps={existing_steps}, mode={request.mode}")
+
+	# Allow continuing from completed, failed, stopped, or paused states
+	if session.status not in ("completed", "failed", "stopped", "paused"):
 		raise HTTPException(
 			status_code=400,
 			detail=f"Cannot continue session in status: {session.status}. "
-				   "Session must be completed, failed, or stopped to continue."
+				   "Session must be completed, failed, stopped, or paused to continue."
 		)
 
 	# Store the new request - don't append to original prompt
 	# This keeps session.prompt as the original for reference
 	new_task_prompt = request.prompt
 	session.llm_model = request.llm_model
-
-	# Create a user message for the continuation
-	create_system_message(db, session_id, f"Continuing with: {new_task_prompt}")
+	logger.info(f"[CONTINUATION] Continuing with prompt: {new_task_prompt[:100]}...")
+	# NOTE: User message is persisted by frontend BEFORE this API call is made
+	# so we don't need a redundant "Continuing with:" system message here
 
 	if request.mode == "plan":
 		# Generate a new plan for the continuation
 		# Pass only the NEW request, not the original prompt
 
-		# Delete old plan first to avoid conflicts
+		# Delete old plan AND its chat message first to avoid duplicates
 		if session.plan:
 			logger.info(f"Deleting old plan for session {session_id} before generating new one")
+			# Also delete the old plan chat message to avoid duplicate plan cards
+			from app.models import ChatMessage
+			db.query(ChatMessage).filter(
+				ChatMessage.session_id == session_id,
+				ChatMessage.plan_id == session.plan.id
+			).delete(synchronize_session=False)
 			db.delete(session.plan)
 			db.flush()  # Ensure delete is processed before creating new plan
 
@@ -356,10 +366,7 @@ async def continue_session(
 		session.status = "approved"
 		db.commit()
 		db.refresh(plan)  # Refresh to get the generated ID
-
-		# Persist the plan as a chat message so it shows when reopening the session
-		create_plan_message(db, session.id, plan.plan_text, plan.id)
-		db.commit()
+		# NOTE: Act mode does NOT create a plan message - user message is sufficient
 
 	db.refresh(session)
 	return session

@@ -43,6 +43,7 @@ Return the response in the following JSON format:
 }}
 
 Be specific and practical. Include verification steps where appropriate.
+{navigation_warning}
 """
 
 
@@ -98,27 +99,32 @@ async def generate_plan(db: Session, session: TestSession, task_prompt: str | No
 		# Use provided task_prompt or fall back to session.prompt
 		plan_prompt = task_prompt if task_prompt else session.prompt
 
-		# For continuation plans (task_prompt provided), don't include any
-		# previous context - generate a fresh plan from the new prompt only.
-		# The browser-use agent will handle the actual browser state.
+		# For continuation plans (task_prompt provided), include current browser
+		# state so the LLM knows not to add navigation steps.
 		is_continuation = task_prompt is not None
 
 		if is_continuation:
-			# No execution context for continuations - clean slate
-			execution_context = ""
-			continuation_instruction = """Note: A browser session is already active from previous tasks.
-Generate a complete plan for this new task as a standalone request."""
-			logger.info(f"Generating CONTINUATION plan (no context) for: {plan_prompt[:100]}...")
+			# Include current browser state for continuations so LLM knows where we are
+			execution_context = build_execution_context(db, session)
+			continuation_instruction = """IMPORTANT: This is a CONTINUATION of an existing test session.
+A browser session is already active and on the page shown above.
+Generate additional steps to perform the user's new request FROM THE CURRENT PAGE STATE.
+Do NOT include any navigate/go_to_url steps - the browser is already on the correct page."""
+			navigation_warning = """CRITICAL: Do NOT include any navigation steps (navigate, go_to_url, open URL, etc.) in this plan.
+The browser is already positioned on the correct page. Start directly with the user's requested actions."""
+			logger.info(f"Generating CONTINUATION plan (with context) for: {plan_prompt[:100]}...")
 		else:
 			# For new sessions, build context (will be empty anyway for new session)
 			execution_context = build_execution_context(db, session)
 			continuation_instruction = ""
+			navigation_warning = ""
 			logger.info(f"Generating NEW session plan for: {plan_prompt[:100]}...")
 
 		prompt = PLAN_GENERATION_PROMPT.format(
 			execution_context=execution_context,
 			prompt=plan_prompt,
-			continuation_instruction=continuation_instruction
+			continuation_instruction=continuation_instruction,
+			navigation_warning=navigation_warning
 		)
 		logger.debug(f"Full prompt to LLM:\n{prompt}")
 
@@ -183,19 +189,26 @@ def generate_plan_sync(db: Session, session: TestSession, task_prompt: str | Non
 		is_continuation = task_prompt is not None
 
 		if is_continuation:
-			execution_context = ""
-			continuation_instruction = """Note: A browser session is already active from previous tasks.
-Generate a complete plan for this new task as a standalone request."""
-			logger.info(f"Generating CONTINUATION plan (no context) for: {plan_prompt[:100]}...")
+			# Include current browser state for continuations so LLM knows where we are
+			execution_context = build_execution_context(db, session)
+			continuation_instruction = """IMPORTANT: This is a CONTINUATION of an existing test session.
+A browser session is already active and on the page shown above.
+Generate additional steps to perform the user's new request FROM THE CURRENT PAGE STATE.
+Do NOT include any navigate/go_to_url steps - the browser is already on the correct page."""
+			navigation_warning = """CRITICAL: Do NOT include any navigation steps (navigate, go_to_url, open URL, etc.) in this plan.
+The browser is already positioned on the correct page. Start directly with the user's requested actions."""
+			logger.info(f"Generating CONTINUATION plan (with context) for: {plan_prompt[:100]}...")
 		else:
 			execution_context = build_execution_context(db, session)
 			continuation_instruction = ""
+			navigation_warning = ""
 			logger.info(f"Generating NEW session plan for: {plan_prompt[:100]}...")
 
 		prompt = PLAN_GENERATION_PROMPT.format(
 			execution_context=execution_context,
 			prompt=plan_prompt,
-			continuation_instruction=continuation_instruction
+			continuation_instruction=continuation_instruction,
+			navigation_warning=navigation_warning
 		)
 		logger.debug(f"Full prompt to LLM:\n{prompt}")
 
@@ -250,21 +263,52 @@ def get_plan_as_task(plan: TestPlan, is_continuation: bool = False) -> str:
 	steps = plan.steps_json.get("steps", []) if plan.steps_json else []
 
 	if not steps:
+		# For continuations with no structured steps, add the continuation instruction
+		if is_continuation:
+			return f"""IMPORTANT: You are continuing from an existing browser session.
+The browser is already open with a page loaded. Do NOT navigate away, go to any URL, or reset the browser.
+Execute the following task from the CURRENT page state:
+
+{plan.plan_text}
+
+CRITICAL: Do NOT use go_to_url, navigate, or any action that changes the current page URL.
+Work only with elements on the current page."""
 		return plan.plan_text
 
 	task_lines = []
 
 	if is_continuation:
-		# Tell the agent to continue from current state
-		task_lines.append("IMPORTANT: You are continuing from an existing browser session.")
-		task_lines.append("The browser is already open with a page loaded. Do NOT navigate away or reset.")
-		task_lines.append("Start executing from the current page state.\n")
+		# Tell the agent to continue from current state with strong emphasis
+		task_lines.append("=" * 60)
+		task_lines.append("CONTINUATION MODE - READ CAREFULLY:")
+		task_lines.append("=" * 60)
+		task_lines.append("You are continuing from an existing browser session.")
+		task_lines.append("The browser is ALREADY open with a page loaded.")
+		task_lines.append("")
+		task_lines.append("CRITICAL RULES:")
+		task_lines.append("1. Do NOT use go_to_url action")
+		task_lines.append("2. Do NOT navigate to any URL")
+		task_lines.append("3. Do NOT reset or refresh the page")
+		task_lines.append("4. Work ONLY with elements on the current page")
+		task_lines.append("5. If you see a 'navigate' step below, SKIP IT - you're already there")
+		task_lines.append("=" * 60)
+		task_lines.append("")
 
 	task_lines.append("Execute the following test plan:\n")
 	for step in steps:
 		step_num = step.get("step_number", "")
 		description = step.get("description", "")
 		details = step.get("details", "")
-		task_lines.append(f"{step_num}. {description}: {details}")
+		action_type = step.get("action_type", "").lower()
+
+		# For continuations, mark navigation steps as skip
+		if is_continuation and action_type in ("navigate", "go_to_url", "open"):
+			task_lines.append(f"{step_num}. [SKIP - ALREADY ON PAGE] {description}: {details}")
+		else:
+			task_lines.append(f"{step_num}. {description}: {details}")
+
+	if is_continuation:
+		task_lines.append("")
+		task_lines.append("Remember: Do NOT navigate away from the current page!")
 
 	return "\n".join(task_lines)

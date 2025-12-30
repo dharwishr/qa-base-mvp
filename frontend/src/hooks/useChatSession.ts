@@ -46,11 +46,12 @@ function generateUUID(): string {
 // Helper to create messages with unique IDs
 function createTimelineMessage<T extends TimelineMessage>(
   type: T['type'],
-  data: Omit<T, 'id' | 'timestamp' | 'type'>
+  data: Omit<T, 'id' | 'timestamp' | 'type'>,
+  overrideTimestamp?: string
 ): T {
   return {
     id: generateUUID(),
-    timestamp: new Date().toISOString(),
+    timestamp: overrideTimestamp || new Date().toISOString(),
     type,
     ...data,
   } as T;
@@ -317,6 +318,8 @@ export function useChatSession(): UseChatSessionReturn {
           case 'completed': {
             const completeMsg = message as WSCompleted;
             setIsExecuting(false);
+            // Update session status so canContinueSession() returns true
+            setSessionStatus(completeMsg.success ? 'completed' : 'failed');
             setMessages((prev) => [
               ...prev,
               createTimelineMessage('system', {
@@ -382,6 +385,8 @@ export function useChatSession(): UseChatSessionReturn {
             setIsRunningTillEnd(false);
             setRunTillEndPaused(null);
             setCurrentExecutingStepNumber(null);
+            // Update session status so canContinueSession() returns true
+            setSessionStatus(msg.cancelled ? 'stopped' : msg.success ? 'completed' : 'failed');
 
             const statusText = msg.cancelled
               ? 'Run Till End cancelled'
@@ -412,6 +417,8 @@ export function useChatSession(): UseChatSessionReturn {
             const msg = message as WSExecutionPaused;
             setIsExecuting(false);
             setIsRunningTillEnd(false);
+            // Update session status so canContinueSession() returns true
+            setSessionStatus('paused');
             // Add system message to timeline
             setMessages(prev => [
               ...prev,
@@ -427,6 +434,8 @@ export function useChatSession(): UseChatSessionReturn {
             setIsExecuting(false);
             setIsRunningTillEnd(false);
             setBrowserSession(null);
+            // Update session status so canContinueSession() returns true
+            setSessionStatus('stopped');
             // Add system message
             setMessages(prev => [
               ...prev,
@@ -689,9 +698,9 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, []);
 
-  // Check if session can be continued (completed, failed, or stopped)
+  // Check if session can be continued (completed, failed, stopped, or paused)
   const canContinueSession = useCallback(() => {
-    return sessionId && ['completed', 'failed', 'stopped'].includes(sessionStatus || '');
+    return sessionId && ['completed', 'failed', 'stopped', 'paused'].includes(sessionStatus || '');
   }, [sessionId, sessionStatus]);
 
   // Queue a message when busy
@@ -746,6 +755,7 @@ export function useChatSession(): UseChatSessionReturn {
 
       // Check if we should continue an existing session
       const shouldContinue = canContinueSession();
+      console.log(`[CHAT] executeMessage: mode=${messageMode}, shouldContinue=${shouldContinue}, sessionId=${sessionId}, sessionStatus=${sessionStatus}`);
 
       if (messageMode === 'plan') {
         // Plan mode: Generate plan first
@@ -762,10 +772,12 @@ export function useChatSession(): UseChatSessionReturn {
 
           if (shouldContinue && sessionId) {
             // Continue existing session with a new plan
+            console.log(`[CHAT] PLAN MODE: Continuing session ${sessionId} (keeping ${lastStepCountRef.current} existing steps)`);
             session = await analysisApi.continueSession(sessionId, text, selectedLlm, 'plan');
             // DON'T clear step messages - keep existing steps
           } else {
             // Create new session
+            console.log(`[CHAT] PLAN MODE: Creating new session (shouldContinue=${shouldContinue}, sessionId=${sessionId})`);
             session = await analysisApi.createSession(text, selectedLlm, headless);
             setSessionId(session.id);
             // Clear old step messages when creating a new session
@@ -852,15 +864,22 @@ export function useChatSession(): UseChatSessionReturn {
           let targetSessionId: string;
 
           if (shouldContinue && sessionId) {
-            // Continue existing session in act mode
+            // FIRST: Persist user message BEFORE making API call (for correct sequence_number)
+            console.log(`[CHAT] ACT MODE: Continuing session ${sessionId} (keeping ${lastStepCountRef.current} existing steps)`);
+            await persistMessage(sessionId, 'user', text, messageMode);
+
+            // THEN: Continue existing session in act mode
             session = await analysisApi.continueSession(sessionId, text, selectedLlm, 'act');
             targetSessionId = sessionId;
             // DON'T clear step messages - keep existing steps
           } else {
-            // Create new session
+            // Create new session - persist after we have session ID
+            console.log(`[CHAT] ACT MODE: Creating new session (shouldContinue=${shouldContinue}, sessionId=${sessionId})`);
             session = await analysisApi.createSession(text, selectedLlm, headless);
             setSessionId(session.id);
             targetSessionId = session.id;
+            // Persist user message now that we have a session
+            await persistMessage(targetSessionId, 'user', text, messageMode);
             // Clear old step messages when creating a new session
             setMessages((prev) => prev.filter((msg) => msg.type !== 'step'));
             lastStepCountRef.current = 0;
@@ -868,9 +887,6 @@ export function useChatSession(): UseChatSessionReturn {
 
           setCurrentSession(session);
           setSessionStatus(session.status);
-
-          // Persist user message to backend now that we have a session
-          await persistMessage(targetSessionId, 'user', text, messageMode);
 
           // Execute immediately (session should be in approved state for act mode continuation)
           if (session.status === 'approved' || session.status === 'plan_ready') {
@@ -1574,13 +1590,19 @@ export function useChatSession(): UseChatSessionReturn {
         }
       } else {
         // Use stored chat messages for timeline reconstruction
-        for (const msg of chatMessages) {
+        // Sort by sequence_number first to ensure correct order
+        const sortedMessages = [...chatMessages].sort((a, b) => a.sequence_number - b.sequence_number);
+
+        for (const msg of sortedMessages) {
+          // Use the original created_at timestamp from the database
+          const originalTimestamp = msg.created_at;
+
           if (msg.message_type === 'user') {
             timelineMessages.push(
               createTimelineMessage('user', {
                 content: msg.content || '',
                 mode: (msg.mode || 'plan') as ChatMode,
-              })
+              }, originalTimestamp)
             );
           } else if (msg.message_type === 'plan') {
             // Reconstruct plan message with current plan data for approval status
@@ -1591,19 +1613,19 @@ export function useChatSession(): UseChatSessionReturn {
                 planText: msg.content || session.plan?.plan_text || '',
                 planSteps,
                 status: session.plan?.approval_status === 'approved' ? 'approved' as const : 'pending' as const,
-              })
+              }, originalTimestamp)
             );
           } else if (msg.message_type === 'system') {
             timelineMessages.push(
               createTimelineMessage('system', {
                 content: msg.content || '',
-              })
+              }, originalTimestamp)
             );
           } else if (msg.message_type === 'error') {
             timelineMessages.push(
               createTimelineMessage('error', {
                 content: msg.content || '',
-              })
+              }, originalTimestamp)
             );
           }
           // Note: 'step' messages are handled separately from session.steps
@@ -1611,10 +1633,11 @@ export function useChatSession(): UseChatSessionReturn {
       }
 
       // Add steps (always from session.steps for accurate step data)
+      // Use the step's created_at timestamp to preserve order
       if (session.steps && session.steps.length > 0) {
         for (const step of session.steps) {
           timelineMessages.push(
-            createTimelineMessage('step', { step })
+            createTimelineMessage('step', { step }, step.created_at)
           );
         }
         lastStepCountRef.current = session.steps.length;
@@ -1650,6 +1673,23 @@ export function useChatSession(): UseChatSessionReturn {
           );
         }
       }
+
+      // Sort all timeline messages by timestamp to ensure correct order
+      // For messages with equal timestamps, maintain a logical ordering:
+      // user -> plan -> system -> step -> error
+      const typeOrder: Record<string, number> = {
+        'user': 0,
+        'plan': 1,
+        'system': 2,
+        'step': 3,
+        'error': 4,
+      };
+      timelineMessages.sort((a, b) => {
+        const timeDiff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+        if (timeDiff !== 0) return timeDiff;
+        // If timestamps are equal, sort by type priority
+        return (typeOrder[a.type] ?? 5) - (typeOrder[b.type] ?? 5);
+      });
 
       setMessages(timelineMessages);
 
