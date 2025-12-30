@@ -49,7 +49,9 @@ services:
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
       # LLM API Keys (set in Coolify UI)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_SECRET=${GEMINI_API_SECRET}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
+      - GOOGLE_SPEECH_API_KEY=${GOOGLE_SPEECH_API_KEY}
       # Celery Settings - use internal Redis port (6379)
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -145,3 +147,4 @@ networks:
   qa-browser-network:
     driver: bridge
     name: qa-browser-network
+    external: true

@@ -18,6 +18,7 @@ from app.routers.scripts import router as scripts_router, runs_router
 from app.routers.browser import router as browser_router
 from app.routers.discovery import router as discovery_router
 from app.routers.benchmark import router as benchmark_router
+from app.routers.speech import router as speech_router
 from app.services.browser_orchestrator import init_orchestrator, shutdown_orchestrator
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ app.include_router(runs_router)
 app.include_router(browser_router)
 app.include_router(discovery_router)
 app.include_router(benchmark_router)
+app.include_router(speech_router)
 
 # Mount static files for screenshots
 app.mount("/screenshots", StaticFiles(directory=settings.SCREENSHOTS_DIR), name="screenshots")

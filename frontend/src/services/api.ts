@@ -710,5 +710,28 @@ export const browserApi = {
   },
 };
 
+/**
+ * Speech API - Voice input transcription
+ */
+export const speechApi = {
+  /**
+   * Transcribe audio to text using Google Cloud Speech-to-Text.
+   * @param audioData Base64 encoded audio data (WebM/Opus format)
+   * @param languageCode BCP-47 language code (default: en-US)
+   */
+  async transcribe(audioData: string, languageCode: string = 'en-US'): Promise<{
+    transcript: string;
+    confidence: number;
+    is_final: boolean;
+  }> {
+    const response = await fetch(`${API_BASE}/api/speech/transcribe`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ audio_data: audioData, language_code: languageCode }),
+    });
+    return handleResponse(response);
+  },
+};
+
 export { ApiError };
 

@@ -182,3 +182,4 @@ now i want to create test script from the test case analaysis steps
 
 
 
+Goto https://cigclouds.com/demoit/login.php and login as demo and demo123. Go to main menu Create. Click on Purchase order sub menu item. Set the value Purchase Ledger as 'Purchase Account Credit'. Set the Select Party as 'Test Customer2'. Set Reference number as 1234. Set Narration Text as 'My test narration'. Set Product as 'Copper1'. Set Qty as 10. Set Rate as 11. Click on 'Create Purchase Order' button.

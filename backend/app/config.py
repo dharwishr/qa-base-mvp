@@ -21,6 +21,9 @@ class Settings(BaseSettings):
 	GEMINI_API_KEY: str = ""  # For plan generation
 	BROWSER_USE_API_KEY: str = ""  # For browser automation
 
+	# Google Cloud Speech-to-Text settings
+	GOOGLE_SPEECH_API_KEY: str = ""  # Google Cloud API key for Speech-to-Text
+
 	# Storage settings
 	SCREENSHOTS_DIR: str = str(Path(__file__).parent.parent / "data" / "screenshots")
 	LOGS_DIR: str = str(Path(__file__).parent.parent / "data" / "logs")

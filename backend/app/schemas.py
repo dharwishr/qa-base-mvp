@@ -556,3 +556,20 @@ class RecordingStatusResponse(BaseModel):
 	steps_recorded: int = 0
 	started_at: datetime | None = None
 	recording_mode: RecordingMode | None = None
+
+
+# ============================================
+# Speech-to-Text Schemas
+# ============================================
+
+class SpeechToTextRequest(BaseModel):
+	"""Request to transcribe audio to text."""
+	audio_data: str = Field(..., description="Base64 encoded audio data")
+	language_code: str = Field(default="en-US", description="Language code for transcription")
+
+
+class SpeechToTextResponse(BaseModel):
+	"""Response with transcription result."""
+	transcript: str
+	confidence: float
+	is_final: bool = True

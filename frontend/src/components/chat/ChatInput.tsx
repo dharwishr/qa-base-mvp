@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
-import { Send, FileText, Zap } from 'lucide-react';
+import { Send, FileText, Zap, Mic, Square, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ChatMode } from '@/types/chat';
+import { useVoiceInput } from '@/hooks/useVoiceInput';
 
 interface ChatInputProps {
   onSend: (message: string, mode: ChatMode) => void;
@@ -23,6 +24,26 @@ export default function ChatInput({
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Voice input hook
+  const {
+    isListening,
+    isProcessing,
+    error: voiceError,
+    isSupported: isVoiceSupported,
+    startListening,
+    stopListening,
+  } = useVoiceInput({
+    onTranscript: (text) => {
+      setInput((prev) => {
+        const trimmed = prev.trim();
+        return trimmed ? `${trimmed} ${text}` : text;
+      });
+    },
+    onError: (error) => {
+      console.error('Voice input error:', error);
+    },
+  });
+
   // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
@@ -34,7 +55,6 @@ export default function ChatInput({
     }
   }, [input]);
 
-  // Determine if input should be completely blocked
   const isBlocked = disabled || isExecuting;
 
   const handleSend = () => {
@@ -49,7 +69,6 @@ export default function ChatInput({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Block Enter key when executing or disabled
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (!isBlocked) {
@@ -58,7 +77,14 @@ export default function ChatInput({
     }
   };
 
-  // Dynamic placeholder based on mode and execution state
+  const handleMicClick = async () => {
+    if (isListening) {
+      await stopListening();
+    } else {
+      await startListening();
+    }
+  };
+
   const dynamicPlaceholder = isExecuting
     ? 'Waiting for execution to complete...'
     : mode === 'plan'
@@ -105,6 +131,22 @@ export default function ChatInput({
             ? 'Generate a plan first, then execute'
             : 'Execute actions directly'}
         </span>
+
+        {/* Listening indicator */}
+        {isListening && (
+          <div className="flex items-center gap-2 ml-auto text-red-500">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+            </span>
+            <span className="text-xs font-medium">Listening...</span>
+          </div>
+        )}
+
+        {/* Voice error indicator */}
+        {voiceError && !isListening && (
+          <span className="text-xs text-red-500 ml-auto">{voiceError}</span>
+        )}
       </div>
 
       {/* Input Area */}
@@ -121,6 +163,25 @@ export default function ChatInput({
             className="w-full resize-none rounded-xl border border-input bg-background px-4 py-3 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] max-h-[150px]"
           />
         </div>
+        {/* Mic button */}
+        {isVoiceSupported && (
+          <Button
+            size="icon"
+            variant={isListening ? "destructive" : "outline"}
+            onClick={handleMicClick}
+            disabled={isBlocked || isProcessing}
+            className="h-11 w-11 rounded-xl flex-shrink-0"
+            title={isListening ? "Stop recording" : "Start voice input"}
+          >
+            {isProcessing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isListening ? (
+              <Square className="h-4 w-4" />
+            ) : (
+              <Mic className="h-4 w-4" />
+            )}
+          </Button>
+        )}
         <Button
           size="icon"
           onClick={handleSend}
