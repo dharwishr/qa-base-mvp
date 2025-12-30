@@ -15,6 +15,7 @@ import {
   Check,
   X,
   SkipForward,
+  Trash2,
 } from 'lucide-react';
 import { SimpleActionRow } from '@/components/analysis/StepList';
 import StepFailureOptions from '@/components/analysis/StepFailureOptions';
@@ -48,6 +49,9 @@ interface ChatMessageProps {
   onSkipStep?: (stepNumber: number) => void;
   onContinueRunTillEnd?: () => void;
   currentExecutingStepNumber?: number | null;
+  // Delete step props
+  onDeleteStep?: (stepId: string, stepNumber: number) => void;
+  canDeleteSteps?: boolean;
 }
 
 function formatTime(timestamp: string): string {
@@ -251,6 +255,8 @@ function StepMessageCard({
   onSkipStep,
   onContinueRunTillEnd,
   currentExecutingStepNumber,
+  onDeleteStep,
+  canDelete = false,
 }: {
   message: StepMessage;
   onStepSelect?: (stepId: string) => void;
@@ -265,6 +271,8 @@ function StepMessageCard({
   onSkipStep?: (stepNumber: number) => void;
   onContinueRunTillEnd?: () => void;
   currentExecutingStepNumber?: number | null;
+  onDeleteStep?: (stepId: string, stepNumber: number) => void;
+  canDelete?: boolean;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showUndoHint, setShowUndoHint] = useState(false);
@@ -305,15 +313,21 @@ function StepMessageCard({
   if (simpleMode) {
     const actions = step.actions || []
 
-    // Skip steps without actions in simple mode
-    if (actions.length === 0) {
+    // Filter out file operation actions in simple mode
+    const filteredActions = actions.filter(action => {
+      const actionName = action.action_name?.toLowerCase() || '';
+      return !['replace_file', 'read_file', 'write_file'].includes(actionName);
+    });
+
+    // Skip steps without relevant actions in simple mode
+    if (filteredActions.length === 0) {
       return null;
     }
 
     return (
-      <div className="flex justify-start w-full" data-step-number={step.step_number}>
+      <div className="flex justify-start w-full group" data-step-number={step.step_number}>
         <div className="space-y-1.5 w-full">
-          {actions.map((action, idx) => {
+          {filteredActions.map((action, idx) => {
             const actionNumber = startingActionNumber + idx + 1;
             return (
               <div key={action.id || idx} className="flex items-start gap-2">
@@ -325,6 +339,21 @@ function StepMessageCard({
                     action={action}
                   />
                 </div>
+                {/* Delete button - only show on first action row, when canDelete */}
+                {idx === 0 && canDelete && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteStep?.(step.id, step.step_number);
+                    }}
+                    title="Delete step"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </div>
             );
           })}
@@ -372,9 +401,8 @@ function StepMessageCard({
             {isCurrentlyExecuting && <span className="ml-2 text-blue-600 font-medium animate-pulse">(Running...)</span>}
           </span>
           <Card
-            className={`border-l-4 cursor-pointer transition-all ${getBorderColor()} ${
-              isStepSkipped ? 'opacity-60' : ''
-            } ${isCurrentlyExecuting ? 'ring-2 ring-blue-300 bg-blue-50' : ''} ${isSelected && !isCurrentlyExecuting ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'}`}
+            className={`border-l-4 cursor-pointer transition-all ${getBorderColor()} ${isStepSkipped ? 'opacity-60' : ''
+              } ${isCurrentlyExecuting ? 'ring-2 ring-blue-300 bg-blue-50' : ''} ${isSelected && !isCurrentlyExecuting ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/30'}`}
             onClick={() => onStepSelect?.(step.id)}
           >
             <CardContent className="p-3 overflow-hidden">
@@ -517,6 +545,24 @@ function StepMessageCard({
                   onContinue={() => onContinueRunTillEnd?.()}
                 />
               )}
+
+              {/* Delete button - shown when canDelete is true and no failure options */}
+              {canDelete && !showFailureOptions && (
+                <div className="mt-2 pt-2 border-t flex justify-end">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteStep?.(step.id, step.step_number);
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3 mr-1" />
+                    Delete
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -575,6 +621,8 @@ export default function ChatMessage({
   onSkipStep,
   onContinueRunTillEnd,
   currentExecutingStepNumber,
+  onDeleteStep,
+  canDeleteSteps,
 }: ChatMessageProps) {
   switch (message.type) {
     case 'user':
@@ -605,6 +653,8 @@ export default function ChatMessage({
           onSkipStep={onSkipStep}
           onContinueRunTillEnd={onContinueRunTillEnd}
           currentExecutingStepNumber={currentExecutingStepNumber}
+          onDeleteStep={onDeleteStep}
+          canDelete={canDeleteSteps}
         />
       );
     case 'error':

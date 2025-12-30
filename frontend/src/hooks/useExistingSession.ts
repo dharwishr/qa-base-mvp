@@ -286,13 +286,18 @@ export function useExistingSession(): UseExistingSessionReturn {
       }
 
       setMessages(timelineMessages);
+
+      // Start browser polling to detect active browser session (for returning to running sessions)
+      if (!session.headless) {
+        startBrowserPolling(id);
+      }
     } catch (e) {
       console.error('Error loading session:', e);
       setError(e instanceof Error ? e.message : 'Failed to load session');
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [startBrowserPolling]);
 
   // Replay all steps in the session
   const replaySession = useCallback(async (startRecordingAfterReplay = false) => {

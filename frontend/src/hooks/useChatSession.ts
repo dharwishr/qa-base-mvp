@@ -16,6 +16,9 @@ import type {
   WSRunTillEndPaused,
   WSRunTillEndCompleted,
   WSStepSkipped,
+  WSExecutionPaused,
+  WSAllStopped,
+  ReplayResponse,
 } from '../types/analysis';
 import type {
   TimelineMessage,
@@ -59,6 +62,12 @@ interface BrowserSessionInfo {
   novncUrl?: string;
 }
 
+export interface ReplayFailure {
+  failedAtStep: number;
+  totalSteps: number;
+  errorMessage: string;
+}
+
 interface UseChatSessionReturn {
   // State
   messages: TimelineMessage[];
@@ -88,6 +97,10 @@ interface UseChatSessionReturn {
   runTillEndPaused: RunTillEndPausedState | null;
   skippedSteps: number[];
   currentExecutingStepNumber: number | null;
+  // Existing session state
+  isLoading: boolean;
+  isReplaying: boolean;
+  replayFailure: ReplayFailure | null;
 
   // Actions
   sendMessage: (text: string, messageMode: ChatMode) => Promise<void>;
@@ -103,6 +116,7 @@ interface UseChatSessionReturn {
   undoToStep: (targetStepNumber: number) => void;
   confirmUndo: () => Promise<void>;
   cancelUndo: () => void;
+  deleteStep: (stepId: string) => Promise<void>;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   setMode: (mode: ChatMode) => void;
@@ -114,6 +128,14 @@ interface UseChatSessionReturn {
   skipFailedStep: (stepNumber: number) => void;
   continueRunTillEnd: () => void;
   cancelRunTillEnd: () => void;
+  // Pause/Stop actions
+  pauseExecution: () => void;
+  stopAll: () => void;
+  // Existing session actions
+  loadExistingSession: (id: string) => Promise<void>;
+  replaySession: (startRecordingAfterReplay?: boolean) => Promise<void>;
+  forkFromStep: (stepNumber: number) => Promise<void>;
+  clearReplayFailure: () => void;
 }
 
 const POLL_INTERVAL = 2000;
@@ -153,6 +175,12 @@ export function useChatSession(): UseChatSessionReturn {
   const [runTillEndPaused, setRunTillEndPaused] = useState<RunTillEndPausedState | null>(null);
   const [skippedSteps, setSkippedSteps] = useState<number[]>([]);
   const [currentExecutingStepNumber, setCurrentExecutingStepNumber] = useState<number | null>(null);
+
+  // Existing session state
+  const [isLoading, setIsLoading] = useState(false);
+  const [isReplaying, setIsReplaying] = useState(false);
+  const [replayFailure, setReplayFailure] = useState<ReplayFailure | null>(null);
+  const startRecordingAfterReplayRef = useRef(false);
 
   // Keep recording ref in sync
   useEffect(() => {
@@ -379,6 +407,35 @@ export function useChatSession(): UseChatSessionReturn {
             setSkippedSteps(prev => [...prev, msg.step_number]);
             break;
           }
+
+          case 'execution_paused': {
+            const msg = message as WSExecutionPaused;
+            setIsExecuting(false);
+            setIsRunningTillEnd(false);
+            // Add system message to timeline
+            setMessages(prev => [
+              ...prev,
+              createTimelineMessage('system', {
+                content: msg.message || 'Execution paused. You can send new plan/act commands.',
+              }),
+            ]);
+            break;
+          }
+
+          case 'all_stopped': {
+            const msg = message as WSAllStopped;
+            setIsExecuting(false);
+            setIsRunningTillEnd(false);
+            setBrowserSession(null);
+            // Add system message
+            setMessages(prev => [
+              ...prev,
+              createTimelineMessage('system', {
+                content: msg.message || 'Execution and browser stopped. Re-initialize to continue.',
+              }),
+            ]);
+            break;
+          }
         }
       } catch (e) {
         console.error('Error parsing WebSocket message:', e);
@@ -525,6 +582,15 @@ export function useChatSession(): UseChatSessionReturn {
                   ...prev,
                   createTimelineMessage('system', { content: 'Browser session stopped due to inactivity' }),
                 ]);
+                // Persist message to backend so it shows when reopening session
+                try {
+                  await analysisApi.createMessage(currentSessionId, {
+                    message_type: 'system',
+                    content: 'Browser session stopped due to inactivity',
+                  });
+                } catch (persistError) {
+                  console.error('Error persisting browser inactivity message:', persistError);
+                }
               } catch (e) {
                 console.error('Error ending browser session due to inactivity:', e);
               }
@@ -1096,6 +1162,15 @@ export function useChatSession(): UseChatSessionReturn {
                 content: 'Browser session stopped due to inactivity',
               }),
             ]);
+            // Persist message to backend so it shows when reopening session
+            try {
+              await analysisApi.createMessage(sessionId, {
+                message_type: 'system',
+                content: 'Browser session stopped due to inactivity',
+              });
+            } catch (persistError) {
+              console.error('Error persisting browser inactivity message:', persistError);
+            }
           } catch (e) {
             console.error('Error ending browser session due to inactivity:', e);
           }
@@ -1205,6 +1280,56 @@ export function useChatSession(): UseChatSessionReturn {
   const cancelUndo = useCallback(() => {
     setUndoTargetStep(null);
   }, []);
+
+  // Delete a single step
+  const deleteStep = useCallback(async (stepId: string) => {
+    if (!sessionId) return;
+
+    try {
+      const response = await fetch(`${config.API_URL}/api/analysis/steps/${stepId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete step');
+      }
+
+      // Update local state: remove step and renumber remaining
+      setMessages((prev) => {
+        const stepMessages = prev.filter((m) => m.type === 'step');
+        const deletedIndex = stepMessages.findIndex((m) => m.type === 'step' && m.step.id === stepId);
+
+        if (deletedIndex === -1) return prev;
+
+        // Filter out the deleted step and renumber remaining steps
+        return prev.map((msg) => {
+          if (msg.type !== 'step') return msg;
+          if (msg.step.id === stepId) return null;
+          // Renumber: steps after deleted one get decremented
+          const currentIndex = stepMessages.findIndex((m) => m.type === 'step' && m.step.id === msg.step.id);
+          if (currentIndex > deletedIndex) {
+            return {
+              ...msg,
+              step: {
+                ...msg.step,
+                step_number: msg.step.step_number - 1,
+              },
+            };
+          }
+          return msg;
+        }).filter(Boolean) as TimelineMessage[];
+      });
+
+      // Update step count ref
+      lastStepCountRef.current = Math.max(0, lastStepCountRef.current - 1);
+    } catch (e) {
+      console.error('Error deleting step:', e);
+      setError(e instanceof Error ? e.message : 'Failed to delete step');
+    }
+  }, [sessionId]);
 
   // Confirm undo - actually performs the undo operation
   const confirmUndo = useCallback(async () => {
@@ -1381,6 +1506,331 @@ export function useChatSession(): UseChatSessionReturn {
     setRunTillEndPaused(null);
   }, [sessionId]);
 
+  // Pause AI execution (keeps browser alive)
+  const pauseExecution = useCallback(() => {
+    if (!sessionId) return;
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: 'pause_execution' }));
+    }
+  }, [sessionId]);
+
+  // Stop all execution and terminate browser session
+  const stopAll = useCallback(() => {
+    if (!sessionId) return;
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: 'stop_all' }));
+    }
+    setIsExecuting(false);
+    setIsRunningTillEnd(false);
+  }, [sessionId]);
+
+  // Load an existing session
+  const loadExistingSession = useCallback(async (id: string) => {
+    setIsLoading(true);
+    setError(null);
+    setMessages([]);
+    setReplayFailure(null);
+    lastStepCountRef.current = 0;
+
+    try {
+      // Fetch session AND chat messages in parallel
+      const [session, chatMessages] = await Promise.all([
+        analysisApi.getSession(id),
+        analysisApi.getMessages(id),
+      ]);
+
+      setSessionId(session.id);
+      setSessionStatus(session.status);
+      setCurrentSession(session);
+      setSelectedLlm(session.llm_model);
+      setHeadless(session.headless);
+
+      // Build timeline messages from session data
+      const timelineMessages: TimelineMessage[] = [];
+
+      // If no stored chat messages, reconstruct from session data (backward compatibility)
+      if (chatMessages.length === 0) {
+        // Add user message (original prompt)
+        timelineMessages.push(
+          createTimelineMessage('user', {
+            content: session.prompt,
+            mode: 'plan' as ChatMode,
+          })
+        );
+
+        // Add plan if exists
+        if (session.plan) {
+          const planSteps: PlanStep[] = session.plan.steps_json?.steps || [];
+          timelineMessages.push(
+            createTimelineMessage('plan', {
+              planId: session.id,
+              planText: session.plan.plan_text,
+              planSteps,
+              status: session.plan.approval_status === 'approved' ? 'approved' as const : 'pending' as const,
+            })
+          );
+        }
+      } else {
+        // Use stored chat messages for timeline reconstruction
+        for (const msg of chatMessages) {
+          if (msg.message_type === 'user') {
+            timelineMessages.push(
+              createTimelineMessage('user', {
+                content: msg.content || '',
+                mode: (msg.mode || 'plan') as ChatMode,
+              })
+            );
+          } else if (msg.message_type === 'plan') {
+            // Reconstruct plan message with current plan data for approval status
+            const planSteps: PlanStep[] = session.plan?.steps_json?.steps || [];
+            timelineMessages.push(
+              createTimelineMessage('plan', {
+                planId: session.id,
+                planText: msg.content || session.plan?.plan_text || '',
+                planSteps,
+                status: session.plan?.approval_status === 'approved' ? 'approved' as const : 'pending' as const,
+              })
+            );
+          } else if (msg.message_type === 'system') {
+            timelineMessages.push(
+              createTimelineMessage('system', {
+                content: msg.content || '',
+              })
+            );
+          } else if (msg.message_type === 'error') {
+            timelineMessages.push(
+              createTimelineMessage('error', {
+                content: msg.content || '',
+              })
+            );
+          }
+          // Note: 'step' messages are handled separately from session.steps
+        }
+      }
+
+      // Add steps (always from session.steps for accurate step data)
+      if (session.steps && session.steps.length > 0) {
+        for (const step of session.steps) {
+          timelineMessages.push(
+            createTimelineMessage('step', { step })
+          );
+        }
+        lastStepCountRef.current = session.steps.length;
+
+        // Select the last step
+        setSelectedStepId(session.steps[session.steps.length - 1].id);
+      }
+
+      // Add completion message based on status (only if not already in chat messages)
+      const hasCompletionMessage = chatMessages.some(
+        (msg) => msg.message_type === 'system' &&
+        (msg.content?.includes('completed') || msg.content?.includes('failed') || msg.content?.includes('stopped'))
+      );
+
+      if (!hasCompletionMessage) {
+        if (session.status === 'completed') {
+          timelineMessages.push(
+            createTimelineMessage('system', {
+              content: `Test completed successfully with ${session.steps?.length || 0} steps`,
+            })
+          );
+        } else if (session.status === 'failed') {
+          timelineMessages.push(
+            createTimelineMessage('system', {
+              content: 'Test execution failed',
+            })
+          );
+        } else if (session.status === 'stopped') {
+          timelineMessages.push(
+            createTimelineMessage('system', {
+              content: `Test stopped after ${session.steps?.length || 0} steps`,
+            })
+          );
+        }
+      }
+
+      setMessages(timelineMessages);
+
+      // For running sessions, connect WebSocket for real-time updates
+      if (['running', 'approved', 'executing'].includes(session.status)) {
+        setIsExecuting(true);
+        connectWebSocket(id);
+      }
+
+      // Start browser polling to detect active browser session (for returning to running sessions)
+      if (!session.headless) {
+        startBrowserPolling(id);
+      }
+    } catch (e) {
+      console.error('Error loading session:', e);
+      setError(e instanceof Error ? e.message : 'Failed to load session');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [connectWebSocket, startBrowserPolling]);
+
+  // Replay all steps in the session
+  const replaySession = useCallback(async (startRecordingAfterReplay = false) => {
+    if (!sessionId) return;
+
+    setIsReplaying(true);
+    setError(null);
+    setReplayFailure(null);
+    startRecordingAfterReplayRef.current = startRecordingAfterReplay;
+
+    setMessages((prev) => [
+      ...prev,
+      createTimelineMessage('system', {
+        content: startRecordingAfterReplay
+          ? 'Re-initiating session with recording... Starting browser and replaying steps.'
+          : 'Re-initiating session... Starting browser and replaying steps.',
+      }),
+    ]);
+
+    try {
+      const result: ReplayResponse = await analysisApi.replaySession(sessionId, headless);
+
+      if (result.success) {
+        setMessages((prev) => [
+          ...prev,
+          createTimelineMessage('system', {
+            content: result.user_message || `Successfully replayed all ${result.total_steps} steps.`,
+          }),
+        ]);
+
+        // Start browser polling if we have a browser session
+        if (result.browser_session_id) {
+          setBrowserSession({
+            id: result.browser_session_id,
+            liveViewUrl: `/browser/sessions/${result.browser_session_id}/view`,
+          });
+          startBrowserPolling(sessionId);
+
+          // Connect WebSocket for real-time updates
+          connectWebSocket(sessionId);
+
+          // Start recording if requested after successful replay
+          if (startRecordingAfterReplay) {
+            try {
+              await analysisApi.startRecording(sessionId, result.browser_session_id, 'playwright');
+              setIsRecording(true);
+              startPolling(sessionId); // Start polling to capture recorded steps
+              setMessages((prev) => [
+                ...prev,
+                createTimelineMessage('system', {
+                  content: 'Recording started. Your interactions will be captured as new test steps.',
+                }),
+              ]);
+            } catch (recordError) {
+              console.error('Error starting recording:', recordError);
+              setMessages((prev) => [
+                ...prev,
+                createTimelineMessage('error', {
+                  content: 'Failed to start recording, but browser is ready for interaction.',
+                }),
+              ]);
+            }
+          }
+        }
+      } else {
+        // Handle failure - show dialog for user choice
+        if (result.failed_at_step !== null) {
+          setReplayFailure({
+            failedAtStep: result.failed_at_step,
+            totalSteps: result.total_steps,
+            errorMessage: result.error_message || 'Replay failed',
+          });
+
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('error', {
+              content: result.user_message || `Replay failed at step ${result.failed_at_step}: ${result.error_message}`,
+            }),
+          ]);
+
+          // Still set browser session if available (for partial replay)
+          if (result.browser_session_id) {
+            setBrowserSession({
+              id: result.browser_session_id,
+              liveViewUrl: `/browser/sessions/${result.browser_session_id}/view`,
+            });
+            startBrowserPolling(sessionId);
+            connectWebSocket(sessionId);
+          }
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('error', {
+              content: result.error_message || 'Replay failed',
+            }),
+          ]);
+        }
+      }
+    } catch (e) {
+      console.error('Error replaying session:', e);
+      const errorMsg = e instanceof Error ? e.message : 'Failed to replay session';
+      setError(errorMsg);
+      setMessages((prev) => [
+        ...prev,
+        createTimelineMessage('error', {
+          content: errorMsg,
+        }),
+      ]);
+    } finally {
+      setIsReplaying(false);
+    }
+  }, [sessionId, headless, startBrowserPolling, connectWebSocket, startPolling]);
+
+  // Fork from a specific step (keep steps up to that point)
+  const forkFromStep = useCallback(async (stepNumber: number) => {
+    if (!sessionId || !currentSession) return;
+
+    setReplayFailure(null);
+    setMessages((prev) => [
+      ...prev,
+      createTimelineMessage('system', {
+        content: `Creating new test case from steps 1-${stepNumber}...`,
+      }),
+    ]);
+
+    try {
+      const result = await analysisApi.undoToStep(sessionId, stepNumber);
+
+      if (result.success) {
+        // Reload the session to get fresh data
+        await loadExistingSession(sessionId);
+        setMessages((prev) => [
+          ...prev,
+          createTimelineMessage('system', {
+            content: `Session updated to step ${stepNumber}. You can continue from here.`,
+          }),
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          createTimelineMessage('error', {
+            content: result.user_message || 'Failed to fork session',
+          }),
+        ]);
+      }
+    } catch (e) {
+      console.error('Error forking session:', e);
+      setMessages((prev) => [
+        ...prev,
+        createTimelineMessage('error', {
+          content: e instanceof Error ? e.message : 'Failed to fork session',
+        }),
+      ]);
+    }
+  }, [sessionId, currentSession, loadExistingSession]);
+
+  // Clear replay failure dialog
+  const clearReplayFailure = useCallback(() => {
+    setReplayFailure(null);
+  }, []);
+
   return {
     // State
     messages,
@@ -1410,6 +1860,10 @@ export function useChatSession(): UseChatSessionReturn {
     runTillEndPaused,
     skippedSteps,
     currentExecutingStepNumber,
+    // Existing session state
+    isLoading,
+    isReplaying,
+    replayFailure,
 
     // Actions
     sendMessage,
@@ -1425,6 +1879,7 @@ export function useChatSession(): UseChatSessionReturn {
     undoToStep,
     confirmUndo,
     cancelUndo,
+    deleteStep,
     startRecording,
     stopRecording,
     setMode,
@@ -1436,5 +1891,13 @@ export function useChatSession(): UseChatSessionReturn {
     skipFailedStep,
     continueRunTillEnd,
     cancelRunTillEnd,
+    // Pause/Stop actions
+    pauseExecution,
+    stopAll,
+    // Existing session actions
+    loadExistingSession,
+    replaySession,
+    forkFromStep,
+    clearReplayFailure,
   };
 }

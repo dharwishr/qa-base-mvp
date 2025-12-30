@@ -19,7 +19,7 @@ import aiohttp
 from sqlalchemy.orm import Session
 from starlette.websockets import WebSocket
 
-from app.models import ExecutionLog, TestSession, TestStep
+from app.models import ChatMessage, ExecutionLog, TestSession, TestStep
 from app.services.browser_orchestrator import (
     BrowserPhase,
     BrowserSession as OrchestratorSession,
@@ -125,6 +125,23 @@ class RunTillEndService:
         self._pw_steps: list[PlaywrightStep] = []
         self._step_to_pw_index: dict[int, int] = {}  # Maps step_number to PlaywrightStep indices
 
+    def _create_chat_message(self, content: str, msg_type: str = "system") -> None:
+        """Helper to create a chat message for the session."""
+        from sqlalchemy import func
+
+        max_seq = self.db.query(func.max(ChatMessage.sequence_number)).filter(
+            ChatMessage.session_id == self.session.id
+        ).scalar() or 0
+
+        msg = ChatMessage(
+            session_id=self.session.id,
+            message_type=msg_type,
+            content=content,
+            sequence_number=max_seq + 1
+        )
+        self.db.add(msg)
+        self.db.commit()
+
     async def execute(self) -> RunTillEndResult:
         """
         Execute all steps from start to finish.
@@ -156,6 +173,8 @@ class RunTillEndService:
             "type": "run_till_end_started",
             "total_steps": len(steps),
         })
+        # Persist message for session history
+        self._create_chat_message(f"Run Till End started: executing {len(steps)} steps...")
 
         # Find active browser session
         orchestrator = get_orchestrator()
@@ -235,6 +254,8 @@ class RunTillEndService:
                             "skipped_steps": self.state.skipped_steps,
                             "cancelled": True,
                         })
+                        # Persist cancellation message for session history
+                        self._create_chat_message("Run Till End cancelled")
                         return RunTillEndResult(
                             success=False,
                             total_steps=len(steps),
@@ -271,6 +292,9 @@ class RunTillEndService:
                             "error_message": step_result.error_message or "Step execution failed",
                             "options": ["auto_heal", "undo", "skip"],
                         })
+                        # Persist paused message for session history
+                        error_msg = step_result.error_message or "Step execution failed"
+                        self._create_chat_message(f"Run Till End paused at step {step_number}: {error_msg}", "error")
 
                         # Wait for user action (skip or continue)
                         self._continue_event.clear()
@@ -321,6 +345,9 @@ class RunTillEndService:
                 "completed_steps": completed_steps,
                 "skipped_steps": self.state.skipped_steps,
             })
+            # Persist completion message for session history
+            skipped_text = f" ({len(self.state.skipped_steps)} skipped)" if self.state.skipped_steps else ""
+            self._create_chat_message(f"Run Till End completed: {completed_steps}/{len(steps)} steps successful{skipped_text}")
 
             # Log completion
             self.db.add(ExecutionLog(
@@ -351,6 +378,8 @@ class RunTillEndService:
                 "skipped_steps": self.state.skipped_steps,
                 "error_message": str(e),
             })
+            # Persist error message for session history
+            self._create_chat_message(f"Run Till End failed: {str(e)}", "error")
 
             return RunTillEndResult(
                 success=False,
@@ -401,6 +430,8 @@ class RunTillEndService:
             "type": "step_skipped",
             "step_number": step_number,
         })
+        # Persist skip message for session history
+        self._create_chat_message(f"Step {step_number} skipped")
 
         # Log skip action
         self.db.add(ExecutionLog(

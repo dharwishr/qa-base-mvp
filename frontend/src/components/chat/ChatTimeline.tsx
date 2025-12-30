@@ -20,6 +20,9 @@ interface ChatTimelineProps {
   onSkipStep?: (stepNumber: number) => void;
   onContinueRunTillEnd?: () => void;
   currentExecutingStepNumber?: number | null;
+  // Delete step props
+  onDeleteStep?: (stepId: string, stepNumber: number) => void;
+  canDeleteSteps?: boolean;
 }
 
 export default function ChatTimeline({
@@ -38,6 +41,8 @@ export default function ChatTimeline({
   onSkipStep,
   onContinueRunTillEnd,
   currentExecutingStepNumber,
+  onDeleteStep,
+  canDeleteSteps,
 }: ChatTimelineProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -143,6 +148,8 @@ export default function ChatTimeline({
             onSkipStep={onSkipStep}
             onContinueRunTillEnd={onContinueRunTillEnd}
             currentExecutingStepNumber={currentExecutingStepNumber}
+            onDeleteStep={onDeleteStep}
+            canDeleteSteps={canDeleteSteps}
           />
         );
       })}

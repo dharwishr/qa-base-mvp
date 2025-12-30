@@ -48,7 +48,7 @@ export interface TestPlan {
 
 export type LlmModel = 'browser-use-llm' | 'gemini-2.0-flash' | 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3.0-flash' | 'gemini-3.0-pro' | 'gemini-2.5-computer-use';
 
-export type SessionStatus = 'pending_plan' | 'plan_ready' | 'approved' | 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
+export type SessionStatus = 'pending_plan' | 'plan_ready' | 'approved' | 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'paused';
 
 export interface TestSession {
   id: string;
@@ -181,6 +181,18 @@ export interface WSStepSkipped {
   step_number: number;
 }
 
+// Pause/Stop WebSocket messages
+export interface WSExecutionPaused {
+  type: 'execution_paused';
+  step_number: number;
+  message: string;
+}
+
+export interface WSAllStopped {
+  type: 'all_stopped';
+  message: string;
+}
+
 export type WSMessage =
   | WSStepStarted
   | WSStepCompleted
@@ -194,7 +206,9 @@ export type WSMessage =
   | WSRunTillEndProgress
   | WSRunTillEndPaused
   | WSRunTillEndCompleted
-  | WSStepSkipped;
+  | WSStepSkipped
+  | WSExecutionPaused
+  | WSAllStopped;
 
 // Chat message types
 export type ChatMessageType = 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system';

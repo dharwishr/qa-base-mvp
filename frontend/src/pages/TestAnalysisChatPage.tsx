@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play, Pause, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
 import LiveBrowserView from '@/components/LiveBrowserView';
 import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
-import { useChatSession } from '@/hooks/useChatSession';
+import DeleteStepDialog from '@/components/analysis/DeleteStepDialog';
+import { useChatSession, type ReplayFailure } from '@/hooks/useChatSession';
 import { getScreenshotUrl, scriptsApi } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
 import type { QueueFailure } from '@/types/chat';
@@ -93,8 +94,68 @@ function QueueFailureDialog({
   );
 }
 
+// Replay failure dialog component
+function ReplayFailureDialog({
+  failure,
+  onForkFromStep,
+  onCancel,
+}: {
+  failure: ReplayFailure;
+  onForkFromStep: (stepNumber: number) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-background rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-4 py-3 bg-amber-500/10 border-b">
+          <AlertCircle className="h-5 w-5 text-amber-600" />
+          <h3 className="font-semibold text-amber-600">Replay Failed</h3>
+          <button
+            onClick={onCancel}
+            className="ml-auto p-1 hover:bg-amber-500/10 rounded"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Replay failed at step {failure.failedAtStep} of {failure.totalSteps}:
+          </p>
+          <div className="bg-muted/50 rounded p-3 text-sm font-mono">
+            {failure.errorMessage}
+          </div>
+
+          <p className="text-sm text-muted-foreground">
+            You can continue from the last successful step ({failure.failedAtStep - 1})
+            or dismiss this dialog to manually handle the situation.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2 px-4 py-3 bg-muted/20 border-t">
+          <Button variant="outline" size="sm" onClick={onCancel}>
+            Dismiss
+          </Button>
+          {failure.failedAtStep > 1 && (
+            <Button
+              size="sm"
+              onClick={() => onForkFromStep(failure.failedAtStep - 1)}
+            >
+              Continue from Step {failure.failedAtStep - 1}
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TestAnalysisChatPage() {
   const navigate = useNavigate();
+  const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>();
   const {
     messages,
     sessionId,
@@ -115,7 +176,6 @@ export default function TestAnalysisChatPage() {
     sendMessage,
     approvePlan,
     rejectPlan,
-    stopExecution,
     resetSession,
     endBrowserSession,
     clearQueueAndProceed,
@@ -124,6 +184,7 @@ export default function TestAnalysisChatPage() {
     undoToStep,
     confirmUndo,
     cancelUndo,
+    deleteStep,
     startRecording,
     stopRecording,
     isRecording,
@@ -139,12 +200,36 @@ export default function TestAnalysisChatPage() {
     startRunTillEnd,
     skipFailedStep,
     continueRunTillEnd,
-    cancelRunTillEnd,
+    // Pause/Stop
+    pauseExecution,
+    stopAll,
+    // Existing session
+    isLoading,
+    isReplaying,
+    replayFailure,
+    loadExistingSession,
+    replaySession,
+    forkFromStep,
+    clearReplayFailure,
   } = useChatSession();
+
+  // Load existing session from URL parameter
+  useEffect(() => {
+    if (urlSessionId && urlSessionId !== sessionId) {
+      loadExistingSession(urlSessionId);
+    }
+  }, [urlSessionId, sessionId, loadExistingSession]);
 
   // Determine if "Generate Script" button should show
   const canGenerateScript = sessionStatus === 'completed' &&
     messages.some(m => m.type === 'step');
+
+  // Determine if "Re-initiate Browser" button should show
+  const canReinitieBrowser = sessionStatus &&
+    ['completed', 'failed', 'stopped'].includes(sessionStatus) &&
+    totalSteps > 0 &&
+    !browserSession &&
+    !isReplaying;
 
   // Get session title
   const sessionTitle = currentSession?.title || 'Test Analysis';
@@ -155,6 +240,8 @@ export default function TestAnalysisChatPage() {
   const [isInteractionEnabled, setIsInteractionEnabled] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
   const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null);
+  const [stepToDelete, setStepToDelete] = useState<{ id: string; stepNumber: number } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Check for existing script linked to this session
   useEffect(() => {
@@ -214,11 +301,37 @@ export default function TestAnalysisChatPage() {
   };
 
   // Loading text for timeline
-  const loadingText = isGeneratingPlan
-    ? 'Generating test plan...'
-    : isExecuting
-      ? 'Executing test...'
-      : '';
+  const loadingText = isLoading
+    ? 'Loading session...'
+    : isReplaying
+      ? 'Replaying steps...'
+      : isGeneratingPlan
+        ? 'Generating test plan...'
+        : isExecuting
+          ? 'Executing test...'
+          : '';
+
+  // Can delete steps when not busy
+  const canDeleteSteps = !isExecuting && !isRunningTillEnd && !isRecording;
+
+  // Handle delete step request (opens confirmation dialog)
+  const handleDeleteStepRequest = (stepId: string, stepNumber: number) => {
+    setStepToDelete({ id: stepId, stepNumber });
+  };
+
+  // Confirm delete step
+  const handleConfirmDelete = async () => {
+    if (!stepToDelete) return;
+    setIsDeleting(true);
+    await deleteStep(stepToDelete.id);
+    setIsDeleting(false);
+    setStepToDelete(null);
+  };
+
+  // Cancel delete step
+  const handleCancelDelete = () => {
+    setStepToDelete(null);
+  };
 
   return (
     <div
@@ -239,11 +352,24 @@ export default function TestAnalysisChatPage() {
             {sessionTitle}
           </h2>
           <div className="flex items-center gap-1">
-            {isExecuting && (
+            {/* Pause Button - Shows when AI is executing or Run Till End is active */}
+            {(isExecuting || isRunningTillEnd) && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={pauseExecution}
+                className="h-7 text-xs border-amber-500 text-amber-600 hover:bg-amber-50"
+              >
+                <Pause className="h-3 w-3 mr-1" />
+                Pause
+              </Button>
+            )}
+            {/* Stop Button - Stops everything including browser */}
+            {(isExecuting || isRunningTillEnd || browserSession) && (
               <Button
                 size="sm"
                 variant="destructive"
-                onClick={stopExecution}
+                onClick={stopAll}
                 className="h-7 text-xs"
               >
                 <Square className="h-3 w-3 mr-1" />
@@ -261,7 +387,7 @@ export default function TestAnalysisChatPage() {
                 Reset
               </Button>
             )}
-            {totalSteps > 0 && !isExecuting && !isRunningTillEnd && (
+            {totalSteps > 0 && !isExecuting && !isRunningTillEnd && browserSession && (
               <Button
                 size="sm"
                 variant="default"
@@ -272,15 +398,17 @@ export default function TestAnalysisChatPage() {
                 Run Till End
               </Button>
             )}
-            {isRunningTillEnd && (
+            {/* Re-initiate Browser - for completed/stopped sessions without active browser */}
+            {canReinitieBrowser && (
               <Button
                 size="sm"
-                variant="destructive"
-                onClick={cancelRunTillEnd}
+                variant="default"
+                onClick={() => replaySession(false)}
+                disabled={isReplaying}
                 className="h-7 text-xs"
               >
-                <Square className="h-3 w-3 mr-1" />
-                Cancel
+                <RefreshCw className={`h-3 w-3 mr-1 ${isReplaying ? 'animate-spin' : ''}`} />
+                {isReplaying ? 'Starting...' : 'Re-initiate Browser'}
               </Button>
             )}
             {linkedScript ? (
@@ -413,7 +541,7 @@ export default function TestAnalysisChatPage() {
         {/* Chat Timeline */}
         <ChatTimeline
           messages={messages}
-          isLoading={isGeneratingPlan || (isExecuting && messages.filter(m => m.type === 'step').length === 0)}
+          isLoading={isLoading || isReplaying || isGeneratingPlan || (isExecuting && messages.filter(m => m.type === 'step').length === 0)}
           loadingText={loadingText}
           onApprove={approvePlan}
           onReject={rejectPlan}
@@ -427,6 +555,8 @@ export default function TestAnalysisChatPage() {
           onSkipStep={skipFailedStep}
           onContinueRunTillEnd={continueRunTillEnd}
           currentExecutingStepNumber={currentExecutingStepNumber}
+          onDeleteStep={handleDeleteStepRequest}
+          canDeleteSteps={canDeleteSteps}
         />
 
         {/* Chat Input */}
@@ -434,7 +564,7 @@ export default function TestAnalysisChatPage() {
           onSend={sendMessage}
           mode={mode}
           onModeChange={setMode}
-          disabled={isGeneratingPlan || isPlanPending || isRunningTillEnd}
+          disabled={isLoading || isReplaying || isGeneratingPlan || isPlanPending || isRunningTillEnd}
           isExecuting={isExecuting}
           placeholder={
             isRunningTillEnd
@@ -546,6 +676,25 @@ export default function TestAnalysisChatPage() {
           isLoading={isUndoing}
           onConfirm={confirmUndo}
           onCancel={cancelUndo}
+        />
+      )}
+
+      {/* Delete Step Confirmation Dialog */}
+      {stepToDelete !== null && (
+        <DeleteStepDialog
+          stepNumber={stepToDelete.stepNumber}
+          isLoading={isDeleting}
+          onConfirm={handleConfirmDelete}
+          onCancel={handleCancelDelete}
+        />
+      )}
+
+      {/* Replay Failure Dialog */}
+      {replayFailure && (
+        <ReplayFailureDialog
+          failure={replayFailure}
+          onForkFromStep={forkFromStep}
+          onCancel={clearReplayFailure}
         />
       )}
     </div>

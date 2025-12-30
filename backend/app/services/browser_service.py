@@ -14,7 +14,7 @@ from fastapi import WebSocket
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import StepAction, TestPlan, TestSession, TestStep
+from app.models import ChatMessage, StepAction, TestPlan, TestSession, TestStep
 from app.schemas import StepActionResponse, TestStepResponse, WSCompleted, WSError, WSStepCompleted, WSStepStarted
 from app.services.browser_orchestrator import (
 	get_orchestrator,
@@ -32,6 +32,33 @@ logger = logging.getLogger(__name__)
 
 # Flag to enable/disable remote browser orchestration
 USE_REMOTE_BROWSER = True
+
+
+class StopExecutionException(Exception):
+	"""Raised when execution is stopped by user (pause or stop)."""
+	pass
+
+
+# Service registry to track active BrowserService instances
+_active_browser_services: dict[str, "BrowserService"] = {}
+
+
+def register_browser_service(session_id: str, service: "BrowserService") -> None:
+	"""Register an active BrowserService for a session."""
+	_active_browser_services[session_id] = service
+	logger.info(f"Registered BrowserService for session {session_id}")
+
+
+def get_active_browser_service(session_id: str) -> "BrowserService | None":
+	"""Get the active BrowserService for a session."""
+	return _active_browser_services.get(session_id)
+
+
+def unregister_browser_service(session_id: str) -> None:
+	"""Unregister a BrowserService for a session."""
+	if session_id in _active_browser_services:
+		del _active_browser_services[session_id]
+		logger.info(f"Unregistered BrowserService for session {session_id}")
 
 
 def get_llm_for_model(llm_model: str) -> "BaseChatModel":
@@ -73,6 +100,7 @@ class BrowserService:
 		).scalar()
 		self.current_step_number = max_step or 0
 		self.browser_session_id: str | None = None  # Remote browser session ID
+		self._stop_requested = False  # Flag for graceful stop (pause/stop)
 
 	async def send_ws_message(self, message: dict[str, Any]) -> None:
 		"""Send a message through the WebSocket."""
@@ -81,8 +109,33 @@ class BrowserService:
 		except Exception as e:
 			logger.error(f"Error sending WebSocket message: {e}")
 
+	def request_stop(self) -> None:
+		"""Request graceful stop after current step completes."""
+		self._stop_requested = True
+		logger.info(f"Stop requested for session {self.session.id}")
+
+	def _create_chat_message(self, content: str, msg_type: str = "system") -> None:
+		"""Helper to create a chat message for the session."""
+		max_seq = self.db.query(func.max(ChatMessage.sequence_number)).filter(
+			ChatMessage.session_id == self.session.id
+		).scalar() or 0
+
+		msg = ChatMessage(
+			session_id=self.session.id,
+			message_type=msg_type,
+			content=content,
+			sequence_number=max_seq + 1
+		)
+		self.db.add(msg)
+		self.db.commit()
+
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
+		# Check if stop was requested - raise exception to gracefully exit
+		if self._stop_requested:
+			logger.info(f"Stop requested, halting execution at step {self.current_step_number + 1}")
+			raise StopExecutionException("Execution paused by user")
+
 		self.current_step_number += 1
 		logger.info(f"Step {self.current_step_number} started")
 
@@ -232,6 +285,9 @@ class BrowserService:
 		"""Execute the test plan using browser-use."""
 		browser_session = None
 		remote_session: OrchestratorSession | None = None
+
+		# Register this service for pause/stop control
+		register_browser_service(str(self.session.id), self)
 
 		try:
 			# Update session status
@@ -389,8 +445,27 @@ class BrowserService:
 					total_steps=len(history.history),
 				).model_dump()
 			)
+			# Persist completion message for session history
+			if success:
+				self._create_chat_message(f"Test completed successfully with {len(history.history)} steps")
+			else:
+				self._create_chat_message("Test execution failed", "error")
 
 			logger.info(f"Test execution completed. Success: {success}, Steps: {len(history.history)}")
+
+		except StopExecutionException:
+			# User requested pause - don't mark as failed, set to paused
+			logger.info(f"Execution paused by user for session {self.session.id}")
+			self.session.status = "paused"
+			self.db.commit()
+
+			await self.send_ws_message({
+				"type": "execution_paused",
+				"step_number": self.current_step_number,
+				"message": "Execution paused. You can send new plan/act commands.",
+			})
+			# Persist paused message for session history
+			self._create_chat_message("Execution paused. You can send new plan/act commands.")
 
 		except Exception as e:
 			logger.error(f"Error executing test: {e}")
@@ -398,9 +473,13 @@ class BrowserService:
 			self.db.commit()
 
 			await self.send_ws_message(WSError(message=str(e)).model_dump())
+			# Persist error message for session history
+			self._create_chat_message(f"Execution error: {str(e)}", "error")
 			raise
 
 		finally:
+			# Unregister this service
+			unregister_browser_service(str(self.session.id))
 			# Clean up local browser session ONLY if headless (no live view)
 			# For remote sessions (non-headless), keep browser alive for reuse
 			if use_headless and browser_session:
@@ -438,6 +517,21 @@ class BrowserServiceSync:
 		).scalar()
 		self.current_step_number = max_step or 0
 		self.browser_session_id: str | None = None  # Remote browser session ID
+
+	def _create_chat_message(self, content: str, msg_type: str = "system") -> None:
+		"""Helper to create a chat message for the session."""
+		max_seq = self.db.query(func.max(ChatMessage.sequence_number)).filter(
+			ChatMessage.session_id == self.session.id
+		).scalar() or 0
+
+		msg = ChatMessage(
+			session_id=self.session.id,
+			message_type=msg_type,
+			content=content,
+			sequence_number=max_seq + 1
+		)
+		self.db.add(msg)
+		self.db.commit()
 
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
@@ -670,6 +764,12 @@ class BrowserServiceSync:
 			self.session.status = "completed" if success else "failed"
 			self.db.commit()
 
+			# Persist completion message for session history
+			if success:
+				self._create_chat_message(f"Test completed successfully with {len(history.history)} steps")
+			else:
+				self._create_chat_message("Test execution failed", "error")
+
 			logger.info(f"Test execution completed. Success: {success}, Steps: {len(history.history)}")
 
 			return {
@@ -682,6 +782,8 @@ class BrowserServiceSync:
 			logger.error(f"Error executing test: {e}")
 			self.session.status = "failed"
 			self.db.commit()
+			# Persist error message for session history
+			self._create_chat_message(f"Execution error: {str(e)}", "error")
 			raise
 
 		finally:

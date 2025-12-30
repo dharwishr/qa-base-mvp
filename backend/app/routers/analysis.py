@@ -224,6 +224,10 @@ async def create_session(
 		plan = await generate_plan(db, session)
 		db.refresh(session)
 
+		# Persist the plan as a chat message so it shows when reopening the session
+		create_plan_message(db, session.id, plan.plan_text, plan.id)
+		db.commit()
+
 		# Pre-warm browser session in background if not headless (saves 2-5s on approval)
 		if not request.headless:
 			logger.info(f"[PREWARM] Spawning browser pre-warm task for session: {session.id}")
@@ -322,6 +326,10 @@ async def continue_session(
 			plan = await generate_plan(db, session, task_prompt=new_task_prompt)
 			logger.info(f"Generated plan with {len(plan.steps_json.get('steps', []))} steps")
 			db.refresh(session)
+
+			# Persist the plan as a chat message so it shows when reopening the session
+			create_plan_message(db, session.id, plan.plan_text, plan.id)
+			db.commit()
 		except Exception as e:
 			logger.error(f"Error generating continuation plan: {e}")
 			session.status = "failed"
@@ -346,6 +354,11 @@ async def continue_session(
 		)
 		db.add(plan)
 		session.status = "approved"
+		db.commit()
+		db.refresh(plan)  # Refresh to get the generated ID
+
+		# Persist the plan as a chat message so it shows when reopening the session
+		create_plan_message(db, session.id, plan.plan_text, plan.id)
 		db.commit()
 
 	db.refresh(session)
@@ -559,6 +572,10 @@ async def stop_execution(
 		session.status = "stopped"
 		db.commit()
 
+		# Persist message for session history
+		create_system_message(db, session_id, "Execution stopped")
+		db.commit()
+
 		return StopResponse(status="stopped", message="Test execution stopped successfully")
 	except Exception as e:
 		logger.error(f"Error stopping task for session {session_id}: {e}")
@@ -758,7 +775,15 @@ async def undo_to_step(
 
 	try:
 		result = await do_undo(db, session, request.target_step_number)
-		
+
+		# Persist result message for session history
+		if result.success:
+			create_system_message(db, session_id, f"Undone to step {result.actual_step_number}. {result.steps_removed} steps removed, {result.steps_replayed} replayed.")
+		else:
+			error_msg = result.error_message or "Unknown error"
+			create_system_message(db, session_id, f"Undo failed: {error_msg}")
+		db.commit()
+
 		return UndoResponse(
 			success=result.success,
 			target_step_number=result.target_step_number,
@@ -772,6 +797,9 @@ async def undo_to_step(
 		)
 	except Exception as e:
 		logger.error(f"Undo failed for session {session_id}: {e}")
+		# Persist error message for session history
+		create_system_message(db, session_id, f"Undo failed: {str(e)}")
+		db.commit()
 		raise HTTPException(status_code=500, detail=f"Undo failed: {str(e)}")
 
 
@@ -809,9 +837,21 @@ async def replay_session(
 
 	headless = request.headless if request else False
 
+	# Persist starting message for session history
+	create_system_message(db, session_id, "Re-initiating session...")
+	db.commit()
+
 	try:
 		result = await do_replay(db, session, headless=headless)
-		
+
+		# Persist result message for session history
+		if result.success:
+			create_system_message(db, session_id, f"Session re-initiated successfully. {result.steps_replayed}/{result.total_steps} steps replayed.")
+		else:
+			error_msg = result.error_message or "Unknown error"
+			create_system_message(db, session_id, f"Re-initiation failed at step {result.failed_at_step}: {error_msg}")
+		db.commit()
+
 		return ReplaySessionResponse(
 			success=result.success,
 			total_steps=result.total_steps,
@@ -824,6 +864,9 @@ async def replay_session(
 		)
 	except Exception as e:
 		logger.error(f"Replay failed for session {session_id}: {e}")
+		# Persist error message for session history
+		create_system_message(db, session_id, f"Re-initiation failed: {str(e)}")
+		db.commit()
 		raise HTTPException(status_code=500, detail=f"Replay failed: {str(e)}")
 
 
@@ -896,6 +939,10 @@ async def start_recording(
 
 		state = await recording_service.start()
 
+		# Persist message for session history
+		create_system_message(db, session_id, f"Recording started ({recording_mode} mode)")
+		db.commit()
+
 		return RecordingStatusResponse(
 			is_recording=True,
 			session_id=session_id,
@@ -942,6 +989,11 @@ async def stop_recording(
 
 	try:
 		state = await recording.stop()
+
+		# Persist message for session history
+		create_system_message(db, session_id, f"Recording stopped. {state.steps_recorded} steps recorded.")
+		db.commit()
+
 		return RecordingStatusResponse(
 			is_recording=False,
 			session_id=session_id,
@@ -1107,6 +1159,25 @@ def create_system_message(db: Session, session_id: str, content: str) -> None:
 		session_id=session_id,
 		message_type="system",
 		content=content,
+		sequence_number=max_seq + 1
+	)
+	db.add(msg)
+
+
+def create_plan_message(db: Session, session_id: str, plan_text: str, plan_id: str) -> None:
+	"""Helper to create a plan message for a session."""
+	from sqlalchemy import func
+	from app.models import ChatMessage
+
+	max_seq = db.query(func.max(ChatMessage.sequence_number)).filter(
+		ChatMessage.session_id == session_id
+	).scalar() or 0
+
+	msg = ChatMessage(
+		session_id=session_id,
+		message_type="plan",
+		content=plan_text,
+		plan_id=plan_id,
 		sequence_number=max_seq + 1
 	)
 	db.add(msg)
@@ -1290,12 +1361,21 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 						await websocket.send_json(WSError(message="No plan found for session").model_dump())
 						continue
 
-					# Start execution
+					# Start execution in background task so WebSocket can continue receiving commands
 					logger.info(f"Starting test execution for session {session_id}")
 					from app.services.browser_service import execute_test
 
-					await execute_test(db, session, session.plan, websocket)
-					break
+					async def run_execution():
+						try:
+							await execute_test(db, session, session.plan, websocket)
+						except Exception as e:
+							logger.error(f"Execution error for session {session_id}: {e}")
+							try:
+								await websocket.send_json(WSError(message=str(e)).model_dump())
+							except Exception:
+								pass
+
+					execution_task = asyncio.create_task(run_execution())
 
 				elif command == "ping":
 					await websocket.send_json({"type": "pong"})
@@ -1315,7 +1395,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 						# For now, we just acknowledge the command
 
 				elif command == "run_till_end":
-					# Start Run Till End execution
+					# Start Run Till End execution in background task
 					from app.services.run_till_end_service import (
 						RunTillEndService,
 						register_service,
@@ -1331,11 +1411,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 					service = RunTillEndService(db, session, send_ws_message)
 					register_service(session_id, service)
 
-					try:
-						result = await service.execute()
-						logger.info(f"Run Till End completed for session {session_id}: {result}")
-					finally:
-						unregister_service(session_id)
+					async def run_till_end_task():
+						try:
+							result = await service.execute()
+							logger.info(f"Run Till End completed for session {session_id}: {result}")
+						except Exception as e:
+							logger.error(f"Run Till End error for session {session_id}: {e}")
+						finally:
+							unregister_service(session_id)
+
+					asyncio.create_task(run_till_end_task())
 
 				elif command == "skip_step":
 					# Skip a failed step during Run Till End
@@ -1379,6 +1464,80 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 						await websocket.send_json(
 							WSError(message="No active Run Till End execution").model_dump()
 						)
+
+				elif command == "pause_execution":
+					# Pause AI execution (but keep browser alive)
+					logger.info(f"Received pause_execution command for session {session_id}")
+					from app.services.browser_service import get_active_browser_service
+					from app.services.run_till_end_service import get_active_service as get_rte_service
+
+					# Stop BrowserService execution
+					browser_service = get_active_browser_service(session_id)
+					if browser_service:
+						browser_service.request_stop()
+						logger.info(f"Pause requested for BrowserService session {session_id}")
+					else:
+						logger.info(f"No active BrowserService found for session {session_id}")
+
+					# Also cancel Run Till End if active
+					rte_service = get_rte_service(session_id)
+					if rte_service:
+						await rte_service.cancel()
+						logger.info(f"Cancelled Run Till End for session {session_id}")
+					else:
+						logger.info(f"No active Run Till End service found for session {session_id}")
+
+				elif command == "stop_all":
+					# Stop execution AND terminate browser session
+					logger.info(f"Received stop_all command for session {session_id}")
+					from app.services.browser_service import get_active_browser_service
+					from app.services.run_till_end_service import get_active_service as get_rte_service
+
+					# Stop BrowserService execution
+					browser_service = get_active_browser_service(session_id)
+					if browser_service:
+						browser_service.request_stop()
+						logger.info(f"Stop requested for BrowserService session {session_id}")
+					else:
+						logger.info(f"No active BrowserService found for session {session_id}")
+
+					# Cancel Run Till End if active
+					rte_service = get_rte_service(session_id)
+					if rte_service:
+						await rte_service.cancel()
+						logger.info(f"Cancelled Run Till End for session {session_id}")
+
+					# Terminate browser session
+					orchestrator = get_orchestrator()
+					browser_stopped = False
+					if orchestrator:
+						sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+						logger.info(f"Found {len(sessions)} browser sessions, looking for test_session_id={session_id}")
+						for browser_session in sessions:
+							logger.info(f"Checking browser session {browser_session.id}, test_session_id={browser_session.test_session_id}")
+							if str(browser_session.test_session_id) == session_id:
+								await orchestrator.stop_session(browser_session.id)
+								logger.info(f"Stopped browser session {browser_session.id}")
+								browser_stopped = True
+								break
+						if not browser_stopped:
+							logger.info(f"No browser session found for test session {session_id}")
+
+					# Update session status
+					db.refresh(session)
+					session.status = "stopped"
+					db.commit()
+					logger.info(f"Session {session_id} status updated to 'stopped'")
+
+					# Persist message for session history
+					create_system_message(db, session_id, "Execution and browser stopped. Re-initialize to continue.")
+					db.commit()
+
+					# Notify frontend
+					await websocket.send_json({
+						"type": "all_stopped",
+						"message": "Execution and browser session terminated. Re-initialize to continue.",
+					})
 
 			except WebSocketDisconnect:
 				logger.info(f"WebSocket disconnected for session {session_id}")

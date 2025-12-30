@@ -10,7 +10,7 @@ import Results from "./pages/test-generation/Results"
 import TestAnalysisChatPage from "./pages/TestAnalysisChatPage"
 import TestCases from "./pages/TestCases"
 import SessionDetail from "./pages/SessionDetail"
-import ExistingSessionPage from "./pages/ExistingSessionPage"
+// ExistingSessionPage is now unified into TestAnalysisChatPage
 import Scripts from "./pages/Scripts"
 import ScriptDetail from "./pages/ScriptDetail"
 import RunDetail from "./pages/RunDetail"
@@ -40,7 +40,7 @@ function App() {
             <Route path="/test-generation/type/:method" element={<TypeSelection />} />
             <Route path="/test-generation/results" element={<Results />} />
             <Route path="/test-analysis" element={<TestAnalysisChatPage />} />
-            <Route path="/test-analysis/:sessionId" element={<ExistingSessionPage />} />
+            <Route path="/test-analysis/:sessionId" element={<TestAnalysisChatPage />} />
             <Route path="/test-cases" element={<TestCases />} />
             <Route path="/test-cases/:sessionId" element={<SessionDetail />} />
             <Route path="/scripts" element={<Scripts />} />

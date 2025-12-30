@@ -77,9 +77,9 @@ export function SimpleActionRow({ action, onTextUpdate }: SimpleActionRowProps) 
     // Get the text value - could be in different fields depending on the source
     const textValue = isTypeTextAction
         ? (action.action_params?.text as string) ||
-          (action.action_params?.value as string) ||
-          (action.action_params?.input as string) ||
-          null
+        (action.action_params?.value as string) ||
+        (action.action_params?.input as string) ||
+        null
         : null
 
     // Get XPath and CSS selector from action params
@@ -104,9 +104,9 @@ export function SimpleActionRow({ action, onTextUpdate }: SimpleActionRowProps) 
     const isSelectAction = ['select', 'select_option', 'dropdown'].includes(action.action_name?.toLowerCase() || '')
     const selectedOption = isSelectAction
         ? (action.action_params?.option as string) ||
-          (action.action_params?.value as string) ||
-          (action.action_params?.text as string) ||
-          null
+        (action.action_params?.value as string) ||
+        (action.action_params?.text as string) ||
+        null
         : null
 
     return (
@@ -325,12 +325,19 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                     // Simple Mode: Show actions directly as compact rows with sequential numbering
                     if (simpleMode) {
                         const actions = step.actions || []
-                        if (actions.length === 0) {
-                            return null // Skip steps without actions in simple mode
+
+                        // Filter out file operation actions in simple mode
+                        const filteredActions = actions.filter(action => {
+                            const actionName = action.action_name?.toLowerCase() || '';
+                            return !['replace_file', 'read_file', 'write_file'].includes(actionName);
+                        });
+
+                        if (filteredActions.length === 0) {
+                            return null // Skip steps without relevant actions in simple mode
                         }
                         return (
                             <div key={step.id} className="space-y-1.5">
-                                {actions.map((action, actionIdx) => {
+                                {filteredActions.map((action, actionIdx) => {
                                     const handleTextUpdate = async (newText: string) => {
                                         const updatedAction = await analysisApi.updateActionText(action.id, newText)
                                         onActionUpdate?.(String(step.id), updatedAction)
@@ -488,9 +495,9 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                                                             const isTypeTextAction = ['type_text', 'input_text', 'type', 'input', 'fill'].includes(action.action_name?.toLowerCase() || '')
                                                             const textValue = isTypeTextAction
                                                                 ? (action.action_params?.text as string) ||
-                                                                  (action.action_params?.value as string) ||
-                                                                  (action.action_params?.input as string) ||
-                                                                  null
+                                                                (action.action_params?.value as string) ||
+                                                                (action.action_params?.input as string) ||
+                                                                null
                                                                 : null
 
                                                             const handleTextUpdate = async (newText: string) => {
