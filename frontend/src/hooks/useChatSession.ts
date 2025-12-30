@@ -732,6 +732,12 @@ export function useChatSession(): UseChatSessionReturn {
             ]);
             setIsPlanPending(true);
             setPendingPlanId(session.id);
+
+            // Pre-connect WebSocket so it's ready when user approves (saves 100-300ms)
+            if (!headless) {
+              console.log('[WS] Pre-connecting WebSocket during plan review');
+              connectWebSocket(session.id);
+            }
           } else {
             setMessages((prev) => [
               ...prev,
@@ -930,20 +936,28 @@ export function useChatSession(): UseChatSessionReturn {
 
         setIsExecuting(true);
 
-        // Connect WebSocket and send start command for real-time updates
-        connectWebSocket(sessionId);
+        // Check if WebSocket is already connected (from early connection during plan review)
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          // Already connected - send start immediately (no delay needed)
+          console.log('[WS] WebSocket already connected, sending start immediately');
+          wsRef.current.send(JSON.stringify({ command: 'start' }));
+        } else {
+          // Not connected - connect and wait (with reduced delay)
+          console.log('[WS] Connecting WebSocket for execution');
+          connectWebSocket(sessionId);
 
-        // Wait for WebSocket to connect, then send start or fall back to REST
-        setTimeout(() => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ command: 'start' }));
-          } else {
-            // Fallback to REST API + polling
-            analysisApi.startExecution(sessionId).then(() => {
-              startPolling(sessionId);
-            });
-          }
-        }, 500);
+          // Wait for WebSocket to connect, then send start or fall back to REST
+          setTimeout(() => {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({ command: 'start' }));
+            } else {
+              // Fallback to REST API + polling
+              analysisApi.startExecution(sessionId).then(() => {
+                startPolling(sessionId);
+              });
+            }
+          }, 200); // Reduced from 500ms since we only need connection time
+        }
 
         // Start browser polling if not headless
         if (!headless) {

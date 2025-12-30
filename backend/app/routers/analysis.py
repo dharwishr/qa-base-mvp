@@ -39,6 +39,7 @@ from app.schemas import (
 	WSInitialState,
 )
 from app.services.plan_service import generate_plan
+from app.services.browser_orchestrator import get_orchestrator, BrowserPhase
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,32 @@ async def update_session_title_async(session_id: str, prompt: str, llm_model: st
 		logger.error(f"[TITLE_UPDATE] Failed to update session title: {e}", exc_info=True)
 
 
+async def prewarm_browser_session_async(session_id: str, headless: bool) -> None:
+	"""Background task to pre-warm browser session after plan generation."""
+	if headless:
+		return  # Headless uses local browser, no pre-warming needed
+
+	logger.info(f"[PREWARM] Starting browser pre-warm for session: {session_id}")
+	try:
+		orchestrator = get_orchestrator()
+
+		# Check if session already has a browser
+		existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+		if any(s.test_session_id == session_id for s in existing_sessions):
+			logger.info(f"[PREWARM] Browser session already exists for {session_id}")
+			return
+
+		# Create pre-warmed session
+		browser_session = await orchestrator.create_session(
+			phase=BrowserPhase.ANALYSIS,
+			test_session_id=session_id,
+		)
+		logger.info(f"[PREWARM] Browser session pre-warmed for {session_id}: browser_id={browser_session.id}")
+	except Exception as e:
+		logger.warning(f"[PREWARM] Failed to pre-warm browser for {session_id}: {e}")
+		# Don't raise - pre-warming is best-effort
+
+
 @router.get("/sessions", response_model=list[TestSessionListResponse])
 async def list_sessions(
 	db: Session = Depends(get_db),
@@ -196,6 +223,14 @@ async def create_session(
 	try:
 		plan = await generate_plan(db, session)
 		db.refresh(session)
+
+		# Pre-warm browser session in background if not headless (saves 2-5s on approval)
+		if not request.headless:
+			logger.info(f"[PREWARM] Spawning browser pre-warm task for session: {session.id}")
+			asyncio.create_task(prewarm_browser_session_async(
+				session_id=session.id,
+				headless=request.headless
+			))
 	except Exception as e:
 		logger.error(f"Error generating plan: {e}")
 		session.status = "failed"

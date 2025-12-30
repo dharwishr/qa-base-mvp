@@ -97,6 +97,11 @@ class BrowserService:
 	async def on_step_end(self, agent: "Agent") -> None:
 		"""Called when a step ends. Save step data to DB and send to WebSocket."""
 		try:
+			# Touch browser session to prevent cleanup during long executions
+			if self.browser_session_id:
+				orchestrator = get_orchestrator()
+				await orchestrator.touch_session(self.browser_session_id)
+
 			# Get the latest history item
 			if not agent.history.history:
 				return
@@ -259,17 +264,40 @@ class BrowserService:
 					orchestrator = get_orchestrator()
 
 					# FIRST: Check if browser session already exists for this test session
-					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+					# Include non-active sessions to detect pre-warming in progress
+					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS, active_only=False)
 					existing_session = next(
 						(s for s in existing_sessions if s.test_session_id == self.session.id),
 						None
 					)
+
+					if existing_session:
+						# Session found - check if it's ready or still pre-warming
+						if existing_session.status in (BrowserSessionStatus.PENDING, BrowserSessionStatus.STARTING):
+							# Pre-warming in progress - wait for it to complete
+							logger.info(f"Found pre-warming browser session {existing_session.id}, waiting for it to be ready...")
+							wait_start = asyncio.get_event_loop().time()
+							max_wait = 30  # Wait up to 30 seconds for pre-warm to complete
+							while existing_session.status in (BrowserSessionStatus.PENDING, BrowserSessionStatus.STARTING):
+								if asyncio.get_event_loop().time() - wait_start > max_wait:
+									logger.warning(f"Timeout waiting for pre-warmed session {existing_session.id}, creating new one")
+									existing_session = None
+									break
+								await asyncio.sleep(0.5)
+								# Refresh session status
+								existing_session = orchestrator._sessions.get(existing_session.id)
+								if not existing_session:
+									logger.warning(f"Pre-warming session disappeared, creating new one")
+									break
 
 					if existing_session and existing_session.cdp_url:
 						# REUSE existing browser session
 						logger.info(f"Reusing existing browser session: {existing_session.id}, CDP: {existing_session.cdp_url}")
 						remote_session = existing_session
 						self.browser_session_id = existing_session.id
+
+						# Touch session to prevent cleanup during execution
+						await orchestrator.touch_session(existing_session.id)
 
 						# Connect to existing browser via CDP
 						browser_session = BrowserSession(
@@ -419,6 +447,11 @@ class BrowserServiceSync:
 	async def on_step_end(self, agent: "Agent") -> None:
 		"""Called when a step ends. Save step data to DB."""
 		try:
+			# Touch browser session to prevent cleanup during long executions
+			if self.browser_session_id:
+				orchestrator = get_orchestrator()
+				await orchestrator.touch_session(self.browser_session_id)
+
 			# Get the latest history item
 			if not agent.history.history:
 				return
@@ -548,17 +581,40 @@ class BrowserServiceSync:
 					orchestrator = get_orchestrator()
 
 					# FIRST: Check if browser session already exists for this test session
-					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+					# Include non-active sessions to detect pre-warming in progress
+					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS, active_only=False)
 					existing_session = next(
 						(s for s in existing_sessions if s.test_session_id == self.session.id),
 						None
 					)
+
+					if existing_session:
+						# Session found - check if it's ready or still pre-warming
+						if existing_session.status in (BrowserSessionStatus.PENDING, BrowserSessionStatus.STARTING):
+							# Pre-warming in progress - wait for it to complete
+							logger.info(f"Found pre-warming browser session {existing_session.id}, waiting for it to be ready...")
+							wait_start = asyncio.get_event_loop().time()
+							max_wait = 30  # Wait up to 30 seconds for pre-warm to complete
+							while existing_session.status in (BrowserSessionStatus.PENDING, BrowserSessionStatus.STARTING):
+								if asyncio.get_event_loop().time() - wait_start > max_wait:
+									logger.warning(f"Timeout waiting for pre-warmed session {existing_session.id}, creating new one")
+									existing_session = None
+									break
+								await asyncio.sleep(0.5)
+								# Refresh session status
+								existing_session = orchestrator._sessions.get(existing_session.id)
+								if not existing_session:
+									logger.warning(f"Pre-warming session disappeared, creating new one")
+									break
 
 					if existing_session and existing_session.cdp_url:
 						# REUSE existing browser session
 						logger.info(f"Reusing existing browser session: {existing_session.id}, CDP: {existing_session.cdp_url}")
 						remote_session = existing_session
 						self.browser_session_id = existing_session.id
+
+						# Touch session to prevent cleanup during execution
+						await orchestrator.touch_session(existing_session.id)
 
 						# Connect to existing browser via CDP
 						browser_session = BrowserSession(
@@ -675,17 +731,38 @@ class BrowserServiceSync:
 					orchestrator = get_orchestrator()
 
 					# Check if browser session already exists for this test session
-					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
+					# Include non-active sessions to detect pre-warming in progress
+					existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS, active_only=False)
 					existing_session = next(
 						(s for s in existing_sessions if s.test_session_id == self.session.id),
 						None
 					)
+
+					if existing_session:
+						# Session found - check if it's ready or still pre-warming
+						if existing_session.status in (BrowserSessionStatus.PENDING, BrowserSessionStatus.STARTING):
+							# Pre-warming in progress - wait for it to complete
+							logger.info(f"Act mode - Found pre-warming browser session {existing_session.id}, waiting...")
+							wait_start = asyncio.get_event_loop().time()
+							max_wait = 30
+							while existing_session.status in (BrowserSessionStatus.PENDING, BrowserSessionStatus.STARTING):
+								if asyncio.get_event_loop().time() - wait_start > max_wait:
+									logger.warning(f"Act mode - Timeout waiting for pre-warmed session {existing_session.id}")
+									existing_session = None
+									break
+								await asyncio.sleep(0.5)
+								existing_session = orchestrator._sessions.get(existing_session.id)
+								if not existing_session:
+									break
 
 					if existing_session and existing_session.cdp_url:
 						# REUSE existing browser session
 						logger.info(f"Act mode - Reusing existing browser session: {existing_session.id}")
 						remote_session = existing_session
 						self.browser_session_id = existing_session.id
+
+						# Touch session to prevent cleanup during execution
+						await orchestrator.touch_session(existing_session.id)
 
 						# Connect to existing browser via CDP
 						browser_session = BrowserSession(
