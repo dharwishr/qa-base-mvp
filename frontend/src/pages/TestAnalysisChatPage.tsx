@@ -8,7 +8,7 @@ import LiveBrowserView from '@/components/LiveBrowserView';
 import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
 import DeleteStepDialog from '@/components/analysis/DeleteStepDialog';
 import { useChatSession, type ReplayFailure } from '@/hooks/useChatSession';
-import { getScreenshotUrl, scriptsApi } from '@/services/api';
+import { getScreenshotUrl, scriptsApi, analysisApi } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
 import type { QueueFailure } from '@/types/chat';
 import type { PlaywrightScript } from '@/types/scripts';
@@ -333,6 +333,19 @@ export default function TestAnalysisChatPage() {
     setStepToDelete(null);
   };
 
+  // Handle action update (xpath, css_selector, text)
+  const handleActionUpdate = async (
+    _stepId: string,
+    actionId: string,
+    updates: { element_xpath?: string; css_selector?: string; text?: string }
+  ) => {
+    await analysisApi.updateAction(actionId, updates);
+    // Refresh the session to get updated action data
+    if (sessionId) {
+      await loadExistingSession(sessionId);
+    }
+  };
+
   return (
     <div
       className={`flex h-[calc(100vh-3.5rem)] bg-background ${isResizing ? 'cursor-col-resize select-none' : ''
@@ -347,11 +360,24 @@ export default function TestAnalysisChatPage() {
         style={{ width: `${leftWidth}px` }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/20">
-          <h2 className="font-semibold text-sm line-clamp-2 leading-tight" title={sessionTitle}>
-            {sessionTitle}
-          </h2>
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col px-4 py-3 border-b bg-muted/20 gap-2">
+          {/* Row 1: Title and Settings */}
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-sm line-clamp-2 leading-tight" title={sessionTitle}>
+              {sessionTitle}
+            </h2>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowSettings(!showSettings)}
+              className="h-7 w-7 p-0"
+            >
+              <Settings2 className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Row 2: Action Buttons */}
+          <div className="flex items-center gap-2 flex-wrap">
             {/* Pause Button - Shows when AI is executing or Run Till End is active */}
             {(isExecuting || isRunningTillEnd) && (
               <Button
@@ -445,14 +471,6 @@ export default function TestAnalysisChatPage() {
                 Generate Script
               </Button>
             )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowSettings(!showSettings)}
-              className="h-7 w-7 p-0"
-            >
-              <Settings2 className="h-4 w-4" />
-            </Button>
           </div>
         </div>
 
@@ -557,6 +575,8 @@ export default function TestAnalysisChatPage() {
           currentExecutingStepNumber={currentExecutingStepNumber}
           onDeleteStep={handleDeleteStepRequest}
           canDeleteSteps={canDeleteSteps}
+          sessionStatus={sessionStatus ?? undefined}
+          onActionUpdate={handleActionUpdate}
         />
 
         {/* Chat Input */}

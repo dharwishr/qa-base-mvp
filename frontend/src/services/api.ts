@@ -430,6 +430,25 @@ export const analysisApi = {
     );
     return handleResponse<StepAction>(response);
   },
+
+  /**
+   * Update step action fields (xpath, css_selector, text).
+   * Only allowed when session is in post-execution state (completed, failed, stopped, paused).
+   */
+  async updateAction(
+    actionId: string,
+    updates: { element_xpath?: string; css_selector?: string; text?: string }
+  ): Promise<StepAction> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/actions/${actionId}`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(updates),
+      }
+    );
+    return handleResponse<StepAction>(response);
+  },
 };
 
 /**

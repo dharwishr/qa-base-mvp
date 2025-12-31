@@ -35,6 +35,13 @@ class UpdateStepActionTextRequest(BaseModel):
 	text: str = Field(..., description="The new text value for the action")
 
 
+class UpdateStepActionRequest(BaseModel):
+	"""Request to update step action fields (xpath, css_selector, text)."""
+	element_xpath: str | None = Field(None, description="XPath selector for the element")
+	css_selector: str | None = Field(None, description="CSS selector for the element")
+	text: str | None = Field(None, description="Input text (for type_text actions only)")
+
+
 # Response schemas
 class StepActionResponse(BaseModel):
 	id: str

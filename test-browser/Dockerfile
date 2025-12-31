@@ -53,6 +53,10 @@ COPY scripts/start-cors-proxy.sh /usr/local/bin/
 # Make scripts executable
 RUN chmod +x /usr/local/bin/*.sh
 
+# Create Fluxbox config directory and copy init file to disable toolbar
+RUN mkdir -p /root/.fluxbox
+COPY fluxbox-init /root/.fluxbox/init
+
 # Environment variables
 ENV DISPLAY=:99
 ENV SCREEN_WIDTH=1920

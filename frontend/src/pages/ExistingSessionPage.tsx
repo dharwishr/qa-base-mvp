@@ -191,19 +191,32 @@ export default function ExistingSessionPage() {
         style={{ width: `${leftWidth}px` }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/20">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate('/test-cases')}
-              className="p-1 hover:bg-muted rounded transition-colors"
+        <div className="flex flex-col px-4 py-3 border-b bg-muted/20 gap-2">
+          {/* Row 1: Title and Settings */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate('/test-cases')}
+                className="p-1 hover:bg-muted rounded transition-colors"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <h2 className="font-semibold text-sm line-clamp-2 leading-tight" title={sessionTitle}>
+                {sessionTitle}
+              </h2>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowSettings(!showSettings)}
+              className="h-7 w-7 p-0"
             >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <h2 className="font-semibold text-sm line-clamp-2 leading-tight" title={sessionTitle}>
-              {sessionTitle}
-            </h2>
+              <Settings2 className="h-4 w-4" />
+            </Button>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Row 2: Action Buttons */}
+          <div className="flex items-center gap-2 flex-wrap">
             {isExecuting && (
               <Button
                 size="sm"
@@ -256,14 +269,6 @@ export default function ExistingSessionPage() {
                 {isGeneratingScript ? 'Generating...' : 'Generate Script'}
               </Button>
             )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowSettings(!showSettings)}
-              className="h-7 w-7 p-0"
-            >
-              <Settings2 className="h-4 w-4" />
-            </Button>
           </div>
         </div>
 
@@ -296,8 +301,8 @@ export default function ExistingSessionPage() {
                   onClick={() => setHeadless(true)}
                   disabled={isExecuting || isReplaying}
                   className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${headless
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                     } disabled:opacity-50`}
                 >
                   <EyeOff className="h-3.5 w-3.5" />
@@ -308,8 +313,8 @@ export default function ExistingSessionPage() {
                   onClick={() => setHeadless(false)}
                   disabled={isExecuting || isReplaying}
                   className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${!headless
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                     } disabled:opacity-50`}
                 >
                   <Monitor className="h-3.5 w-3.5" />
@@ -326,8 +331,8 @@ export default function ExistingSessionPage() {
                   type="button"
                   onClick={() => setSimpleMode(false)}
                   className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${!simpleMode
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                     }`}
                 >
                   <LayoutList className="h-3.5 w-3.5" />
@@ -337,8 +342,8 @@ export default function ExistingSessionPage() {
                   type="button"
                   onClick={() => setSimpleMode(true)}
                   className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${simpleMode
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                     }`}
                 >
                   <List className="h-3.5 w-3.5" />

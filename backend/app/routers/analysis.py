@@ -34,6 +34,7 @@ from app.schemas import (
 	UndoRequest,
 	UndoResponse,
 	UpdateSessionTitleRequest,
+	UpdateStepActionRequest,
 	UpdateStepActionTextRequest,
 	WSError,
 	WSInitialState,
@@ -739,6 +740,86 @@ async def update_action_text(
 	db.refresh(action)
 
 	logger.info(f"Updated action {action_id} text to: {request.text[:50]}...")
+	return action
+
+
+@router.patch("/actions/{action_id}", response_model=StepActionResponse)
+async def update_action(
+	action_id: str,
+	request: UpdateStepActionRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Update editable fields for a step action.
+
+	Editable fields:
+	- element_xpath: XPath selector
+	- css_selector: CSS selector (stored in action_params)
+	- text: Input text for type_text actions (stored in action_params)
+
+	Only allowed when session is in post-execution state:
+	completed, failed, stopped, paused
+	"""
+	from app.models import StepAction
+	from sqlalchemy.orm.attributes import flag_modified
+
+	# Fetch action
+	action = db.query(StepAction).filter(StepAction.id == action_id).first()
+	if not action:
+		raise HTTPException(status_code=404, detail="Action not found")
+
+	# Get the step and session to check status
+	step = db.query(TestStep).filter(TestStep.id == action.step_id).first()
+	if not step:
+		raise HTTPException(status_code=404, detail="Step not found")
+
+	session = db.query(TestSession).filter(TestSession.id == step.session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Validate session status - only allow edits in post-execution states
+	allowed_statuses = ('completed', 'failed', 'stopped', 'paused')
+	if session.status not in allowed_statuses:
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot edit actions when session is in '{session.status}' status. "
+				   f"Editing only allowed in: {', '.join(allowed_statuses)}"
+		)
+
+	# Update element_xpath if provided
+	if request.element_xpath is not None:
+		action.element_xpath = request.element_xpath
+
+	# Update action_params for css_selector and text
+	params = action.action_params or {}
+
+	if request.css_selector is not None:
+		params["css_selector"] = request.css_selector
+		# Also update legacy field name if present
+		if "selector" in params:
+			params["selector"] = request.css_selector
+
+	if request.text is not None:
+		# Verify this is a text input action
+		text_action_types = ['type_text', 'input_text', 'type', 'input', 'fill']
+		if action.action_name.lower() not in text_action_types:
+			raise HTTPException(
+				status_code=400,
+				detail=f"Cannot update text for action type: {action.action_name}. "
+					   f"Text editing only allowed for: {', '.join(text_action_types)}"
+			)
+		params["text"] = request.text
+
+	action.action_params = params
+	flag_modified(action, "action_params")
+
+	db.commit()
+	db.refresh(action)
+
+	logger.info(
+		f"Updated action {action_id}: xpath={request.element_xpath}, "
+		f"css_selector={request.css_selector}, text={request.text[:20] if request.text else None}..."
+	)
 	return action
 
 

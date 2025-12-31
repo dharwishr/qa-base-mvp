@@ -1,9 +1,10 @@
-import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot, MousePointer, Type, Globe, Eye, Play, ArrowUp, ChevronUp, AlertTriangle } from "lucide-react"
+import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot, MousePointer, Type, Globe, Eye, Play, ArrowUp, ChevronUp, AlertTriangle, Pencil } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useState } from "react"
-import type { TestStep as AnalysisTestStep, StepAction } from "@/types/analysis"
+import type { TestStep as AnalysisTestStep, StepAction, SessionStatus } from "@/types/analysis"
 import { analysisApi } from "@/services/api"
 import EditableText from "./EditableText"
+import ActionEditDialog from "./ActionEditDialog"
 
 // Extended TestStep interface for display
 export interface TestStep extends Omit<Partial<AnalysisTestStep>, 'id'> {
@@ -21,7 +22,11 @@ interface StepListProps {
     onDeleteStep?: (stepId: string) => Promise<void>
     isExecuting?: boolean
     simpleMode?: boolean
+    sessionStatus?: SessionStatus
 }
+
+// Session statuses that allow editing
+const EDITABLE_STATUSES: SessionStatus[] = ['completed', 'failed', 'stopped', 'paused']
 
 // Action type to icon mapping
 export function getActionIcon(actionName: string) {
@@ -62,13 +67,14 @@ export function getActionIcon(actionName: string) {
 }
 
 // Simple action row component for compact view
-// Simple action row component for compact view
 export interface SimpleActionRowProps {
     action: StepAction
     onTextUpdate?: (newText: string) => Promise<void>
+    onEdit?: () => void
+    canEdit?: boolean
 }
 
-export function SimpleActionRow({ action, onTextUpdate }: SimpleActionRowProps) {
+export function SimpleActionRow({ action, onTextUpdate, onEdit, canEdit }: SimpleActionRowProps) {
     const [selectorOpen, setSelectorOpen] = useState(false)
 
     // Check if this is a text input action (various naming conventions)
@@ -174,6 +180,20 @@ export function SimpleActionRow({ action, onTextUpdate }: SimpleActionRowProps) 
                     )}
                 </div>
 
+                {/* Edit Button */}
+                {canEdit && onEdit && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            onEdit()
+                        }}
+                        className="flex-shrink-0 p-1 hover:bg-blue-50 rounded transition-colors"
+                        title="Edit action"
+                    >
+                        <Pencil className="h-4 w-4 text-blue-500" />
+                    </button>
+                )}
+
                 {/* Selector Dropdown Toggle */}
                 {hasSelectorsOrParams && (
                     <button
@@ -236,10 +256,21 @@ function StatusIcon({ status }: { status?: string }) {
     }
 }
 
-export default function StepList({ steps, selectedStepId, onStepSelect, onClear, onActionUpdate, onDeleteStep, isExecuting = false, simpleMode = false }: StepListProps) {
+export default function StepList({ steps, selectedStepId, onStepSelect, onClear, onActionUpdate, onDeleteStep, isExecuting = false, simpleMode = false, sessionStatus }: StepListProps) {
     const [expandedSteps, setExpandedSteps] = useState<Set<string | number>>(new Set())
     const [stepToDelete, setStepToDelete] = useState<TestStep | null>(null)
     const [isDeleting, setIsDeleting] = useState(false)
+    const [editingAction, setEditingAction] = useState<{ action: StepAction; stepId: string } | null>(null)
+
+    // Check if editing is allowed based on session status
+    const canEdit = sessionStatus ? EDITABLE_STATUSES.includes(sessionStatus) : false
+
+    // Handle action update (xpath, css_selector, text)
+    const handleActionUpdate = async (updates: { element_xpath?: string; css_selector?: string; text?: string }) => {
+        if (!editingAction) return
+        const updatedAction = await analysisApi.updateAction(editingAction.action.id, updates)
+        onActionUpdate?.(editingAction.stepId, updatedAction)
+    }
 
     // Calculate action numbers for simple mode (sequential across all steps)
     const getActionNumber = (stepIndex: number, actionIndex: number): number => {
@@ -352,6 +383,8 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                                                 <SimpleActionRow
                                                     action={action}
                                                     onTextUpdate={handleTextUpdate}
+                                                    canEdit={canEdit}
+                                                    onEdit={() => setEditingAction({ action, stepId: String(step.id) })}
                                                 />
                                             </div>
                                             {onDeleteStep && (
@@ -500,49 +533,96 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                                                                 null
                                                                 : null
 
+                                                            // Get xpath and css_selector for inline editing
+                                                            const xpathValue = action.element_xpath || null
+                                                            const cssValue = (action.action_params?.css_selector as string) ||
+                                                                (action.action_params?.cssSelector as string) ||
+                                                                (action.action_params?.selector as string) ||
+                                                                null
+
                                                             const handleTextUpdate = async (newText: string) => {
                                                                 const updatedAction = await analysisApi.updateActionText(action.id, newText)
+                                                                onActionUpdate?.(String(step.id), updatedAction)
+                                                            }
+
+                                                            const handleXpathUpdate = async (newXpath: string) => {
+                                                                const updatedAction = await analysisApi.updateAction(action.id, { element_xpath: newXpath })
+                                                                onActionUpdate?.(String(step.id), updatedAction)
+                                                            }
+
+                                                            const handleCssSelectorUpdate = async (newCss: string) => {
+                                                                const updatedAction = await analysisApi.updateAction(action.id, { css_selector: newCss })
                                                                 onActionUpdate?.(String(step.id), updatedAction)
                                                             }
 
                                                             return (
                                                                 <div
                                                                     key={action.id || idx}
-                                                                    className={`text-xs p-2 rounded flex items-center gap-2 flex-wrap ${action.result_success ? 'bg-green-50' :
+                                                                    className={`text-xs p-2 rounded space-y-1 ${action.result_success ? 'bg-green-50' :
                                                                         action.result_error ? 'bg-red-50' : 'bg-muted/50'
                                                                         }`}
                                                                 >
-                                                                    {action.result_success !== null && (
-                                                                        action.result_success ? (
-                                                                            <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
-                                                                        ) : (
-                                                                            <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
-                                                                        )
-                                                                    )}
-                                                                    <span className="font-mono">{action.action_name}</span>
-                                                                    {action.element_name && (
-                                                                        <span className="text-muted-foreground">
-                                                                            → {action.element_name}
-                                                                        </span>
-                                                                    )}
-                                                                    {/* Display and allow editing of text for type_text actions */}
-                                                                    {isTypeTextAction && textValue !== null && (
-                                                                        <EditableText
-                                                                            value={textValue}
-                                                                            onSave={handleTextUpdate}
-                                                                            className="ml-1"
-                                                                        />
-                                                                    )}
-                                                                    {isUserAction && (
-                                                                        <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-red-100 text-red-600">
-                                                                            <Circle className="h-1.5 w-1.5 fill-red-500" />
-                                                                            recorded
-                                                                        </span>
-                                                                    )}
-                                                                    {action.result_error && (
-                                                                        <span className="text-red-600 truncate">
-                                                                            {action.result_error}
-                                                                        </span>
+                                                                    {/* Action header row */}
+                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                        {action.result_success !== null && (
+                                                                            action.result_success ? (
+                                                                                <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
+                                                                            ) : (
+                                                                                <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                                                                            )
+                                                                        )}
+                                                                        <span className="font-mono">{action.action_name}</span>
+                                                                        {action.element_name && (
+                                                                            <span className="text-muted-foreground">
+                                                                                → {action.element_name}
+                                                                            </span>
+                                                                        )}
+                                                                        {/* Display and allow editing of text for type_text actions */}
+                                                                        {isTypeTextAction && textValue !== null && (
+                                                                            <EditableText
+                                                                                value={textValue}
+                                                                                onSave={handleTextUpdate}
+                                                                                className="ml-1"
+                                                                                disabled={!canEdit}
+                                                                            />
+                                                                        )}
+                                                                        {isUserAction && (
+                                                                            <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-red-100 text-red-600">
+                                                                                <Circle className="h-1.5 w-1.5 fill-red-500" />
+                                                                                recorded
+                                                                            </span>
+                                                                        )}
+                                                                        {action.result_error && (
+                                                                            <span className="text-red-600 truncate">
+                                                                                {action.result_error}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+
+                                                                    {/* Editable selectors - only show when canEdit */}
+                                                                    {canEdit && (xpathValue || cssValue) && (
+                                                                        <div className="pt-1 space-y-1 border-t border-muted/50">
+                                                                            {xpathValue && (
+                                                                                <div className="flex items-start gap-1">
+                                                                                    <span className="text-[10px] font-medium text-muted-foreground w-10 flex-shrink-0 pt-0.5">XPath</span>
+                                                                                    <EditableText
+                                                                                        value={xpathValue}
+                                                                                        onSave={handleXpathUpdate}
+                                                                                        className="flex-1 font-mono text-[10px]"
+                                                                                    />
+                                                                                </div>
+                                                                            )}
+                                                                            {cssValue && (
+                                                                                <div className="flex items-start gap-1">
+                                                                                    <span className="text-[10px] font-medium text-muted-foreground w-10 flex-shrink-0 pt-0.5">CSS</span>
+                                                                                    <EditableText
+                                                                                        value={cssValue}
+                                                                                        onSave={handleCssSelectorUpdate}
+                                                                                        className="flex-1 font-mono text-[10px]"
+                                                                                    />
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
                                                                     )}
                                                                 </div>
                                                             )
@@ -606,6 +686,16 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Action Edit Dialog (for Simple View) */}
+            {editingAction && (
+                <ActionEditDialog
+                    action={editingAction.action}
+                    isOpen={true}
+                    onSave={handleActionUpdate}
+                    onCancel={() => setEditingAction(null)}
+                />
             )}
         </div>
     )

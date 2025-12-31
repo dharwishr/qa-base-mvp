@@ -11,6 +11,7 @@ export GALLIUM_DRIVER=llvmpipe
 # WebGL2 is enabled via software rendering (SwiftShader/ANGLE)
 exec chromium \
     --no-sandbox \
+    --test-type \
     --disable-dev-shm-usage \
     --disable-background-networking \
     --disable-default-apps \
@@ -26,7 +27,7 @@ exec chromium \
     --remote-allow-origins=* \
     --window-size=${SCREEN_WIDTH},${SCREEN_HEIGHT} \
     --window-position=0,0 \
-    --start-maximized \
+    --kiosk \
     --user-data-dir=/tmp/chromium-data \
     --enable-webgl \
     --enable-webgl2 \

@@ -18,6 +18,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { SimpleActionRow } from '@/components/analysis/StepList';
+import ActionEditDialog from '@/components/analysis/ActionEditDialog';
 import StepFailureOptions from '@/components/analysis/StepFailureOptions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,9 @@ import type {
   SystemMessage,
   RunTillEndPausedState,
 } from '@/types/chat';
+
+// Session statuses that allow editing
+const EDITABLE_STATUSES = ['completed', 'failed', 'stopped', 'paused'];
 
 interface ChatMessageProps {
   message: TimelineMessage;
@@ -52,6 +56,9 @@ interface ChatMessageProps {
   // Delete step props
   onDeleteStep?: (stepId: string, stepNumber: number) => void;
   canDeleteSteps?: boolean;
+  // Edit action props
+  sessionStatus?: string;
+  onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
 }
 
 function formatTime(timestamp: string): string {
@@ -257,6 +264,8 @@ function StepMessageCard({
   currentExecutingStepNumber,
   onDeleteStep,
   canDelete = false,
+  sessionStatus,
+  onActionUpdate,
 }: {
   message: StepMessage;
   onStepSelect?: (stepId: string) => void;
@@ -273,10 +282,16 @@ function StepMessageCard({
   currentExecutingStepNumber?: number | null;
   onDeleteStep?: (stepId: string, stepNumber: number) => void;
   canDelete?: boolean;
+  sessionStatus?: string;
+  onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showUndoHint, setShowUndoHint] = useState(false);
+  const [editingAction, setEditingAction] = useState<typeof step.actions[0] | null>(null);
   const step = message.step;
+
+  // Check if editing is allowed based on session status
+  const canEdit = sessionStatus ? EDITABLE_STATUSES.includes(sessionStatus) : false;
 
   // Use stepIndex (1-based position in timeline) when available, otherwise fall back to step.step_number
   const displayStepNumber = stepIndex ?? step.step_number;
@@ -337,6 +352,8 @@ function StepMessageCard({
                 <div className="flex-1">
                   <SimpleActionRow
                     action={action}
+                    canEdit={canEdit}
+                    onEdit={() => setEditingAction(action)}
                   />
                 </div>
                 {/* Delete button - only show on first action row, when canDelete */}
@@ -358,6 +375,20 @@ function StepMessageCard({
             );
           })}
         </div>
+
+        {/* Action Edit Dialog */}
+        {editingAction && (
+          <ActionEditDialog
+            action={editingAction}
+            isOpen={true}
+            onSave={async (updates) => {
+              if (onActionUpdate) {
+                await onActionUpdate(step.id, editingAction.id, updates);
+              }
+            }}
+            onCancel={() => setEditingAction(null)}
+          />
+        )}
       </div>
     )
   }
@@ -623,6 +654,8 @@ export default function ChatMessage({
   currentExecutingStepNumber,
   onDeleteStep,
   canDeleteSteps,
+  sessionStatus,
+  onActionUpdate,
 }: ChatMessageProps) {
   switch (message.type) {
     case 'user':
@@ -655,6 +688,8 @@ export default function ChatMessage({
           currentExecutingStepNumber={currentExecutingStepNumber}
           onDeleteStep={onDeleteStep}
           canDelete={canDeleteSteps}
+          sessionStatus={sessionStatus}
+          onActionUpdate={onActionUpdate}
         />
       );
     case 'error':

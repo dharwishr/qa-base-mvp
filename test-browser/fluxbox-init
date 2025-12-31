@@ -1,0 +1,14 @@
+# Fluxbox init file
+# Disable toolbar completely
+session.screen0.toolbar.visible: false
+session.screen0.toolbar.autoHide: true
+session.screen0.toolbar.height: 0
+
+# No window decorations for new windows
+session.screen0.defaultDeco: NONE
+
+# Maximize windows to full screen
+session.screen0.fullMaximization: true
+
+# No slit
+session.screen0.slit.autoHide: true

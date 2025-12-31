@@ -23,6 +23,9 @@ interface ChatTimelineProps {
   // Delete step props
   onDeleteStep?: (stepId: string, stepNumber: number) => void;
   canDeleteSteps?: boolean;
+  // Edit action props
+  sessionStatus?: string;
+  onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
 }
 
 export default function ChatTimeline({
@@ -43,6 +46,8 @@ export default function ChatTimeline({
   currentExecutingStepNumber,
   onDeleteStep,
   canDeleteSteps,
+  sessionStatus,
+  onActionUpdate,
 }: ChatTimelineProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -150,6 +155,8 @@ export default function ChatTimeline({
             currentExecutingStepNumber={currentExecutingStepNumber}
             onDeleteStep={onDeleteStep}
             canDeleteSteps={canDeleteSteps}
+            sessionStatus={sessionStatus}
+            onActionUpdate={onActionUpdate}
           />
         );
       })}
