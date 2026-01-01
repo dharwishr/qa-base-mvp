@@ -632,3 +632,109 @@ async def get_model_run_plan(
 		return None
 
 	return TestPlanResponse.model_validate(test_session.plan)
+
+
+# ============================================
+# Per-Model Chat Endpoints
+# ============================================
+
+class ContinueModelRunRequest(BaseModel):
+	"""Request body for continuing a model run with a new prompt."""
+	prompt: str
+	mode: str  # 'plan' or 'act'
+
+
+@router.post("/sessions/{benchmark_id}/runs/{model_run_id}/continue", response_model=BenchmarkModelRunResponse)
+async def continue_model_run(
+	benchmark_id: str,
+	model_run_id: str,
+	request: ContinueModelRunRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Continue a model run with a new prompt (for per-model chat interaction)."""
+	from app.services.plan_service import generate_plan
+	from app.tasks.benchmark import benchmark_execute_model
+
+	# Validate mode
+	if request.mode not in ("plan", "act"):
+		raise HTTPException(status_code=400, detail="Mode must be 'plan' or 'act'")
+
+	# Get model run
+	model_run = db.query(BenchmarkModelRun).filter(
+		BenchmarkModelRun.id == model_run_id,
+		BenchmarkModelRun.benchmark_session_id == benchmark_id
+	).first()
+	if not model_run:
+		raise HTTPException(status_code=404, detail="Model run not found")
+
+	# Check if model run has a test session
+	if not model_run.test_session_id:
+		raise HTTPException(status_code=400, detail="No test session for this model run")
+
+	# Check status - only allow continuation from certain statuses
+	allowed_statuses = ["completed", "failed", "stopped", "paused", "plan_ready", "approved", "rejected"]
+	if model_run.status not in allowed_statuses:
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot continue model run in status: {model_run.status}"
+		)
+
+	test_session = db.query(TestSession).filter(
+		TestSession.id == model_run.test_session_id
+	).first()
+	if not test_session:
+		raise HTTPException(status_code=400, detail="Test session not found")
+
+	if request.mode == "plan":
+		# Generate a new plan for this model run
+		model_run.status = "planning"
+		test_session.status = "pending_plan"
+		db.commit()
+
+		try:
+			# Generate new plan with the continuation prompt
+			await generate_plan(db, test_session, task_prompt=request.prompt)
+
+			# Update statuses
+			model_run.status = "plan_ready"
+			test_session.status = "plan_ready"
+			db.commit()
+		except Exception as e:
+			logger.error(f"Error generating plan for model run {model_run_id}: {e}")
+			model_run.status = "failed"
+			model_run.error = str(e)
+			test_session.status = "failed"
+			db.commit()
+			raise HTTPException(status_code=500, detail=f"Failed to generate plan: {str(e)}")
+	else:
+		# Act mode - execute action directly
+		from app.services.browser_service import execute_act_mode_sync
+
+		model_run.status = "running"
+		test_session.status = "running"
+		db.commit()
+
+		try:
+			result = execute_act_mode_sync(db, test_session, request.prompt, None)
+
+			# Update metrics
+			db.refresh(test_session)
+			model_run.total_steps = db.query(TestStep).filter(
+				TestStep.session_id == test_session.id
+			).count()
+
+			# Mark as completed after single action
+			model_run.status = "completed"
+			test_session.status = "completed"
+			db.commit()
+		except Exception as e:
+			logger.error(f"Error executing action for model run {model_run_id}: {e}")
+			model_run.status = "failed"
+			model_run.error = str(e)
+			test_session.status = "failed"
+			db.commit()
+			raise HTTPException(status_code=500, detail=f"Failed to execute action: {str(e)}")
+
+	db.refresh(model_run)
+	return model_run

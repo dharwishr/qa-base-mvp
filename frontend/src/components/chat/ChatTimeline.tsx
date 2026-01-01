@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import ChatMessage from './ChatMessage';
-import type { TimelineMessage, RunTillEndPausedState } from '@/types/chat';
+import type { TimelineMessage, RunTillEndPausedState, PlanStep } from '@/types/chat';
 
 interface ChatTimelineProps {
   messages: TimelineMessage[];
@@ -9,6 +9,7 @@ interface ChatTimelineProps {
   loadingText?: string;
   onApprove?: (planId: string) => void;
   onReject?: (planId: string) => void;
+  onEditPlan?: (planId: string, planText: string, planSteps: PlanStep[]) => void;
   onStepSelect?: (stepId: string) => void;
   selectedStepId?: string | null;
   onUndoToStep?: (stepNumber: number) => void;
@@ -34,6 +35,7 @@ export default function ChatTimeline({
   loadingText = 'Processing...',
   onApprove,
   onReject,
+  onEditPlan,
   onStepSelect,
   selectedStepId,
   onUndoToStep,
@@ -52,12 +54,33 @@ export default function ChatTimeline({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+  // Scroll to bottom helper - ensures the bottom of the last message is visible
+  const scrollToBottom = useCallback(() => {
+    // Use requestAnimationFrame to ensure DOM has updated
+    requestAnimationFrame(() => {
+      if (bottomRef.current) {
+        bottomRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+    });
+  }, []);
+
+  // Generate a signature of the last message to detect content changes
+  const lastMessageSignature = useMemo(() => {
+    if (messages.length === 0) return '';
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg.type === 'plan') {
+      return `plan-${lastMsg.id}-${lastMsg.status}-${lastMsg.planSteps.length}`;
     }
-  }, [messages.length]);
+    if (lastMsg.type === 'step') {
+      return `step-${lastMsg.id}-${lastMsg.step.status}-${lastMsg.step.actions?.length || 0}`;
+    }
+    return `${lastMsg.type}-${lastMsg.id}`;
+  }, [messages]);
+
+  // Auto-scroll when messages change (new message, content update, or loading state)
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages.length, lastMessageSignature, isLoading, scrollToBottom]);
 
   // Auto-scroll to failed step when Run Till End pauses
   useEffect(() => {
@@ -139,6 +162,7 @@ export default function ChatTimeline({
             message={message}
             onApprove={onApprove}
             onReject={onReject}
+            onEditPlan={onEditPlan}
             onStepSelect={onStepSelect}
             isSelected={
               message.type === 'step' && message.step.id === selectedStepId

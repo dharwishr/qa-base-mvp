@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play, Pause, RefreshCw } from 'lucide-react';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play, Pause, RefreshCw, Circle, CheckCircle, XCircle, PauseCircle, StopCircle, Clock, Loader2 } from 'lucide-react';
+import { toast, Toaster } from 'sonner';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
 import LiveBrowserView from '@/components/LiveBrowserView';
 import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
 import DeleteStepDialog from '@/components/analysis/DeleteStepDialog';
+import PlanEditModal from '@/components/plan/PlanEditModal';
 import { useChatSession, type ReplayFailure } from '@/hooks/useChatSession';
 import { getScreenshotUrl, scriptsApi, analysisApi } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
@@ -22,6 +24,42 @@ const LLM_OPTIONS: { value: LlmModel; label: string }[] = [
   { value: 'gemini-3.0-pro', label: 'Gemini 3.0 Pro' },
   { value: 'gemini-2.5-computer-use', label: 'Gemini 2.5 Computer Use' },
 ];
+
+const STATUS_COLORS: Record<string, string> = {
+  'pending_plan': 'bg-gray-100 text-gray-700',
+  'plan_ready': 'bg-blue-100 text-blue-700',
+  'approved': 'bg-purple-100 text-purple-700',
+  'queued': 'bg-orange-100 text-orange-700',
+  'running': 'bg-yellow-100 text-yellow-700',
+  'completed': 'bg-green-100 text-green-700',
+  'failed': 'bg-red-100 text-red-700',
+  'stopped': 'bg-orange-100 text-orange-700',
+  'paused': 'bg-amber-100 text-amber-700',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  'pending_plan': 'Pending Plan',
+  'plan_ready': 'Plan Ready',
+  'approved': 'Approved',
+  'queued': 'Queued',
+  'running': 'Running',
+  'completed': 'Completed',
+  'failed': 'Failed',
+  'stopped': 'Stopped',
+  'paused': 'Paused',
+};
+
+const getStatusIcon = (status: string) => {
+  switch (status) {
+    case 'completed': return <CheckCircle className="h-3 w-3" />;
+    case 'failed': return <XCircle className="h-3 w-3" />;
+    case 'running': return <Clock className="h-3 w-3 animate-pulse" />;
+    case 'queued': return <Clock className="h-3 w-3" />;
+    case 'paused': return <PauseCircle className="h-3 w-3" />;
+    case 'stopped': return <StopCircle className="h-3 w-3" />;
+    default: return <Circle className="h-3 w-3" />;
+  }
+};
 
 // Queue failure dialog component
 function QueueFailureDialog({
@@ -167,6 +205,8 @@ export default function TestAnalysisChatPage() {
     headless,
     isGeneratingPlan,
     isExecuting,
+    isPausing,
+    isStopping,
     isPlanPending,
     queueFailure,
     selectedStepId,
@@ -211,6 +251,13 @@ export default function TestAnalysisChatPage() {
     replaySession,
     forkFromStep,
     clearReplayFailure,
+    // Plan editing
+    isEditingPlan,
+    editingPlanData,
+    openPlanEditor,
+    closePlanEditor,
+    savePlanEdits,
+    regeneratePlan,
   } = useChatSession();
 
   // Load existing session from URL parameter
@@ -219,6 +266,35 @@ export default function TestAnalysisChatPage() {
       loadExistingSession(urlSessionId);
     }
   }, [urlSessionId, sessionId, loadExistingSession]);
+
+  // Update URL when a new session is created (user started from /test-analysis without a session ID)
+  useEffect(() => {
+    if (sessionId && !urlSessionId) {
+      navigate(`/test-analysis/${sessionId}`, { replace: true });
+    }
+  }, [sessionId, urlSessionId, navigate]);
+
+  // Track previous isPausing state to detect when pause completes
+  const wasPausingRef = useRef(false);
+
+  // Show toast when pause completes
+  useEffect(() => {
+    if (wasPausingRef.current && !isPausing && sessionStatus === 'paused') {
+      toast.success('Execution paused successfully');
+    }
+    wasPausingRef.current = isPausing;
+  }, [isPausing, sessionStatus]);
+
+  // Track previous isStopping state to detect when stop completes
+  const wasStoppingRef = useRef(false);
+
+  // Show toast when stop completes
+  useEffect(() => {
+    if (wasStoppingRef.current && !isStopping && sessionStatus === 'stopped') {
+      toast.success('Execution stopped successfully');
+    }
+    wasStoppingRef.current = isStopping;
+  }, [isStopping, sessionStatus]);
 
   // Determine if "Generate Script" button should show
   const canGenerateScript = (sessionStatus === 'completed' || sessionStatus === 'stopped') &&
@@ -238,7 +314,7 @@ export default function TestAnalysisChatPage() {
   const [leftWidth, setLeftWidth] = useState(450);
   const [isResizing, setIsResizing] = useState(false);
   const [isInteractionEnabled, setIsInteractionEnabled] = useState(false);
-  const [simpleMode, setSimpleMode] = useState(false);
+  const [simpleMode, setSimpleMode] = useState(true);
   const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null);
   const [stepToDelete, setStepToDelete] = useState<{ id: string; stepNumber: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -354,6 +430,9 @@ export default function TestAnalysisChatPage() {
       onMouseUp={stopResizing}
       onMouseLeave={stopResizing}
     >
+      {/* Toast notifications */}
+      <Toaster position="top-right" richColors />
+
       {/* Left Panel - Chat */}
       <div
         className="flex flex-col border-r bg-background"
@@ -361,11 +440,19 @@ export default function TestAnalysisChatPage() {
       >
         {/* Header */}
         <div className="flex flex-col px-4 py-3 border-b bg-muted/20 gap-2">
-          {/* Row 1: Title and Settings */}
+          {/* Row 1: Title, Status and Settings */}
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-sm line-clamp-2 leading-tight" title={sessionTitle}>
-              {sessionTitle}
-            </h2>
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <h2 className="font-semibold text-sm line-clamp-1 leading-tight" title={sessionTitle}>
+                {sessionTitle}
+              </h2>
+              {sessionStatus && (
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ${STATUS_COLORS[sessionStatus] || 'bg-gray-100 text-gray-700'}`}>
+                  {getStatusIcon(sessionStatus)}
+                  {STATUS_LABELS[sessionStatus] || sessionStatus}
+                </span>
+              )}
+            </div>
             <Button
               size="sm"
               variant="ghost"
@@ -378,28 +465,48 @@ export default function TestAnalysisChatPage() {
 
           {/* Row 2: Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Pause Button - Shows when AI is executing or Run Till End is active */}
-            {(isExecuting || isRunningTillEnd) && (
+            {/* Pause Button - Shows when AI is executing, Run Till End is active, or pausing */}
+            {(isExecuting || isRunningTillEnd || isPausing) && (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={pauseExecution}
-                className="h-7 text-xs border-amber-500 text-amber-600 hover:bg-amber-50"
+                disabled={isPausing}
+                className="h-7 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 disabled:opacity-70"
               >
-                <Pause className="h-3 w-3 mr-1" />
-                Pause
+                {isPausing ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Pausing...
+                  </>
+                ) : (
+                  <>
+                    <Pause className="h-3 w-3 mr-1" />
+                    Pause
+                  </>
+                )}
               </Button>
             )}
             {/* Stop Button - Stops everything including browser */}
-            {(isExecuting || isRunningTillEnd || browserSession) && (
+            {(isExecuting || isRunningTillEnd || browserSession || isStopping) && (
               <Button
                 size="sm"
                 variant="destructive"
                 onClick={stopAll}
-                className="h-7 text-xs"
+                disabled={isStopping}
+                className="h-7 text-xs disabled:opacity-70"
               >
-                <Square className="h-3 w-3 mr-1" />
-                Stop
+                {isStopping ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Stopping...
+                  </>
+                ) : (
+                  <>
+                    <Square className="h-3 w-3 mr-1" />
+                    Stop
+                  </>
+                )}
               </Button>
             )}
             {(messages.length > 0 || sessionId) && !isExecuting && !isRunningTillEnd && (
@@ -563,6 +670,7 @@ export default function TestAnalysisChatPage() {
           loadingText={loadingText}
           onApprove={approvePlan}
           onReject={rejectPlan}
+          onEditPlan={openPlanEditor}
           onStepSelect={setSelectedStepId}
           selectedStepId={selectedStepId}
           onUndoToStep={undoToStep}
@@ -685,6 +793,19 @@ export default function TestAnalysisChatPage() {
           failure={queueFailure}
           onProceed={processRemainingQueue}
           onCancel={clearQueueAndProceed}
+        />
+      )}
+
+      {/* Plan Edit Modal */}
+      {isEditingPlan && editingPlanData && (
+        <PlanEditModal
+          isOpen={isEditingPlan}
+          planId={editingPlanData.planId}
+          planText={editingPlanData.planText}
+          planSteps={editingPlanData.planSteps}
+          onClose={closePlanEditor}
+          onSave={savePlanEdits}
+          onRegenerate={regeneratePlan}
         />
       )}
 

@@ -21,7 +21,28 @@ User's request:
 
 {continuation_instruction}
 
-Generate a clear, actionable test plan with numbered steps. Each step should be a specific browser action that can be automated (e.g., navigate to URL, click button, fill form, verify text).
+Generate a clear, actionable test plan with numbered steps. Each step should be a specific browser action that can be automated.
+
+AVAILABLE ACTION TYPES:
+- navigate: Go to a URL
+- click: Click on an element (button, link, etc.)
+- type: Enter text into an input field
+- scroll: Scroll the page up or down
+- wait: Wait for a specified time
+- hover: Hover over an element
+- select: Select option from dropdown
+- verify: Assert/verify expected results (CRITICAL for QA testing)
+
+VERIFICATION STEPS (action_type="verify"):
+Include verification steps after key actions to validate expected outcomes. This is essential for proper QA test cases.
+
+Examples of verify steps:
+- Verify text is visible: {{"action_type": "verify", "description": "Verify login success message", "details": "Assert text 'Welcome back' is visible on the page"}}
+- Verify element appears: {{"action_type": "verify", "description": "Verify dashboard loaded", "details": "Assert the dashboard container element is visible"}}
+- Verify URL changed: {{"action_type": "verify", "description": "Verify redirected to dashboard", "details": "Assert URL contains '/dashboard'"}}
+- Verify form value: {{"action_type": "verify", "description": "Verify search input populated", "details": "Assert the search field contains 'test query'"}}
+
+QA BEST PRACTICE: Always include at least one verification step after completing a key action (e.g., after login verify success message appears, after form submit verify confirmation).
 
 Return the response in the following JSON format:
 {{
@@ -38,11 +59,17 @@ Return the response in the following JSON format:
             "description": "Click login button",
             "action_type": "click",
             "details": "Find and click the login button"
+        }},
+        {{
+            "step_number": 3,
+            "description": "Verify login form appears",
+            "action_type": "verify",
+            "details": "Assert the login form with username and password fields is visible"
         }}
     ]
 }}
 
-Be specific and practical. Include verification steps where appropriate.
+Be specific and practical. Include verification steps after every key action to ensure proper test coverage.
 {navigation_warning}
 """
 
@@ -312,3 +339,152 @@ Work only with elements on the current page."""
 		task_lines.append("Remember: Do NOT navigate away from the current page!")
 
 	return "\n".join(task_lines)
+
+
+def update_plan_steps(
+	db: Session,
+	plan: TestPlan,
+	steps: list[dict],
+	user_prompt: str | None = None
+) -> TestPlan:
+	"""Update a plan with manually edited steps.
+
+	Args:
+		db: Database session
+		plan: The test plan to update
+		steps: Updated list of step dictionaries
+		user_prompt: Optional user instructions to save with the plan
+
+	Returns:
+		Updated TestPlan
+	"""
+	# Renumber steps sequentially
+	for i, step in enumerate(steps):
+		step["step_number"] = i + 1
+
+	# Update steps_json
+	plan.steps_json = {"steps": steps}
+
+	# Generate a brief plan_text summary (don't duplicate all steps - they're shown separately)
+	num_steps = len(steps)
+	if num_steps > 0:
+		first_step = steps[0].get("description", "")
+		last_step = steps[-1].get("description", "") if num_steps > 1 else ""
+		if num_steps == 1:
+			plan.plan_text = f"Test plan with 1 step: {first_step}"
+		elif num_steps == 2:
+			plan.plan_text = f"Test plan with 2 steps: {first_step} → {last_step}"
+		else:
+			plan.plan_text = f"Test plan with {num_steps} steps: {first_step} → ... → {last_step}"
+	else:
+		plan.plan_text = "Empty test plan"
+
+	# Store user_prompt if provided (in a new field or as part of steps_json)
+	if user_prompt:
+		if plan.steps_json is None:
+			plan.steps_json = {}
+		plan.steps_json["user_prompt"] = user_prompt
+
+	db.commit()
+	db.refresh(plan)
+
+	logger.info(f"Updated plan {plan.id} with {len(steps)} steps")
+	return plan
+
+
+PLAN_REGENERATE_PROMPT = """You are a QA automation expert. The user has manually edited a test plan and wants you to refine it based on their changes and additional instructions.
+
+Original test case:
+{original_prompt}
+
+User's edited plan (steps):
+{edited_steps}
+
+User's refinement instructions:
+{user_prompt}
+
+Based on the user's edits and instructions, generate an improved test plan. Keep the user's edits in mind and incorporate their feedback.
+
+Return the response in the following JSON format:
+{{
+    "plan_text": "A human-readable summary of the improved test plan",
+    "steps": [
+        {{
+            "step_number": 1,
+            "description": "Step description",
+            "action_type": "navigate|click|type|scroll|wait|verify|etc",
+            "details": "Detailed instructions for this step"
+        }}
+    ]
+}}
+
+Be specific and practical. Include verification steps where appropriate."""
+
+
+async def regenerate_plan_with_context(
+	db: Session,
+	session: TestSession,
+	plan: TestPlan,
+	edited_steps: list[dict],
+	user_prompt: str
+) -> TestPlan:
+	"""Regenerate a plan using AI with user's edits as context.
+
+	Args:
+		db: Database session
+		session: Test session
+		plan: Existing plan to update
+		edited_steps: User's edited steps
+		user_prompt: User's refinement instructions
+
+	Returns:
+		Updated TestPlan
+	"""
+	try:
+		# Format edited steps for prompt
+		edited_steps_text = json.dumps(edited_steps, indent=2)
+
+		prompt = PLAN_REGENERATE_PROMPT.format(
+			original_prompt=session.prompt,
+			edited_steps=edited_steps_text,
+			user_prompt=user_prompt
+		)
+
+		logger.info(f"Regenerating plan for session {session.id} with user edits...")
+		logger.debug(f"Regeneration prompt:\n{prompt}")
+
+		response = client.models.generate_content(
+			model="gemini-2.0-flash",
+			contents=prompt,
+		)
+
+		response_text = response.text
+
+		# Try to parse as JSON
+		try:
+			# Remove markdown code blocks if present
+			if response_text.startswith("```"):
+				lines = response_text.split("\n")
+				response_text = "\n".join(lines[1:-1])
+
+			plan_data = json.loads(response_text)
+			plan_text = plan_data.get("plan_text", response_text)
+			steps_json = plan_data.get("steps", [])
+		except json.JSONDecodeError:
+			# If not valid JSON, use raw text
+			plan_text = response_text
+			steps_json = []
+
+		# Update existing plan
+		plan.plan_text = plan_text
+		plan.steps_json = {"steps": steps_json, "user_prompt": user_prompt}
+
+		db.commit()
+		db.refresh(plan)
+
+		logger.info(f"Regenerated plan {plan.id} for session {session.id}")
+		return plan
+
+	except Exception as e:
+		logger.error(f"Error regenerating plan: {e}")
+		raise

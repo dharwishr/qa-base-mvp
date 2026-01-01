@@ -20,6 +20,7 @@ from app.schemas import (
 	ExecuteResponse,
 	ExecutionLogResponse,
 	RecordingStatusResponse,
+	RegeneratePlanRequest,
 	RejectPlanRequest,
 	ReplaySessionRequest,
 	ReplaySessionResponse,
@@ -33,13 +34,14 @@ from app.schemas import (
 	TestStepResponse,
 	UndoRequest,
 	UndoResponse,
+	UpdatePlanRequest,
 	UpdateSessionTitleRequest,
 	UpdateStepActionRequest,
 	UpdateStepActionTextRequest,
 	WSError,
 	WSInitialState,
 )
-from app.services.plan_service import generate_plan
+from app.services.plan_service import generate_plan, update_plan_steps, regenerate_plan_with_context
 from app.services.browser_orchestrator import get_orchestrator, BrowserPhase
 
 logger = logging.getLogger(__name__)
@@ -486,6 +488,85 @@ async def get_session_plan(
 		raise HTTPException(status_code=404, detail="Plan not found")
 
 	return session.plan
+
+
+@router.put("/sessions/{session_id}/plan", response_model=TestPlanResponse)
+async def update_session_plan(
+	session_id: str,
+	request: UpdatePlanRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Update a plan with manually edited steps.
+
+	Use this endpoint to save user's manual edits to the plan steps.
+	The plan text will be regenerated from the step descriptions.
+	"""
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	if session.status != "plan_ready":
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot update plan in status: {session.status}. Plan can only be edited when status is 'plan_ready'."
+		)
+
+	if not session.plan:
+		raise HTTPException(status_code=404, detail="Plan not found")
+
+	# Validate steps structure
+	for i, step in enumerate(request.steps):
+		if "description" not in step:
+			raise HTTPException(
+				status_code=400,
+				detail=f"Step {i + 1} is missing required field 'description'"
+			)
+
+	updated_plan = update_plan_steps(
+		db=db,
+		plan=session.plan,
+		steps=request.steps,
+		user_prompt=request.user_prompt
+	)
+
+	return updated_plan
+
+
+@router.post("/sessions/{session_id}/plan/regenerate", response_model=TestPlanResponse)
+async def regenerate_session_plan(
+	session_id: str,
+	request: RegeneratePlanRequest,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Regenerate a plan using AI with user's edits as context.
+
+	Use this endpoint to send user's edited steps and refinement instructions
+	to the AI, which will generate an improved plan based on the feedback.
+	"""
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	if session.status != "plan_ready":
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot regenerate plan in status: {session.status}. Plan can only be regenerated when status is 'plan_ready'."
+		)
+
+	if not session.plan:
+		raise HTTPException(status_code=404, detail="Plan not found")
+
+	regenerated_plan = await regenerate_plan_with_context(
+		db=db,
+		session=session,
+		plan=session.plan,
+		edited_steps=request.edited_steps,
+		user_prompt=request.user_prompt
+	)
+
+	return regenerated_plan
 
 
 @router.post("/sessions/{session_id}/approve", response_model=TestSessionResponse)

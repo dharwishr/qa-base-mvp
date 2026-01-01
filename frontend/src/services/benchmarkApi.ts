@@ -247,6 +247,30 @@ export const benchmarkApi = {
     );
     return handleResponse<ActModeResponse>(response);
   },
+
+  // ============================================
+  // Per-Model Chat APIs
+  // ============================================
+
+  /**
+   * Continue a model run with a new prompt (allows per-model chat).
+   */
+  async continueModelRun(
+    benchmarkId: string,
+    modelRunId: string,
+    prompt: string,
+    mode: 'plan' | 'act'
+  ): Promise<BenchmarkModelRun> {
+    const response = await fetch(
+      `${API_BASE}/api/benchmark/sessions/${benchmarkId}/runs/${modelRunId}/continue`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ prompt, mode }),
+      }
+    );
+    return handleResponse<BenchmarkModelRun>(response);
+  },
 };
 
 export { ApiError };

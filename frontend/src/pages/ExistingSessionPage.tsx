@@ -361,6 +361,7 @@ export default function ExistingSessionPage() {
           loadingText={loadingText}
           onApprove={approvePlan}
           onReject={rejectPlan}
+          onEditPlan={undefined} // Plan editing not supported in existing session view
           onStepSelect={setSelectedStepId}
           selectedStepId={selectedStepId}
           onUndoToStep={handleUndoToStep}

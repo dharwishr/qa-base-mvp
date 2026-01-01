@@ -16,6 +16,26 @@ export interface PlanStep {
   details: string;
 }
 
+// Request to update plan with manual edits
+export interface UpdatePlanRequest {
+  steps: PlanStep[];
+  user_prompt?: string;
+}
+
+// Request to regenerate plan using AI
+export interface RegeneratePlanRequest {
+  edited_steps: PlanStep[];
+  user_prompt: string;
+}
+
+// State for plan editing modal
+export interface PlanEditingState {
+  isEditing: boolean;
+  planId: string | null;
+  planText: string;
+  planSteps: PlanStep[];
+}
+
 // Base message interface
 interface BaseMessage {
   id: string;

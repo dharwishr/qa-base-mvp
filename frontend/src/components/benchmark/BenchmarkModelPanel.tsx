@@ -1,10 +1,12 @@
 import { Monitor, CheckCircle, XCircle, Loader2, Clock, Check, X, FileText } from 'lucide-react';
 import ChatTimeline from '@/components/chat/ChatTimeline';
+import ChatInput from '@/components/chat/ChatInput';
 import LiveBrowserView from '@/components/LiveBrowserView';
 import { getScreenshotUrl } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import type { ModelRunState } from '@/hooks/useBenchmarkSession';
 import type { LlmModel } from '@/types/analysis';
+import type { ChatMode } from '@/types/chat';
 
 interface BenchmarkModelPanelProps {
   modelRunState: ModelRunState;
@@ -12,6 +14,13 @@ interface BenchmarkModelPanelProps {
   onStepSelect: (modelRunId: string, stepId: string | null) => void;
   onApprovePlan?: (modelRunId: string) => void;
   onRejectPlan?: (modelRunId: string) => void;
+  // Per-model chat props
+  onSendMessage?: (modelRunId: string, text: string, mode: ChatMode) => void;
+  mode?: ChatMode;
+  onModeChange?: (modelRunId: string, mode: ChatMode) => void;
+  isGeneratingPlan?: boolean;
+  isExecuting?: boolean;
+  showChatInput?: boolean;
 }
 
 const MODEL_LABELS: Record<LlmModel, string> = {
@@ -100,8 +109,14 @@ export default function BenchmarkModelPanel({
   onStepSelect,
   onApprovePlan,
   onRejectPlan,
+  onSendMessage,
+  mode = 'plan',
+  onModeChange,
+  isGeneratingPlan = false,
+  isExecuting = false,
+  showChatInput = false,
 }: BenchmarkModelPanelProps) {
-  const { modelRun, messages, steps, plan, browserSession, selectedStepId } = modelRunState;
+  const { modelRun, messages, steps, browserSession, selectedStepId } = modelRunState;
   const isPlanReady = modelRun.status === 'plan_ready';
   const llmModel = modelRun.llm_model as LlmModel;
   const modelLabel = MODEL_LABELS[llmModel] || llmModel;
@@ -113,6 +128,22 @@ export default function BenchmarkModelPanel({
     : null;
 
   const isLoading = modelRun.status === 'running' && steps.length === 0;
+
+  // Check if chat input should be enabled
+  const canSendMessage = !isGeneratingPlan && !isExecuting &&
+    ['completed', 'failed', 'stopped', 'paused', 'plan_ready', 'approved', 'rejected'].includes(modelRun.status);
+
+  const handleSendMessage = (text: string, msgMode: ChatMode) => {
+    if (onSendMessage) {
+      onSendMessage(modelRun.id, text, msgMode);
+    }
+  };
+
+  const handleModeChange = (newMode: ChatMode) => {
+    if (onModeChange) {
+      onModeChange(modelRun.id, newMode);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full border rounded-lg bg-background overflow-hidden">
@@ -156,25 +187,32 @@ export default function BenchmarkModelPanel({
         </div>
       </div>
 
-      {/* Plan display for Plan mode */}
-      {isPlanReady && plan && (
-        <div className="px-4 py-2 border-b bg-orange-50/50 max-h-24 overflow-y-auto">
-          <div className="text-xs font-medium text-orange-800 mb-1">Generated Plan:</div>
-          <div className="text-xs text-muted-foreground whitespace-pre-wrap">{plan.plan_text}</div>
-        </div>
-      )}
-
       {/* Content - Split view */}
       <div className="flex-1 flex min-h-0">
-        {/* Left: Chat Timeline */}
+        {/* Left: Chat Timeline + Input */}
         <div className="w-1/2 flex flex-col border-r min-h-0">
-          <ChatTimeline
-            messages={messages}
-            isLoading={isLoading}
-            loadingText="Executing..."
-            onStepSelect={(stepId) => onStepSelect(modelRun.id, stepId)}
-            selectedStepId={selectedStepId}
-          />
+          <div className="flex-1 overflow-hidden">
+            <ChatTimeline
+              messages={messages}
+              isLoading={isLoading}
+              loadingText="Executing..."
+              onStepSelect={(stepId) => onStepSelect(modelRun.id, stepId)}
+              selectedStepId={selectedStepId}
+              onApprove={onApprovePlan ? () => onApprovePlan(modelRun.id) : undefined}
+              onReject={onRejectPlan ? () => onRejectPlan(modelRun.id) : undefined}
+            />
+          </div>
+          {/* Chat Input - only show when enabled */}
+          {showChatInput && onSendMessage && onModeChange && (
+            <ChatInput
+              onSend={handleSendMessage}
+              mode={mode}
+              onModeChange={handleModeChange}
+              disabled={!canSendMessage}
+              isExecuting={isExecuting || isGeneratingPlan}
+              placeholder={`Continue testing with ${modelLabel}...`}
+            />
+          )}
         </div>
 
         {/* Right: Browser View */}

@@ -82,6 +82,8 @@ interface UseChatSessionReturn {
   headless: boolean;
   isGeneratingPlan: boolean;
   isExecuting: boolean;
+  isPausing: boolean;
+  isStopping: boolean;
   isPlanPending: boolean;
   isBusy: boolean;
   messageQueue: QueuedMessage[];
@@ -137,6 +139,13 @@ interface UseChatSessionReturn {
   replaySession: (startRecordingAfterReplay?: boolean) => Promise<void>;
   forkFromStep: (stepNumber: number) => Promise<void>;
   clearReplayFailure: () => void;
+  // Plan editing state and actions
+  isEditingPlan: boolean;
+  editingPlanData: { planId: string; planText: string; planSteps: PlanStep[] } | null;
+  openPlanEditor: (planId: string, planText: string, planSteps: PlanStep[]) => void;
+  closePlanEditor: () => void;
+  savePlanEdits: (steps: PlanStep[], userPrompt?: string) => Promise<void>;
+  regeneratePlan: (steps: PlanStep[], userPrompt: string) => Promise<void>;
 }
 
 const POLL_INTERVAL = 2000;
@@ -182,6 +191,20 @@ export function useChatSession(): UseChatSessionReturn {
   const [isReplaying, setIsReplaying] = useState(false);
   const [replayFailure, setReplayFailure] = useState<ReplayFailure | null>(null);
   const startRecordingAfterReplayRef = useRef(false);
+
+  // Pause state
+  const [isPausing, setIsPausing] = useState(false);
+
+  // Stop state
+  const [isStopping, setIsStopping] = useState(false);
+
+  // Plan editing state
+  const [isEditingPlan, setIsEditingPlan] = useState(false);
+  const [editingPlanData, setEditingPlanData] = useState<{
+    planId: string;
+    planText: string;
+    planSteps: PlanStep[];
+  } | null>(null);
 
   // Keep recording ref in sync
   useEffect(() => {
@@ -415,6 +438,7 @@ export function useChatSession(): UseChatSessionReturn {
 
           case 'execution_paused': {
             const msg = message as WSExecutionPaused;
+            setIsPausing(false);  // Clear pausing state
             setIsExecuting(false);
             setIsRunningTillEnd(false);
             // Update session status so canContinueSession() returns true
@@ -431,6 +455,8 @@ export function useChatSession(): UseChatSessionReturn {
 
           case 'all_stopped': {
             const msg = message as WSAllStopped;
+            setIsPausing(false);  // Clear pausing state if stop is called
+            setIsStopping(false);  // Clear stopping state
             setIsExecuting(false);
             setIsRunningTillEnd(false);
             setBrowserSession(null);
@@ -1100,6 +1126,95 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, [sessionId]);
 
+  // Plan editing functions
+  const openPlanEditor = useCallback(
+    (planId: string, planText: string, planSteps: PlanStep[]) => {
+      setEditingPlanData({ planId, planText, planSteps });
+      setIsEditingPlan(true);
+    },
+    []
+  );
+
+  const closePlanEditor = useCallback(() => {
+    setIsEditingPlan(false);
+    setEditingPlanData(null);
+  }, []);
+
+  const savePlanEdits = useCallback(
+    async (steps: PlanStep[], userPrompt?: string) => {
+      if (!sessionId || !editingPlanData) return;
+
+      try {
+        const updatedPlan = await analysisApi.updatePlan(sessionId, steps, userPrompt);
+
+        // Update the plan message with new steps
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.type === 'plan' && msg.planId === editingPlanData.planId
+              ? {
+                  ...msg,
+                  planText: updatedPlan.plan_text,
+                  planSteps: updatedPlan.steps_json?.steps || [],
+                }
+              : msg
+          )
+        );
+
+        closePlanEditor();
+
+        setMessages((prev) => [
+          ...prev,
+          createTimelineMessage('system', {
+            content: 'Plan updated successfully.',
+          }),
+        ]);
+      } catch (e) {
+        console.error('Error saving plan edits:', e);
+        throw e;
+      }
+    },
+    [sessionId, editingPlanData, closePlanEditor]
+  );
+
+  const regeneratePlan = useCallback(
+    async (steps: PlanStep[], userPrompt: string) => {
+      if (!sessionId || !editingPlanData) return;
+
+      try {
+        setIsGeneratingPlan(true);
+        const regeneratedPlan = await analysisApi.regeneratePlan(sessionId, steps, userPrompt);
+
+        // Update the plan message with regenerated content
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.type === 'plan' && msg.planId === editingPlanData.planId
+              ? {
+                  ...msg,
+                  planText: regeneratedPlan.plan_text,
+                  planSteps: regeneratedPlan.steps_json?.steps || [],
+                }
+              : msg
+          )
+        );
+
+        closePlanEditor();
+
+        setMessages((prev) => [
+          ...prev,
+          createTimelineMessage('system', {
+            content: 'Plan regenerated with AI successfully.',
+          }),
+        ]);
+      } catch (e) {
+        console.error('Error regenerating plan:', e);
+        throw e;
+      } finally {
+        setIsGeneratingPlan(false);
+      }
+    },
+    [sessionId, editingPlanData, closePlanEditor]
+  );
+
   // Inject command during execution (via WebSocket or polling)
   const injectCommand = useCallback((text: string) => {
     // For now, this is handled in sendMessage when isExecuting is true
@@ -1209,6 +1324,8 @@ export function useChatSession(): UseChatSessionReturn {
     setBrowserSession(null);
     setIsGeneratingPlan(false);
     setIsExecuting(false);
+    setIsPausing(false);
+    setIsStopping(false);
     setIsPlanPending(false);
     setPendingPlanId(null);
     setSelectedStepId(null);
@@ -1526,6 +1643,8 @@ export function useChatSession(): UseChatSessionReturn {
   const pauseExecution = useCallback(() => {
     if (!sessionId) return;
 
+    setIsPausing(true);  // Show spinner immediately
+
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ command: 'pause_execution' }));
     }
@@ -1534,6 +1653,8 @@ export function useChatSession(): UseChatSessionReturn {
   // Stop all execution and terminate browser session
   const stopAll = useCallback(() => {
     if (!sessionId) return;
+
+    setIsStopping(true);  // Show spinner immediately
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ command: 'stop_all' }));
@@ -1685,7 +1806,25 @@ export function useChatSession(): UseChatSessionReturn {
         'error': 4,
       };
       timelineMessages.sort((a, b) => {
-        const timeDiff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+        const timeA = new Date(a.timestamp).getTime();
+        const timeB = new Date(b.timestamp).getTime();
+        const timeDiff = timeA - timeB;
+
+        // Special case: if a user message (mode='plan') and plan message are within 60 seconds,
+        // the user message should always come first (user prompt triggers plan generation).
+        // This handles the case where the user message was persisted AFTER the plan was generated.
+        const TIME_WINDOW_MS = 60000; // 60 seconds
+        if (Math.abs(timeDiff) < TIME_WINDOW_MS) {
+          const aIsUserPlan = a.type === 'user' && 'mode' in a && a.mode === 'plan';
+          const bIsPlan = b.type === 'plan';
+          const bIsUserPlan = b.type === 'user' && 'mode' in b && b.mode === 'plan';
+          const aIsPlan = a.type === 'plan';
+
+          // User message (plan mode) should come before plan message
+          if (aIsUserPlan && bIsPlan) return -1;
+          if (aIsPlan && bIsUserPlan) return 1;
+        }
+
         if (timeDiff !== 0) return timeDiff;
         // If timestamps are equal, sort by type priority
         return (typeOrder[a.type] ?? 5) - (typeOrder[b.type] ?? 5);
@@ -1884,6 +2023,8 @@ export function useChatSession(): UseChatSessionReturn {
     headless,
     isGeneratingPlan,
     isExecuting,
+    isPausing,
+    isStopping,
     isPlanPending,
     isBusy,
     messageQueue,
@@ -1939,5 +2080,12 @@ export function useChatSession(): UseChatSessionReturn {
     replaySession,
     forkFromStep,
     clearReplayFailure,
+    // Plan editing state and actions
+    isEditingPlan,
+    editingPlanData,
+    openPlanEditor,
+    closePlanEditor,
+    savePlanEdits,
+    regeneratePlan,
   };
 }

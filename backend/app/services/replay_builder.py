@@ -54,10 +54,14 @@ ACTION_MAP = {
     # Hover actions
     "hover": "hover",
     "hover_element": "hover",
-    # Assert actions (if recorded)
+    # Assert actions (from browser-use AI agent)
     "assert": "assert",
+    "assert_text": "assert",
     "assert_text_visible": "assert",
     "assert_element_visible": "assert",
+    "assert_url": "assert",
+    "assert_value": "assert",
+    "verify": "assert",  # Plan step type maps to assert
     # Skip non-replayable actions (file operations, etc.)
     # These return None and are logged as skipped
     # Note: Actions like 'write_file', 'replace_file', 'evaluate' are not replayable
@@ -220,9 +224,9 @@ def step_action_to_playwright_step(
         base["element_context"] = element_context
     
     elif action == "assert":
-        assertion = _build_assertion(params)
+        assertion = _build_assertion(params, sa.action_name)
         if not assertion:
-            logger.warning(f"assert action missing assertion config, skipping")
+            logger.warning(f"assert action missing assertion config for {sa.action_name}, skipping")
             return None
         base["assertion"] = assertion
         if selectors:
@@ -295,16 +299,49 @@ def _build_element_context(params: dict) -> ElementContext | None:
     return None
 
 
-def _build_assertion(params: dict) -> AssertionConfig | None:
-    """Build AssertionConfig from action params."""
+def _build_assertion(params: dict, action_name: str = "") -> AssertionConfig | None:
+    """Build AssertionConfig from action params.
+
+    Args:
+        params: Action parameters dict
+        action_name: Original action name (e.g., 'assert_text', 'assert_url') to infer assertion type
+    """
     assertion_type = params.get("assertion_type")
+    expected_value = params.get("expected_value")
+
+    # Infer assertion_type from action_name if not explicitly provided
+    if not assertion_type:
+        action_lower = action_name.lower()
+        if "text" in action_lower:
+            assertion_type = "text_visible"
+            # Map 'text' param to expected_value
+            expected_value = expected_value or params.get("text")
+        elif "element" in action_lower or "visible" in action_lower:
+            assertion_type = "element_visible"
+        elif "url" in action_lower:
+            assertion_type = "url_contains"
+            expected_value = expected_value or params.get("url")
+        elif "value" in action_lower:
+            assertion_type = "value_equals"
+            expected_value = expected_value or params.get("value")
+        elif "verify" in action_lower:
+            # Generic verify - try to infer from params
+            if "text" in params:
+                assertion_type = "text_visible"
+                expected_value = params.get("text")
+            elif "url" in params:
+                assertion_type = "url_contains"
+                expected_value = params.get("url")
+            else:
+                assertion_type = "element_visible"
+
     if not assertion_type:
         return None
-    
+
     return AssertionConfig(
         assertion_type=assertion_type,
-        expected_value=params.get("expected_value"),
+        expected_value=expected_value,
         expected_count=params.get("expected_count"),
         case_sensitive=params.get("case_sensitive", True),
-        partial_match=params.get("partial_match", False),
+        partial_match=params.get("partial_match", True),  # Default to partial match for flexibility
     )

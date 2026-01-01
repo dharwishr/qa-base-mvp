@@ -233,6 +233,18 @@ class RejectPlanRequest(BaseModel):
 	reason: str | None = Field(None, description="Optional reason for rejection")
 
 
+class UpdatePlanRequest(BaseModel):
+	"""Request to update plan steps manually."""
+	steps: list[dict[str, Any]] = Field(..., description="Updated plan steps array")
+	user_prompt: str | None = Field(None, description="Optional user instructions to save with the plan")
+
+
+class RegeneratePlanRequest(BaseModel):
+	"""Request to regenerate plan using AI with user's edits as context."""
+	edited_steps: list[dict[str, Any]] = Field(..., description="User's edited steps")
+	user_prompt: str = Field(..., min_length=1, description="User's refinement instructions for AI")
+
+
 # ============================================
 # Playwright Script & Test Run Schemas
 # ============================================

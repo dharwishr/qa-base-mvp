@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
-import { ArrowLeft, ExternalLink, RefreshCw, LayoutGrid, List, Loader2 } from "lucide-react"
+import { ArrowLeft, ExternalLink, RefreshCw, LayoutGrid, List, Loader2, Columns, Square } from "lucide-react"
 import { benchmarkApi } from "@/services/benchmarkApi"
 import BenchmarkModelPanel from "@/components/benchmark/BenchmarkModelPanel"
 import type { BenchmarkSession, BenchmarkModelRun } from "@/types/benchmark"
 import type { LlmModel, TestStep, TestPlan } from "@/types/analysis"
-import type { TimelineMessage, ChatMode } from "@/types/chat"
+import type { TimelineMessage, ChatMode, PlanStep, PlanStatus } from "@/types/chat"
 import type { ModelRunState } from "@/hooks/useBenchmarkSession"
 
 const STATUS_COLORS: Record<string, string> = {
@@ -106,6 +106,18 @@ export default function BenchmarkDetailPage() {
     const [combinedError, setCombinedError] = useState<string | null>(null)
     const [autoLoadCombined, setAutoLoadCombined] = useState(initialView === 'combined')
 
+    // Layout mode for combined view: side-by-side or tabbed
+    const [layoutMode, setLayoutMode] = useState<'side-by-side' | 'tabbed'>(() => {
+        const stored = localStorage.getItem('benchmark-layout-mode')
+        return (stored === 'tabbed' ? 'tabbed' : 'side-by-side') as 'side-by-side' | 'tabbed'
+    })
+    const [activeTab, setActiveTab] = useState<string | null>(null)
+
+    // Per-model chat state
+    const [modelModes, setModelModes] = useState<Map<string, ChatMode>>(new Map())
+    const [modelGeneratingPlan, setModelGeneratingPlan] = useState<Map<string, boolean>>(new Map())
+    const [modelExecuting, setModelExecuting] = useState<Map<string, boolean>>(new Map())
+
     const fetchSession = async () => {
         if (!benchmarkId) return
         setLoading(true)
@@ -135,7 +147,8 @@ export default function BenchmarkDetailPage() {
                         steps = await benchmarkApi.getModelRunSteps(benchmarkId, run.id)
                     }
 
-                    if ((run.status === 'plan_ready' || run.status === 'approved') && run.test_session_id) {
+                    // Fetch plan for more statuses
+                    if (['plan_ready', 'approved', 'running', 'completed'].includes(run.status) && run.test_session_id) {
                         try {
                             plan = await benchmarkApi.getModelRunPlan(benchmarkId, run.id)
                         } catch (e) {
@@ -143,7 +156,7 @@ export default function BenchmarkDetailPage() {
                         }
                     }
 
-                    // Build messages: user prompt + all steps + completion system message
+                    // Build messages: user prompt + plan (if exists) + steps + completion system message
                     const messages: TimelineMessage[] = []
 
                     // Initial user prompt
@@ -154,12 +167,33 @@ export default function BenchmarkDetailPage() {
                         })
                     )
 
-                    // System message for start
-                    messages.push(
-                        createTimelineMessage('system', {
-                            content: `Started execution with ${run.llm_model}`,
-                        })
-                    )
+                    // Add plan message if we have a plan
+                    if (plan) {
+                        const planSteps: PlanStep[] = plan.steps_json?.steps || []
+                        let planStatus: PlanStatus = 'pending'
+                        if (run.status === 'approved' || run.status === 'running' || run.status === 'completed') {
+                            planStatus = 'approved'
+                        } else if (run.status === 'rejected') {
+                            planStatus = 'rejected'
+                        }
+                        messages.push(
+                            createTimelineMessage('plan', {
+                                planId: plan.id,
+                                planText: plan.plan_text || '',
+                                planSteps,
+                                status: planStatus,
+                            })
+                        )
+                    }
+
+                    // System message for start (only if execution started)
+                    if (['running', 'completed', 'failed'].includes(run.status) && steps.length > 0) {
+                        messages.push(
+                            createTimelineMessage('system', {
+                                content: `Started execution with ${run.llm_model}`,
+                            })
+                        )
+                    }
 
                     // Step messages
                     for (const step of steps) {
@@ -217,6 +251,155 @@ export default function BenchmarkDetailPage() {
             next.set(modelRunId, { ...state, selectedStepId: stepId })
             return next
         })
+    }, [])
+
+    // Toggle layout mode
+    const toggleLayoutMode = useCallback(() => {
+        setLayoutMode(prev => {
+            const newMode = prev === 'side-by-side' ? 'tabbed' : 'side-by-side'
+            localStorage.setItem('benchmark-layout-mode', newMode)
+            return newMode
+        })
+    }, [])
+
+    // Set active tab (for tabbed layout)
+    useEffect(() => {
+        if (layoutMode === 'tabbed' && combinedRunStates.size > 0 && !activeTab) {
+            const firstModelId = Array.from(combinedRunStates.keys())[0]
+            setActiveTab(firstModelId)
+        }
+    }, [layoutMode, combinedRunStates, activeTab])
+
+    // Handle plan approval
+    const handleApprovePlan = useCallback(async (modelRunId: string) => {
+        if (!benchmarkId) return
+        try {
+            await benchmarkApi.approvePlan(benchmarkId, modelRunId)
+            // Update local state
+            setCombinedRunStates(prev => {
+                const next = new Map(prev)
+                const state = next.get(modelRunId)
+                if (state) {
+                    // Update plan message status
+                    const updatedMessages = state.messages.map(m => {
+                        if (m.type === 'plan') {
+                            return { ...m, status: 'approved' as PlanStatus }
+                        }
+                        return m
+                    })
+                    next.set(modelRunId, {
+                        ...state,
+                        modelRun: { ...state.modelRun, status: 'approved' },
+                        messages: [
+                            ...updatedMessages,
+                            createTimelineMessage('system', { content: 'Plan approved' }),
+                        ],
+                    })
+                }
+                return next
+            })
+            // Refresh session
+            fetchSession()
+        } catch (e) {
+            console.error('Error approving plan:', e)
+        }
+    }, [benchmarkId])
+
+    // Handle plan rejection
+    const handleRejectPlan = useCallback(async (modelRunId: string) => {
+        if (!benchmarkId) return
+        try {
+            await benchmarkApi.rejectPlan(benchmarkId, modelRunId)
+            // Update local state
+            setCombinedRunStates(prev => {
+                const next = new Map(prev)
+                const state = next.get(modelRunId)
+                if (state) {
+                    // Update plan message status
+                    const updatedMessages = state.messages.map(m => {
+                        if (m.type === 'plan') {
+                            return { ...m, status: 'rejected' as PlanStatus }
+                        }
+                        return m
+                    })
+                    next.set(modelRunId, {
+                        ...state,
+                        modelRun: { ...state.modelRun, status: 'rejected' },
+                        messages: [
+                            ...updatedMessages,
+                            createTimelineMessage('system', { content: 'Plan rejected' }),
+                        ],
+                    })
+                }
+                return next
+            })
+            fetchSession()
+        } catch (e) {
+            console.error('Error rejecting plan:', e)
+        }
+    }, [benchmarkId])
+
+    // Handle sending a message to a specific model
+    const handleSendMessage = useCallback(async (modelRunId: string, text: string, msgMode: ChatMode) => {
+        if (!benchmarkId) return
+
+        const modelState = combinedRunStates.get(modelRunId)
+        if (!modelState) return
+
+        // Add user message to timeline
+        setCombinedRunStates(prev => {
+            const next = new Map(prev)
+            const state = next.get(modelRunId)
+            if (state) {
+                next.set(modelRunId, {
+                    ...state,
+                    messages: [
+                        ...state.messages,
+                        createTimelineMessage('user', { content: text, mode: msgMode }),
+                    ],
+                })
+            }
+            return next
+        })
+
+        try {
+            if (msgMode === 'plan') {
+                setModelGeneratingPlan(prev => new Map(prev).set(modelRunId, true))
+            } else {
+                setModelExecuting(prev => new Map(prev).set(modelRunId, true))
+            }
+
+            await benchmarkApi.continueModelRun(benchmarkId, modelRunId, text, msgMode)
+
+            // Refresh to get updated state
+            await handleViewCombinedResults()
+        } catch (e) {
+            console.error('Error sending message:', e)
+            setCombinedRunStates(prev => {
+                const next = new Map(prev)
+                const state = next.get(modelRunId)
+                if (state) {
+                    next.set(modelRunId, {
+                        ...state,
+                        messages: [
+                            ...state.messages,
+                            createTimelineMessage('error', {
+                                content: e instanceof Error ? e.message : 'Failed to send message',
+                            }),
+                        ],
+                    })
+                }
+                return next
+            })
+        } finally {
+            setModelGeneratingPlan(prev => new Map(prev).set(modelRunId, false))
+            setModelExecuting(prev => new Map(prev).set(modelRunId, false))
+        }
+    }, [benchmarkId, combinedRunStates, handleViewCombinedResults])
+
+    // Handle mode change for a model
+    const handleModeChange = useCallback((modelRunId: string, newMode: ChatMode) => {
+        setModelModes(prev => new Map(prev).set(modelRunId, newMode))
     }, [])
 
     useEffect(() => {
@@ -307,6 +490,7 @@ export default function BenchmarkDetailPage() {
                                     ? 'bg-primary text-primary-foreground'
                                     : 'hover:bg-muted'
                             }`}
+                            title="List View"
                         >
                             <List className="h-4 w-4" />
                         </button>
@@ -318,7 +502,7 @@ export default function BenchmarkDetailPage() {
                                     ? 'bg-primary text-primary-foreground'
                                     : 'hover:bg-muted'
                             }`}
-                            title="View Combined Results"
+                            title="Combined View"
                         >
                             {loadingCombined ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -327,6 +511,23 @@ export default function BenchmarkDetailPage() {
                             )}
                         </button>
                     </div>
+
+                    {/* Layout toggle (only in combined view) */}
+                    {viewMode === 'combined' && combinedRunStates.size > 1 && (
+                        <div className="flex items-center border rounded-lg">
+                            <button
+                                onClick={toggleLayoutMode}
+                                className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors hover:bg-muted"
+                                title={layoutMode === 'side-by-side' ? 'Switch to Tabbed View' : 'Switch to Side-by-Side View'}
+                            >
+                                {layoutMode === 'side-by-side' ? (
+                                    <Square className="h-4 w-4" />
+                                ) : (
+                                    <Columns className="h-4 w-4" />
+                                )}
+                            </button>
+                        </div>
+                    )}
                     
                     <button
                         onClick={fetchSession}
@@ -367,7 +568,7 @@ export default function BenchmarkDetailPage() {
                             </div>
                         </div>
                     </div>
-                ) : (
+                ) : layoutMode === 'side-by-side' ? (
                     /* Combined View - Side by Side Panels */
                     <div className="p-4 h-full">
                         <div
@@ -383,12 +584,62 @@ export default function BenchmarkDetailPage() {
                                 <BenchmarkModelPanel
                                     key={state.modelRun.id}
                                     modelRunState={state}
-                                    headless={true} // history view: screenshot mode only
+                                    headless={session?.headless ?? true}
                                     onStepSelect={setSelectedStepIdForRun}
-                                    onApprovePlan={undefined}
-                                    onRejectPlan={undefined}
+                                    onApprovePlan={state.modelRun.status === 'plan_ready' ? handleApprovePlan : undefined}
+                                    onRejectPlan={state.modelRun.status === 'plan_ready' ? handleRejectPlan : undefined}
+                                    showChatInput={true}
+                                    mode={modelModes.get(state.modelRun.id) || 'plan'}
+                                    onModeChange={handleModeChange}
+                                    onSendMessage={handleSendMessage}
+                                    isGeneratingPlan={modelGeneratingPlan.get(state.modelRun.id) || false}
+                                    isExecuting={modelExecuting.get(state.modelRun.id) || false}
                                 />
                             ))}
+                        </div>
+                    </div>
+                ) : (
+                    /* Combined View - Tabbed Layout */
+                    <div className="p-4 h-full flex flex-col">
+                        {/* Tab Bar */}
+                        <div className="flex border-b mb-4">
+                            {Array.from(combinedRunStates.values()).map((state) => (
+                                <button
+                                    key={state.modelRun.id}
+                                    onClick={() => setActiveTab(state.modelRun.id)}
+                                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                                        activeTab === state.modelRun.id
+                                            ? 'border-primary text-primary'
+                                            : 'border-transparent text-muted-foreground hover:text-foreground'
+                                    }`}
+                                >
+                                    <span className="flex items-center gap-2">
+                                        {LLM_LABELS[state.modelRun.llm_model as LlmModel] || state.modelRun.llm_model}
+                                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[state.modelRun.status] || 'bg-gray-100 text-gray-700'}`}>
+                                            {STATUS_LABELS[state.modelRun.status] || state.modelRun.status}
+                                        </span>
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Active Panel */}
+                        <div className="flex-1 min-h-0">
+                            {activeTab && combinedRunStates.get(activeTab) && (
+                                <BenchmarkModelPanel
+                                    modelRunState={combinedRunStates.get(activeTab)!}
+                                    headless={session?.headless ?? true}
+                                    onStepSelect={setSelectedStepIdForRun}
+                                    onApprovePlan={combinedRunStates.get(activeTab)!.modelRun.status === 'plan_ready' ? handleApprovePlan : undefined}
+                                    onRejectPlan={combinedRunStates.get(activeTab)!.modelRun.status === 'plan_ready' ? handleRejectPlan : undefined}
+                                    showChatInput={true}
+                                    mode={modelModes.get(activeTab) || 'plan'}
+                                    onModeChange={handleModeChange}
+                                    onSendMessage={handleSendMessage}
+                                    isGeneratingPlan={modelGeneratingPlan.get(activeTab) || false}
+                                    isExecuting={modelExecuting.get(activeTab) || false}
+                                />
+                            )}
                         </div>
                     </div>
                 )}

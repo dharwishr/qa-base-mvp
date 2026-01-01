@@ -1,4 +1,5 @@
 import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
+import type { PlanStep } from '../types/chat';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
@@ -261,6 +262,44 @@ export const analysisApi = {
       }
     );
     return handleResponse<TestSession>(response);
+  },
+
+  /**
+   * Update a plan with manually edited steps.
+   */
+  async updatePlan(
+    sessionId: string,
+    steps: PlanStep[],
+    userPrompt?: string
+  ): Promise<TestPlan> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/plan`,
+      {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ steps, user_prompt: userPrompt }),
+      }
+    );
+    return handleResponse<TestPlan>(response);
+  },
+
+  /**
+   * Regenerate a plan using AI with user's edits as context.
+   */
+  async regeneratePlan(
+    sessionId: string,
+    editedSteps: PlanStep[],
+    userPrompt: string
+  ): Promise<TestPlan> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/plan/regenerate`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ edited_steps: editedSteps, user_prompt: userPrompt }),
+      }
+    );
+    return handleResponse<TestPlan>(response);
   },
 
   /**

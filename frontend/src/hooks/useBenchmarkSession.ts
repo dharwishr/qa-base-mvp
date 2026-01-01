@@ -9,7 +9,7 @@ import type {
   ModelBrowserSession,
   BenchmarkMode,
 } from '../types/benchmark';
-import type { TimelineMessage, ChatMode } from '../types/chat';
+import type { TimelineMessage, ChatMode, PlanStep, PlanStatus } from '../types/chat';
 
 // Generate UUID with fallback for non-secure contexts (HTTP)
 function generateUUID(): string {
@@ -58,6 +58,10 @@ interface UseBenchmarkSessionReturn {
   isRunning: boolean;
   isPlanning: boolean;
   error: string | null;
+  // Per-model state
+  modelModes: Map<string, ChatMode>;
+  modelGeneratingPlan: Map<string, boolean>;
+  modelExecuting: Map<string, boolean>;
 
   // Actions
   setSelectedModels: (models: LlmModel[]) => void;
@@ -73,6 +77,9 @@ interface UseBenchmarkSessionReturn {
   executeApprovedPlans: () => Promise<void>;
   // Act mode actions
   sendAction: (action: string) => Promise<void>;
+  // Per-model chat actions
+  sendModelMessage: (modelRunId: string, text: string, mode: ChatMode) => Promise<void>;
+  setModelMode: (modelRunId: string, mode: ChatMode) => void;
 }
 
 const POLL_INTERVAL = 2000;
@@ -89,6 +96,11 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
   const [isRunning, setIsRunning] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Per-model state
+  const [modelModes, setModelModes] = useState<Map<string, ChatMode>>(new Map());
+  const [modelGeneratingPlan, setModelGeneratingPlan] = useState<Map<string, boolean>>(new Map());
+  const [modelExecuting, setModelExecuting] = useState<Map<string, boolean>>(new Map());
 
   // Refs
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -191,7 +203,8 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
           }
 
           let plan: TestPlan | null = null;
-          if (modelRun.status === 'plan_ready' && modelRun.test_session_id) {
+          // Fetch plan for plan_ready, approved, or running states (to retain plan info)
+          if (['plan_ready', 'approved', 'running', 'completed'].includes(modelRun.status) && modelRun.test_session_id) {
             try {
               plan = await benchmarkApi.getModelRunPlan(benchmarkId, modelRun.id);
             } catch (e) {
@@ -224,7 +237,10 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
           const statusMessages: TimelineMessage[] = [];
           const prevStatus = existingState?.modelRun.status;
           const hasStatusChanged = prevStatus !== modelRun.status;
-          
+
+          // Track if we already have a plan message in existing messages
+          const hasPlanMessage = existingState?.messages.some(m => m.type === 'plan') || false;
+
           if (hasStatusChanged) {
             if (modelRun.status === 'queued') {
               statusMessages.push(createTimelineMessage('system', {
@@ -234,9 +250,14 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
               statusMessages.push(createTimelineMessage('system', {
                 content: `Generating plan with ${modelRun.llm_model}...`,
               }));
-            } else if (modelRun.status === 'plan_ready') {
-              statusMessages.push(createTimelineMessage('system', {
-                content: 'Plan ready - awaiting approval',
+            } else if (modelRun.status === 'plan_ready' && plan && !hasPlanMessage) {
+              // Add plan message to timeline when plan is ready
+              const planSteps: PlanStep[] = plan.steps_json?.steps || [];
+              statusMessages.push(createTimelineMessage('plan', {
+                planId: plan.id,
+                planText: plan.plan_text || '',
+                planSteps,
+                status: 'pending' as PlanStatus,
               }));
             } else if (modelRun.status === 'running') {
               statusMessages.push(createTimelineMessage('system', {
@@ -253,6 +274,23 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
             }
           }
 
+          // Update plan message status if it exists and status changed
+          let updatedMessages = existingState?.messages || [];
+          if (hasPlanMessage && hasStatusChanged) {
+            updatedMessages = updatedMessages.map(m => {
+              if (m.type === 'plan') {
+                let newStatus: PlanStatus = (m as any).status;
+                if (modelRun.status === 'approved' || modelRun.status === 'running' || modelRun.status === 'completed') {
+                  newStatus = 'approved';
+                } else if (modelRun.status === 'rejected') {
+                  newStatus = 'rejected';
+                }
+                return { ...m, status: newStatus };
+              }
+              return m;
+            });
+          }
+
           // Start browser polling if running and not headless
           if (
             modelRun.status === 'running' &&
@@ -264,7 +302,7 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
           }
 
           const newMessages = [
-            ...(existingState?.messages || []),
+            ...updatedMessages,
             ...statusMessages,
             ...newStepMessages,
           ];
@@ -578,6 +616,143 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
     });
   }, [benchmarkId, modelRunStates]);
 
+  // ============================================
+  // Per-Model Chat Actions
+  // ============================================
+
+  // Set mode for a specific model
+  const setModelMode = useCallback((modelRunId: string, newMode: ChatMode) => {
+    setModelModes((prev) => {
+      const newMap = new Map(prev);
+      newMap.set(modelRunId, newMode);
+      return newMap;
+    });
+  }, []);
+
+  // Send message to a specific model run
+  const sendModelMessage = useCallback(async (modelRunId: string, text: string, msgMode: ChatMode) => {
+    if (!benchmarkId) return;
+
+    const modelState = modelRunStates.get(modelRunId);
+    if (!modelState) return;
+
+    const testSessionId = modelState.modelRun.test_session_id;
+    if (!testSessionId) {
+      console.error('Cannot send message: no test session ID for model run');
+      return;
+    }
+
+    // Add user message to timeline
+    setModelRunStates((prev) => {
+      const newMap = new Map(prev);
+      const state = newMap.get(modelRunId);
+      if (state) {
+        newMap.set(modelRunId, {
+          ...state,
+          messages: [
+            ...state.messages,
+            createTimelineMessage('user', { content: text, mode: msgMode }),
+          ],
+        });
+      }
+      return newMap;
+    });
+
+    try {
+      if (msgMode === 'plan') {
+        // Set generating plan flag
+        setModelGeneratingPlan((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(modelRunId, true);
+          return newMap;
+        });
+
+        // Call continue session API for plan mode
+        await benchmarkApi.continueModelRun(benchmarkId, modelRunId, text, 'plan');
+
+        // Add system message
+        setModelRunStates((prev) => {
+          const newMap = new Map(prev);
+          const state = newMap.get(modelRunId);
+          if (state) {
+            newMap.set(modelRunId, {
+              ...state,
+              messages: [
+                ...state.messages,
+                createTimelineMessage('system', { content: 'Generating new plan...' }),
+              ],
+            });
+          }
+          return newMap;
+        });
+      } else {
+        // Act mode - execute action directly
+        setModelExecuting((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(modelRunId, true);
+          return newMap;
+        });
+
+        const response = await benchmarkApi.actOnModelRun(benchmarkId, modelRunId, text);
+
+        setModelRunStates((prev) => {
+          const newMap = new Map(prev);
+          const state = newMap.get(modelRunId);
+          if (state) {
+            newMap.set(modelRunId, {
+              ...state,
+              messages: [
+                ...state.messages,
+                createTimelineMessage('system', {
+                  content: response.action_taken || 'Action executed',
+                }),
+              ],
+            });
+          }
+          return newMap;
+        });
+
+        setModelExecuting((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(modelRunId, false);
+          return newMap;
+        });
+      }
+    } catch (e) {
+      console.error(`Error sending message to model run ${modelRunId}:`, e);
+
+      // Add error message
+      setModelRunStates((prev) => {
+        const newMap = new Map(prev);
+        const state = newMap.get(modelRunId);
+        if (state) {
+          newMap.set(modelRunId, {
+            ...state,
+            messages: [
+              ...state.messages,
+              createTimelineMessage('error', {
+                content: e instanceof Error ? e.message : 'Failed to send message',
+              }),
+            ],
+          });
+        }
+        return newMap;
+      });
+
+      // Clear flags
+      setModelGeneratingPlan((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(modelRunId, false);
+        return newMap;
+      });
+      setModelExecuting((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(modelRunId, false);
+        return newMap;
+      });
+    }
+  }, [benchmarkId, modelRunStates]);
+
   // Start polling when benchmarkId is set (fixes stale closure issue)
   useEffect(() => {
     if (!benchmarkId) return;
@@ -608,6 +783,10 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
     isRunning,
     isPlanning,
     error,
+    // Per-model state
+    modelModes,
+    modelGeneratingPlan,
+    modelExecuting,
 
     setSelectedModels,
     setHeadless,
@@ -622,5 +801,8 @@ export function useBenchmarkSession(): UseBenchmarkSessionReturn {
     executeApprovedPlans,
     // Act mode actions
     sendAction,
+    // Per-model chat actions
+    sendModelMessage,
+    setModelMode,
   };
 }

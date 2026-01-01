@@ -35,6 +35,10 @@ from browser_use.observability import observe_debug
 from browser_use.tools.registry.service import Registry
 from browser_use.tools.utils import get_click_description
 from browser_use.tools.views import (
+	AssertElementVisibleAction,
+	AssertTextAction,
+	AssertUrlAction,
+	AssertValueAction,
 	ClickElementAction,
 	ClickElementActionIndexOnly,
 	CloseTabAction,
@@ -67,6 +71,9 @@ try:
 		record_scroll,
 		record_wait,
 		record_done_verification,
+		record_assert_text,
+		record_assert_url,
+		record_assert_element_visible,
 	)
 	RECORDING_ENABLED = True
 except ImportError:
@@ -1068,6 +1075,149 @@ You will be given a query and the markdown of a webpage that has been filtered t
 					# Fallback to regular error
 					error_msg = selection_data.get('error', f'Failed to select option: {params.text}')
 					return ActionResult(error=error_msg)
+
+		# ===================== Assertion/Verification Actions =====================
+
+		@self.registry.action(
+			'Assert text is visible on page. Use after actions to verify expected results (e.g., after login, verify "Welcome" message appears).',
+			param_model=AssertTextAction,
+		)
+		async def assert_text(params: AssertTextAction, browser_session: BrowserSession):
+			"""Verify text is visible, optionally within a specific element."""
+			cdp_session = await browser_session.get_or_create_cdp_session()
+
+			if params.index:
+				# Check within specific element
+				node = await browser_session.get_element_by_index(params.index)
+				if node is None:
+					return ActionResult(error=f'Element {params.index} not found')
+
+				# Get element text via JavaScript using the node's xpath
+				js_code = f"""
+				(function() {{
+					try {{
+						var result = document.evaluate("{node.xpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+						var element = result.singleNodeValue;
+						if (!element) return '';
+						return element.innerText || element.textContent || '';
+					}} catch(e) {{
+						return '';
+					}}
+				}})()
+				"""
+				result = await cdp_session.cdp_client.send.Runtime.evaluate(
+					params={'expression': js_code, 'returnByValue': True},
+					session_id=cdp_session.session_id
+				)
+				text_content = result.get('result', {}).get('value', '')
+			else:
+				# Check page-wide via JavaScript evaluation
+				result = await cdp_session.cdp_client.send.Runtime.evaluate(
+					params={'expression': 'document.body.innerText'},
+					session_id=cdp_session.session_id
+				)
+				text_content = result.get('result', {}).get('value', '')
+
+			# Perform the text comparison
+			if params.partial_match:
+				found = params.text.lower() in text_content.lower()
+			else:
+				found = params.text.lower() == text_content.lower()
+
+			# Record for script generation
+			if RECORDING_ENABLED:
+				record_assert_text(
+					expected_text=params.text,
+					partial_match=params.partial_match,
+				)
+
+			if found:
+				memory = f"✓ Verified text '{params.text[:50]}' is visible"
+				return ActionResult(extracted_content=memory, long_term_memory=memory)
+			else:
+				return ActionResult(error=f"✗ Text '{params.text[:50]}' not found on page")
+
+		@self.registry.action(
+			'Assert element is visible on page. Use to verify UI state (e.g., verify a button or form appears).',
+			param_model=AssertElementVisibleAction,
+		)
+		async def assert_element_visible(params: AssertElementVisibleAction, browser_session: BrowserSession):
+			"""Verify element exists and is visible."""
+			node = await browser_session.get_element_by_index(params.index)
+			if node is None:
+				return ActionResult(error=f'✗ Element {params.index} not found - verification failed')
+
+			# Record for script generation
+			if RECORDING_ENABLED:
+				record_assert_element_visible(node)
+
+			memory = f"✓ Verified element {params.index} is visible"
+			return ActionResult(extracted_content=memory, long_term_memory=memory)
+
+		@self.registry.action(
+			'Assert current URL contains or equals expected value. Use after navigation to verify correct page.',
+			param_model=AssertUrlAction,
+		)
+		async def assert_url(params: AssertUrlAction, browser_session: BrowserSession):
+			"""Verify current URL."""
+			current_url = await browser_session.get_current_page_url()
+
+			if params.exact_match:
+				found = current_url == params.url
+			else:
+				found = params.url in current_url
+
+			# Record for script generation
+			if RECORDING_ENABLED:
+				record_assert_url(params.url, partial_match=not params.exact_match)
+
+			if found:
+				memory = f"✓ Verified URL {'equals' if params.exact_match else 'contains'} '{params.url}'"
+				return ActionResult(extracted_content=memory, long_term_memory=memory)
+			else:
+				return ActionResult(error=f"✗ URL '{current_url}' does not {'equal' if params.exact_match else 'contain'} '{params.url}'")
+
+		@self.registry.action(
+			'Assert input element has expected value. Use to verify form input values.',
+			param_model=AssertValueAction,
+		)
+		async def assert_value(params: AssertValueAction, browser_session: BrowserSession):
+			"""Verify input element value."""
+			node = await browser_session.get_element_by_index(params.index)
+			if node is None:
+				return ActionResult(error=f'✗ Element {params.index} not found')
+
+			cdp_session = await browser_session.get_or_create_cdp_session()
+
+			# Get value via JavaScript using xpath
+			js_code = f"""
+			(function() {{
+				try {{
+					var result = document.evaluate("{node.xpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+					var element = result.singleNodeValue;
+					if (!element) return null;
+					return element.value !== undefined ? element.value : element.textContent;
+				}} catch(e) {{
+					return null;
+				}}
+			}})()
+			"""
+			result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={'expression': js_code, 'returnByValue': True},
+				session_id=cdp_session.session_id
+			)
+			actual_value = result.get('result', {}).get('value', '')
+
+			if actual_value is None:
+				return ActionResult(error=f'✗ Could not read value from element {params.index}')
+
+			found = actual_value == params.value
+
+			if found:
+				memory = f"✓ Verified input value equals '{params.value}'"
+				return ActionResult(extracted_content=memory, long_term_memory=memory)
+			else:
+				return ActionResult(error=f"✗ Input value '{actual_value}' does not equal expected '{params.value}'")
 
 		# File System Actions
 

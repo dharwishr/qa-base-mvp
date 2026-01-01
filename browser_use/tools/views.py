@@ -105,3 +105,29 @@ class GetDropdownOptionsAction(BaseModel):
 class SelectDropdownOptionAction(BaseModel):
 	index: int
 	text: str = Field(description='exact text/value')
+
+
+# ===================== Assertion/Verification Actions =====================
+
+class AssertTextAction(BaseModel):
+	"""Assert text is visible on page or within element."""
+	text: str = Field(description='Expected text to find on the page')
+	index: int | None = Field(default=None, ge=1, description='Optional element index to search within')
+	partial_match: bool = Field(default=True, description='True for substring match, False for exact match')
+
+
+class AssertElementVisibleAction(BaseModel):
+	"""Assert element is visible on the page."""
+	index: int = Field(ge=1, description='Element index from browser_state')
+
+
+class AssertUrlAction(BaseModel):
+	"""Assert URL matches expected pattern."""
+	url: str = Field(description='Expected URL or substring')
+	exact_match: bool = Field(default=False, description='True for exact URL match, False for contains')
+
+
+class AssertValueAction(BaseModel):
+	"""Assert input element has expected value."""
+	index: int = Field(ge=1, description='Input element index from browser_state')
+	value: str = Field(description='Expected value')

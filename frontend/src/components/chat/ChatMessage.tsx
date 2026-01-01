@@ -16,6 +16,7 @@ import {
   X,
   SkipForward,
   Trash2,
+  Pencil,
 } from 'lucide-react';
 import { SimpleActionRow } from '@/components/analysis/StepList';
 import ActionEditDialog from '@/components/analysis/ActionEditDialog';
@@ -27,6 +28,7 @@ import type {
   UserMessage,
   AssistantMessage,
   PlanMessage,
+  PlanStep,
   StepMessage,
   ErrorMessage,
   SystemMessage,
@@ -40,6 +42,7 @@ interface ChatMessageProps {
   message: TimelineMessage;
   onApprove?: (planId: string) => void;
   onReject?: (planId: string) => void;
+  onEditPlan?: (planId: string, planText: string, planSteps: PlanStep[]) => void;
   onStepSelect?: (stepId: string) => void;
   isSelected?: boolean;
   onUndoToStep?: (stepNumber: number) => void;
@@ -120,10 +123,12 @@ function PlanMessageCard({
   message,
   onApprove,
   onReject,
+  onEditPlan,
 }: {
   message: PlanMessage;
   onApprove?: (planId: string) => void;
   onReject?: (planId: string) => void;
+  onEditPlan?: (planId: string, planText: string, planSteps: PlanStep[]) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const isPending = message.status === 'pending';
@@ -212,6 +217,18 @@ function PlanMessageCard({
                   {/* Action Buttons - only show when pending */}
                   {isPending && (
                     <div className="flex gap-2 pt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-blue-300 text-blue-600 hover:bg-blue-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEditPlan?.(message.planId, message.planText, message.planSteps);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4 mr-1" />
+                        Edit Plan
+                      </Button>
                       <Button
                         size="sm"
                         className="flex-1 bg-green-600 hover:bg-green-700"
@@ -328,10 +345,10 @@ function StepMessageCard({
   if (simpleMode) {
     const actions = step.actions || []
 
-    // Filter out file operation actions in simple mode
+    // Filter out file operations, evaluate, and extract actions in simple mode
     const filteredActions = actions.filter(action => {
       const actionName = action.action_name?.toLowerCase() || '';
-      return !['replace_file', 'read_file', 'write_file'].includes(actionName);
+      return !['replace_file', 'read_file', 'write_file', 'evaluate', 'extract', 'extract_content'].includes(actionName);
     });
 
     // Skip steps without relevant actions in simple mode
@@ -345,7 +362,15 @@ function StepMessageCard({
           {filteredActions.map((action, idx) => {
             const actionNumber = startingActionNumber + idx + 1;
             return (
-              <div key={action.id || idx} className="flex items-start gap-2">
+              <div
+                key={action.id || idx}
+                className={`flex items-start gap-2 cursor-pointer rounded-lg transition-all ${
+                  isSelected
+                    ? 'ring-2 ring-primary bg-primary/5'
+                    : 'hover:bg-muted/30'
+                }`}
+                onClick={() => onStepSelect?.(step.id)}
+              >
                 <span className="font-mono text-muted-foreground text-sm w-6 pt-2 flex-shrink-0 text-right">
                   {actionNumber}
                 </span>
@@ -640,6 +665,7 @@ export default function ChatMessage({
   message,
   onApprove,
   onReject,
+  onEditPlan,
   onStepSelect,
   isSelected,
   onUndoToStep,
@@ -668,6 +694,7 @@ export default function ChatMessage({
           message={message}
           onApprove={onApprove}
           onReject={onReject}
+          onEditPlan={onEditPlan}
         />
       );
     case 'step':
