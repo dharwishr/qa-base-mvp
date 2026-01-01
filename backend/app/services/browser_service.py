@@ -148,6 +148,36 @@ class BrowserService:
 		except Exception as e:
 			logger.error(f"Error updating session status: {e}")
 
+	def _extract_target_url(self, plan: TestPlan) -> str | None:
+		"""Extract the target URL from a test plan.
+
+		Looks for:
+		1. URL in the first navigate step
+		2. URL pattern in the plan text
+		"""
+		import re
+
+		# Try to find URL in steps
+		if plan.steps_json:
+			steps = plan.steps_json.get("steps", [])
+			for step in steps:
+				action_type = step.get("action_type", "").lower()
+				if action_type in ("navigate", "go_to_url", "open"):
+					details = step.get("details", "")
+					# Extract URL from details
+					url_match = re.search(r'https?://[^\s<>"{}|\\^`\[\]]+', details)
+					if url_match:
+						return url_match.group(0)
+
+		# Try to find URL in plan_text
+		if plan.plan_text:
+			url_match = re.search(r'https?://[^\s<>"{}|\\^`\[\]]+', plan.plan_text)
+			if url_match:
+				return url_match.group(0)
+
+		logger.warning("Could not extract target URL from plan")
+		return None
+
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
 		# Check if stop was requested - raise exception to gracefully exit
@@ -312,8 +342,10 @@ class BrowserService:
 			# Update session status using helper method
 			self._update_session_status("running")
 
-			# Import browser-use components
-			from browser_use import Agent, BrowserSession
+			# Import browser-use components (using QAAgent for test automation)
+			from browser_use import BrowserSession
+			from browser_use.agent.qa_agent import QAAgent
+			from browser_use.tools.qa_tools import QATools
 
 			# Get task from plan
 			from app.services.plan_service import get_plan_as_task
@@ -435,11 +467,20 @@ class BrowserService:
 					"headless": True,
 				})
 
-			# Create agent
-			agent = Agent(
+			# Extract target URL from plan for domain restrictions
+			target_url = self._extract_target_url(plan)
+
+			# Get test steps from plan for QAAgent
+			test_steps = plan.steps_json.get("steps", []) if plan.steps_json else []
+
+			# Create QA agent with domain restrictions and test automation focus
+			agent = QAAgent(
 				task=task,
 				llm=llm,
 				browser_session=browser_session,
+				target_url=target_url,
+				mode='act',  # Test execution mode
+				test_steps=test_steps,
 				use_vision=True,
 				max_failures=3,
 			)

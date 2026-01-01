@@ -643,6 +643,3 @@ The transformation from generic browser agent to QA browser agent requires:
 5. **Enhanced Recording**: Capture selectors for replay
 
 The architecture already supports most of these changes through existing parameters (`allowed_domains`, `extend_system_message`, `exclude_actions`). The main work is creating the QA-specific wrapper classes and prompts.
-
-
-while re initialzing the test case analysis, browser loading taking time even all the steps are already executed. 

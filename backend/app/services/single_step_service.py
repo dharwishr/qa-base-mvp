@@ -4,9 +4,12 @@ Single-step execution service for act mode.
 This service executes single browser actions without the iterative feedback loops
 that the browser-use Agent typically uses. It's designed for "act mode" where users
 issue one command at a time and see immediate results.
+
+Uses QAAgent for strict QA mode behavior - no external searches, domain restrictions.
 """
 
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,6 +31,19 @@ if TYPE_CHECKING:
 	from browser_use.agent.views import AgentStepInfo
 
 logger = logging.getLogger(__name__)
+
+
+def extract_target_url_from_context(url: str | None, previous_context: str | None) -> str | None:
+	"""Extract target URL from current URL or previous context."""
+	if url:
+		return url
+
+	if previous_context:
+		url_match = re.search(r'https?://[^\s<>"{}|\\^`\[\]]+', previous_context)
+		if url_match:
+			return url_match.group(0)
+
+	return None
 
 
 class SingleStepActService:
@@ -66,7 +82,7 @@ class SingleStepActService:
 		Returns:
 			dict with keys: success, action_taken, thinking, result, browser_state, error
 		"""
-		from browser_use import Agent
+		from browser_use.agent.qa_agent import QAAgent
 		from browser_use.agent.views import AgentStepInfo
 
 		try:
@@ -76,6 +92,9 @@ class SingleStepActService:
 			)
 
 			logger.info(f"Single step: Current URL: {browser_state_before.url}, Title: {browser_state_before.title}")
+
+			# Extract target URL for domain restrictions
+			target_url = extract_target_url_from_context(browser_state_before.url, previous_context)
 
 			# Build enhanced task with context
 			enhanced_task = self._build_single_step_task(
@@ -88,17 +107,17 @@ class SingleStepActService:
 			# Initialize LLM
 			llm = get_llm_for_model(self.llm_model)
 
-			# Create agent with single-step configuration
-			agent = Agent(
+			# Create QA agent with single-step configuration and domain restrictions
+			agent = QAAgent(
 				task=enhanced_task,
 				llm=llm,
 				browser_session=self.browser_session,
+				target_url=target_url,
+				mode='act',  # Test execution mode
 				use_vision=True,
 				max_failures=1,  # Fail fast for single actions
-				flash_mode=True,  # Minimal prompts for speed
 				max_actions_per_step=1,  # Only one action per step
 				use_thinking=True,  # Still want to see reasoning
-				extend_system_message=self._get_single_step_system_extension(),
 			)
 
 			# Execute exactly ONE step

@@ -162,7 +162,90 @@ def _convert_action_to_playwright_step(action, index: int, url: str | None) -> d
 			"description": f"Select '{params.get('value', '')}'",
 		}
 	
+	# Handle assertion/verification actions
+	elif action_name.startswith("assert") or "verify" in action_name:
+		return _convert_assert_action(action, index)
+	
 	return None
+
+
+def _convert_assert_action(action, index: int) -> dict[str, Any] | None:
+	"""Convert assertion actions to PlaywrightStep format."""
+	action_name = action.action_name.lower()
+	params = action.action_params or {}
+	
+	# Assert text visible
+	if "text" in action_name:
+		expected_text = params.get("text", "")
+		partial_match = params.get("partial_match", True)
+		return {
+			"index": index,
+			"action": "assert",
+			"assertion": {
+				"assertion_type": "text_visible",
+				"expected_value": expected_text,
+				"partial_match": partial_match,
+				"case_sensitive": not partial_match,
+			},
+			"description": f"Assert text visible: '{expected_text[:40]}...'" if len(expected_text) > 40 else f"Assert text visible: '{expected_text}'",
+		}
+	
+	# Assert element visible
+	elif "element" in action_name or "visible" in action_name:
+		selectors = _build_selectors(action) if action.element_xpath else None
+		return {
+			"index": index,
+			"action": "assert",
+			"selectors": selectors,
+			"assertion": {
+				"assertion_type": "element_visible",
+			},
+			"element_context": _build_element_context(action),
+			"description": action.element_name or "Assert element is visible",
+		}
+	
+	# Assert URL
+	elif "url" in action_name:
+		expected_url = params.get("url", "")
+		exact_match = params.get("exact_match", False)
+		return {
+			"index": index,
+			"action": "assert",
+			"assertion": {
+				"assertion_type": "url_contains" if not exact_match else "url_equals",
+				"expected_value": expected_url,
+				"partial_match": not exact_match,
+			},
+			"description": f"Assert URL {'contains' if not exact_match else 'equals'}: {expected_url}",
+		}
+	
+	# Assert value
+	elif "value" in action_name:
+		expected_value = params.get("value", "")
+		selectors = _build_selectors(action) if action.element_xpath else None
+		return {
+			"index": index,
+			"action": "assert",
+			"selectors": selectors,
+			"assertion": {
+				"assertion_type": "value_equals",
+				"expected_value": expected_value,
+			},
+			"element_context": _build_element_context(action),
+			"description": f"Assert value equals: '{expected_value}'",
+		}
+	
+	# Generic assertion (fallback)
+	return {
+		"index": index,
+		"action": "assert",
+		"assertion": {
+			"assertion_type": "text_visible",
+			"expected_value": action.extracted_content or "",
+			"partial_match": True,
+		},
+		"description": action.element_name or "Verify assertion",
+	}
 
 
 def _build_selectors(action) -> dict[str, Any]:

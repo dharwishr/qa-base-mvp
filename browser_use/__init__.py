@@ -47,6 +47,7 @@ base_subprocess.BaseSubprocessTransport.__del__ = _patched_del
 if TYPE_CHECKING:
 	from browser_use.agent.prompts import SystemPrompt
 	from browser_use.agent.service import Agent
+	from browser_use.agent.qa_agent import QAAgent
 
 	# from browser_use.agent.service import Agent
 	from browser_use.agent.views import ActionModel, ActionResult, AgentHistoryList
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
 	from browser_use.llm.vercel.chat import ChatVercel
 	from browser_use.sandbox import sandbox
 	from browser_use.tools.service import Controller, Tools
+	from browser_use.tools.qa_tools import QATools
 
 	# Lazy imports mapping - only import when actually accessed
 _LAZY_IMPORTS = {
@@ -75,6 +77,8 @@ _LAZY_IMPORTS = {
 	# Code-use agent (Jupyter notebook-like execution)
 	'CodeAgent': ('browser_use.code_use.service', 'CodeAgent'),
 	'Agent': ('browser_use.agent.service', 'Agent'),
+	# QA Agent (specialized for test automation)
+	'QAAgent': ('browser_use.agent.qa_agent', 'QAAgent'),
 	# System prompt (moderate weight due to agent.views imports)
 	'SystemPrompt': ('browser_use.agent.prompts', 'SystemPrompt'),
 	# Agent views (very heavy - over 1 second!)
@@ -86,6 +90,7 @@ _LAZY_IMPORTS = {
 	'BrowserProfile': ('browser_use.browser', 'BrowserProfile'),
 	# Tools (moderate weight)
 	'Tools': ('browser_use.tools.service', 'Tools'),
+	'QATools': ('browser_use.tools.qa_tools', 'QATools'),  # QA-specific tools
 	'Controller': ('browser_use.tools.service', 'Controller'),  # alias
 	# DOM service (moderate weight)
 	'DomService': ('browser_use.dom.service', 'DomService'),
@@ -131,6 +136,7 @@ def __getattr__(name: str):
 
 __all__ = [
 	'Agent',
+	'QAAgent',  # QA-specialized agent
 	'CodeAgent',
 	# 'CodeAgent',
 	'BrowserSession',
@@ -154,6 +160,7 @@ __all__ = [
 	'ChatOllama',
 	'ChatVercel',
 	'Tools',
+	'QATools',  # QA-specific tools
 	'Controller',
 	# LLM models module
 	'models',
