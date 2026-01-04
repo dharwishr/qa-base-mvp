@@ -30,6 +30,7 @@ export default function ChatInput({
     isProcessing,
     error: voiceError,
     isSupported: isVoiceSupported,
+    unsupportedReason,
     startListening,
     stopListening,
   } = useVoiceInput({
@@ -164,24 +165,22 @@ export default function ChatInput({
           />
         </div>
         {/* Mic button */}
-        {isVoiceSupported && (
-          <Button
-            size="icon"
-            variant={isListening ? "destructive" : "outline"}
-            onClick={handleMicClick}
-            disabled={isBlocked || isProcessing}
-            className="h-11 w-11 rounded-xl flex-shrink-0"
-            title={isListening ? "Stop recording" : "Start voice input"}
-          >
-            {isProcessing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : isListening ? (
-              <Square className="h-4 w-4" />
-            ) : (
-              <Mic className="h-4 w-4" />
-            )}
-          </Button>
-        )}
+        <Button
+          size="icon"
+          variant={isListening ? "destructive" : "outline"}
+          onClick={handleMicClick}
+          disabled={isBlocked || isProcessing || !isVoiceSupported}
+          className="h-11 w-11 rounded-xl flex-shrink-0"
+          title={unsupportedReason || (isListening ? "Stop recording" : "Start voice input")}
+        >
+          {isProcessing ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : isListening ? (
+            <Square className="h-4 w-4" />
+          ) : (
+            <Mic className="h-4 w-4" />
+          )}
+        </Button>
         <Button
           size="icon"
           onClick={handleSend}

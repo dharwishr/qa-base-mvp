@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Play, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, ShieldCheck } from "lucide-react"
+import { ArrowLeft, Play, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, ShieldCheck, Video } from "lucide-react"
 import { scriptsApi } from "@/services/api"
 import type { PlaywrightScript, PlaywrightStep, TestRun, RunStatus, StartRunRequest } from "@/types/scripts"
 import RunConfigModal from "@/components/RunConfigModal"
@@ -238,15 +238,30 @@ export default function ScriptDetail() {
                                             </span>
                                         )}
                                     </div>
-                                    <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                                        <span className="text-green-600">{run.passed_steps} passed</span>
-                                        {run.healed_steps > 0 && (
-                                            <span className="text-purple-600">{run.healed_steps} healed</span>
+                                    <div className="flex items-center justify-between mt-2">
+                                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                            <span className="text-green-600">{run.passed_steps} passed</span>
+                                            {run.healed_steps > 0 && (
+                                                <span className="text-purple-600">{run.healed_steps} healed</span>
+                                            )}
+                                            {run.failed_steps > 0 && (
+                                                <span className="text-red-600">{run.failed_steps} failed</span>
+                                            )}
+                                            <span>/ {run.total_steps} total</span>
+                                        </div>
+                                        {run.recording_enabled && run.video_path && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    navigate(`/scripts/${scriptId}/runs/${run.id}?tab=video`)
+                                                }}
+                                                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                                title="Watch recording"
+                                            >
+                                                <Video className="h-3.5 w-3.5" />
+                                                Watch Video
+                                            </button>
                                         )}
-                                        {run.failed_steps > 0 && (
-                                            <span className="text-red-600">{run.failed_steps} failed</span>
-                                        )}
-                                        <span>/ {run.total_steps} total</span>
                                     </div>
                                     {run.error_message && (
                                         <p className="text-xs text-red-600 mt-1 truncate">

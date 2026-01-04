@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { ArrowLeft, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck, Code, Copy, Check, Timer, Wifi, Terminal, Video, Chrome } from "lucide-react"
 import { runsApi, scriptsApi, getScreenshotUrl, getRunWebSocketUrl } from "@/services/api"
 import type { TestRun, RunStep, PlaywrightScript, NetworkRequest, ConsoleLog } from "@/types/scripts"
@@ -71,6 +71,7 @@ function formatDate(dateString: string): string {
 export default function RunDetail() {
     const { scriptId, runId } = useParams<{ scriptId: string; runId: string }>()
     const navigate = useNavigate()
+    const [searchParams] = useSearchParams()
     const [run, setRun] = useState<TestRun | null>(null)
     const [steps, setSteps] = useState<RunStep[]>([])
     const [script, setScript] = useState<PlaywrightScript | null>(null)
@@ -153,6 +154,14 @@ export default function RunDetail() {
             setLoadingConsole(false)
         }
     }
+
+    // Handle tab query parameter from URL
+    useEffect(() => {
+        const tabParam = searchParams.get('tab') as Tab | null
+        if (tabParam && ['steps', 'network', 'console', 'video'].includes(tabParam)) {
+            setActiveTab(tabParam)
+        }
+    }, [searchParams])
 
     // Fetch network/console data when tab changes
     useEffect(() => {
@@ -350,13 +359,24 @@ export default function RunDetail() {
                         )}
                     </div>
                 </div>
-                <button
-                    onClick={fetchRun}
-                    className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-3"
-                >
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Refresh
-                </button>
+                <div className="flex items-center gap-2">
+                    {run?.recording_enabled && run?.video_path && (
+                        <button
+                            onClick={() => setActiveTab('video')}
+                            className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-3"
+                        >
+                            <Video className="h-4 w-4 mr-2" />
+                            Watch Recording
+                        </button>
+                    )}
+                    <button
+                        onClick={fetchRun}
+                        className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-3"
+                    >
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Refresh
+                    </button>
+                </div>
             </div>
 
             {/* Stats */}

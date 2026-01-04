@@ -12,6 +12,7 @@ export interface UseVoiceInputReturn {
   isProcessing: boolean;
   error: string | null;
   isSupported: boolean;
+  unsupportedReason: string | null;
   startListening: () => Promise<void>;
   stopListening: () => Promise<string>;
 }
@@ -31,9 +32,22 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const isSupported = typeof window !== 'undefined' &&
-    'mediaDevices' in navigator &&
-    'MediaRecorder' in window;
+  // Check for secure context and browser API support
+  const isSecureContext = typeof window !== 'undefined' && window.isSecureContext;
+  const hasMediaDevices = typeof navigator !== 'undefined' && 'mediaDevices' in navigator;
+  const hasMediaRecorder = typeof window !== 'undefined' && 'MediaRecorder' in window;
+
+  const isSupported = isSecureContext && hasMediaDevices && hasMediaRecorder;
+
+  // Provide specific reason if not supported
+  let unsupportedReason: string | null = null;
+  if (!isSecureContext) {
+    unsupportedReason = 'Microphone requires HTTPS or localhost';
+  } else if (!hasMediaDevices) {
+    unsupportedReason = "Browser doesn't support microphone access";
+  } else if (!hasMediaRecorder) {
+    unsupportedReason = "Browser doesn't support audio recording";
+  }
 
   const cleanup = useCallback(() => {
     if (streamRef.current) {
@@ -189,6 +203,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     isProcessing,
     error,
     isSupported,
+    unsupportedReason,
     startListening,
     stopListening,
   };
