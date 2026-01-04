@@ -433,6 +433,7 @@ export default function ExistingSessionPage() {
             onStopRecording={stopRecording}
             canRecord={!!sessionId && !!browserSession?.id && !isExecuting}
             isAIExecuting={isExecuting}
+            currentRecordingMode={null}
             isInteractionEnabled={isInteractionEnabled}
             onToggleInteraction={() => setIsInteractionEnabled(!isInteractionEnabled)}
           />

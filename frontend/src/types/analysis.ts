@@ -284,7 +284,7 @@ export interface ReplayResponse {
 }
 
 // Recording types
-export type RecordingMode = 'cdp' | 'playwright';
+export type RecordingMode = 'cdp' | 'playwright' | 'browser_use';
 
 export interface RecordingStatusResponse {
   is_recording: boolean;

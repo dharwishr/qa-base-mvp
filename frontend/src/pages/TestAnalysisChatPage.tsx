@@ -228,6 +228,7 @@ export default function TestAnalysisChatPage() {
     startRecording,
     stopRecording,
     isRecording,
+    currentRecordingMode,
     setMode,
     setSelectedLlm,
     setHeadless,
@@ -729,6 +730,7 @@ export default function TestAnalysisChatPage() {
             onStopRecording={stopRecording}
             canRecord={!!sessionId && !!browserSession?.id && !isExecuting}
             isAIExecuting={isExecuting}
+            currentRecordingMode={currentRecordingMode}
             isInteractionEnabled={isInteractionEnabled}
             onToggleInteraction={() => setIsInteractionEnabled(!isInteractionEnabled)}
           />

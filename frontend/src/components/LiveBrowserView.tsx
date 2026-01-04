@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square, Circle, Hand } from 'lucide-react'
+import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square, Circle, Hand, ChevronDown } from 'lucide-react'
+import type { RecordingMode } from '../types/analysis'
 
 interface LiveBrowserViewProps {
     sessionId: string | null
@@ -10,13 +11,21 @@ interface LiveBrowserViewProps {
     className?: string
     // Recording props
     isRecording?: boolean
-    onStartRecording?: () => Promise<void>
+    onStartRecording?: (mode: RecordingMode) => Promise<void>
     onStopRecording?: () => Promise<void>
     canRecord?: boolean  // Whether recording is available (not executing, browser session exists)
     isAIExecuting?: boolean  // Whether AI is currently executing (blocks all interaction)
+    currentRecordingMode?: RecordingMode | null  // Currently active recording mode
     // Interaction props - allows browsing without recording
     isInteractionEnabled?: boolean
     onToggleInteraction?: () => void
+}
+
+// Recording mode labels for UI
+const RECORDING_MODE_LABELS: Record<RecordingMode, string> = {
+    'playwright': 'Playwright',
+    'browser_use': 'Browser-Use',
+    'cdp': 'CDP (Legacy)',
 }
 
 export default function LiveBrowserView({
@@ -31,6 +40,7 @@ export default function LiveBrowserView({
     onStopRecording,
     canRecord = false,
     isAIExecuting = false,
+    currentRecordingMode = null,
     isInteractionEnabled = false,
     onToggleInteraction,
 }: LiveBrowserViewProps) {
@@ -39,7 +49,10 @@ export default function LiveBrowserView({
     const [isLoading, setIsLoading] = useState(true)
     const [hasError, setHasError] = useState(false)
     const [isToggling, setIsToggling] = useState(false)
+    const [showRecordingModeMenu, setShowRecordingModeMenu] = useState(false)
+    const [selectedRecordingMode, setSelectedRecordingMode] = useState<RecordingMode>('playwright')
     const iframeRef = useRef<HTMLIFrameElement>(null)
+    const recordingMenuRef = useRef<HTMLDivElement>(null)
 
     // Prefer novncUrl (direct noVNC access) over liveViewUrl (wrapper page)
     const fullViewUrl = novncUrl
@@ -90,13 +103,43 @@ export default function LiveBrowserView({
         try {
             if (isRecording && onStopRecording) {
                 await onStopRecording()
+                setShowRecordingModeMenu(false)
             } else if (!isRecording && onStartRecording) {
-                await onStartRecording()
+                await onStartRecording(selectedRecordingMode)
+                setShowRecordingModeMenu(false)
             }
         } finally {
             setIsToggling(false)
         }
-    }, [isRecording, onStartRecording, onStopRecording, isToggling])
+    }, [isRecording, onStartRecording, onStopRecording, isToggling, selectedRecordingMode])
+
+    const handleSelectRecordingMode = useCallback(async (mode: RecordingMode) => {
+        setSelectedRecordingMode(mode)
+        setShowRecordingModeMenu(false)
+        if (onStartRecording && !isRecording) {
+            setIsToggling(true)
+            try {
+                await onStartRecording(mode)
+            } finally {
+                setIsToggling(false)
+            }
+        }
+    }, [onStartRecording, isRecording])
+
+    // Close menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (recordingMenuRef.current && !recordingMenuRef.current.contains(event.target as Node)) {
+                setShowRecordingModeMenu(false)
+            }
+        }
+        if (showRecordingModeMenu) {
+            document.addEventListener('mousedown', handleClickOutside)
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside)
+        }
+    }, [showRecordingModeMenu])
 
     useEffect(() => {
         setIsLoading(true)
@@ -153,20 +196,62 @@ export default function LiveBrowserView({
                             {isInteractionEnabled ? 'Browsing' : 'Browse'}
                         </button>
                     )}
-                    {/* Recording button */}
+                    {/* Recording button with mode selector */}
                     {canRecord && (onStartRecording || onStopRecording) && (
-                        <button
-                            onClick={handleToggleRecording}
-                            disabled={isToggling}
-                            className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${isRecording
-                                ? 'bg-red-500 text-white hover:bg-red-600'
-                                : 'bg-red-100 text-red-700 hover:bg-red-200'
-                                } ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            title={isRecording ? 'Stop Recording' : 'Take Control & Record'}
-                        >
-                            <Circle className={`h-3 w-3 ${isRecording ? 'fill-white animate-pulse' : 'fill-red-500'}`} />
-                            {isToggling ? 'Loading...' : (isRecording ? 'Stop' : 'Record')}
-                        </button>
+                        <div className="relative flex items-center" ref={recordingMenuRef}>
+                            {/* Main record/stop button */}
+                            <button
+                                onClick={handleToggleRecording}
+                                disabled={isToggling}
+                                className={`px-2 py-1 rounded-l text-xs font-medium transition-colors flex items-center gap-1 ${isRecording
+                                    ? 'bg-red-500 text-white hover:bg-red-600'
+                                    : 'bg-red-100 text-red-700 hover:bg-red-200'
+                                    } ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                title={isRecording 
+                                    ? `Stop Recording (${currentRecordingMode ? RECORDING_MODE_LABELS[currentRecordingMode] : RECORDING_MODE_LABELS[selectedRecordingMode]})`
+                                    : `Start Recording with ${RECORDING_MODE_LABELS[selectedRecordingMode]}`}
+                            >
+                                <Circle className={`h-3 w-3 ${isRecording ? 'fill-white animate-pulse' : 'fill-red-500'}`} />
+                                {isToggling ? 'Loading...' : (isRecording ? 'Stop' : 'Record')}
+                            </button>
+                            {/* Mode selector dropdown (only show when not recording) */}
+                            {!isRecording && (
+                                <button
+                                    onClick={() => setShowRecordingModeMenu(!showRecordingModeMenu)}
+                                    disabled={isToggling}
+                                    className={`px-1 py-1 rounded-r border-l border-red-300 text-xs font-medium transition-colors flex items-center ${
+                                        'bg-red-100 text-red-700 hover:bg-red-200'
+                                    } ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    title="Select recording mode"
+                                >
+                                    <ChevronDown className="h-3 w-3" />
+                                </button>
+                            )}
+                            {/* Dropdown menu */}
+                            {showRecordingModeMenu && !isRecording && (
+                                <div className="absolute top-full right-0 mt-1 bg-white border rounded-md shadow-lg z-50 min-w-[140px]">
+                                    <div className="py-1">
+                                        <div className="px-3 py-1 text-xs text-gray-500 font-medium border-b">
+                                            Recording Mode
+                                        </div>
+                                        {(['playwright', 'browser_use', 'cdp'] as RecordingMode[]).map((mode) => (
+                                            <button
+                                                key={mode}
+                                                onClick={() => handleSelectRecordingMode(mode)}
+                                                className={`w-full px-3 py-2 text-xs text-left hover:bg-gray-100 flex items-center justify-between ${
+                                                    selectedRecordingMode === mode ? 'bg-red-50 text-red-700' : 'text-gray-700'
+                                                }`}
+                                            >
+                                                <span>{RECORDING_MODE_LABELS[mode]}</span>
+                                                {selectedRecordingMode === mode && (
+                                                    <Circle className="h-2 w-2 fill-red-500 text-red-500" />
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     )}
                     <button
                         onClick={handleRefresh}

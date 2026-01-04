@@ -667,7 +667,7 @@ class ReplaySessionResponse(BaseModel):
 # ============================================
 
 # Recording mode type: 'cdp' (browser-use CDP) or 'playwright' (Playwright browser server)
-RecordingMode = Literal['cdp', 'playwright']
+RecordingMode = Literal['cdp', 'playwright', 'browser_use']
 
 
 class StartRecordingRequest(BaseModel):
@@ -675,7 +675,7 @@ class StartRecordingRequest(BaseModel):
 	browser_session_id: str = Field(..., description="ID of the browser session to record from")
 	recording_mode: RecordingMode = Field(
 		default='playwright',
-		description="Recording mode: 'playwright' (recommended, blur-based input) or 'cdp' (legacy keystroke capture)"
+		description="Recording mode: 'playwright' (blur-based input), 'browser_use' (semantic selectors), or 'cdp' (legacy keystroke capture)"
 	)
 
 

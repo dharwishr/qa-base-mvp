@@ -1059,11 +1059,14 @@ async def start_recording(
 	Recording modes:
 	- 'playwright' (default): Uses Playwright's browser server with blur-based input capture.
 	  Better handling of backspace/delete - records final input value, not each keystroke.
+	- 'browser_use': Uses semantic selectors inspired by workflow-use for self-healing replay.
+	  Captures action intent, multiple selector strategies, and rich element context.
 	- 'cdp': Legacy mode using browser-use CDP. Records each keystroke including backspace.
 	"""
 	from app.services.browser_orchestrator import get_orchestrator
 	from app.services.user_recording_service import UserRecordingService, get_active_recording
 	from app.services.playwright_recording_service import PlaywrightRecordingService, get_active_playwright_recording
+	from app.services.browseruse_recording_service import BrowserUseRecordingService, get_active_browseruse_recording
 
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
@@ -1071,14 +1074,20 @@ async def start_recording(
 
 	recording_mode = request.recording_mode
 
-	# Check if already recording (either mode)
+	# Check if already recording (any mode)
 	cdp_recording = get_active_recording(session_id)
 	playwright_recording = get_active_playwright_recording(session_id)
-	existing_recording = cdp_recording or playwright_recording
+	browseruse_recording = get_active_browseruse_recording(session_id)
+	existing_recording = cdp_recording or playwright_recording or browseruse_recording
 
 	if existing_recording:
 		state = existing_recording.get_status()
-		current_mode = 'cdp' if cdp_recording else 'playwright'
+		if cdp_recording:
+			current_mode = 'cdp'
+		elif playwright_recording:
+			current_mode = 'playwright'
+		else:
+			current_mode = 'browser_use'
 		return RecordingStatusResponse(
 			is_recording=True,
 			session_id=session_id,
@@ -1102,6 +1111,9 @@ async def start_recording(
 		if recording_mode == 'playwright':
 			logger.info(f"Starting Playwright recording for session {session_id}")
 			recording_service = PlaywrightRecordingService(db, session, browser_session)
+		elif recording_mode == 'browser_use':
+			logger.info(f"Starting BrowserUse recording for session {session_id}")
+			recording_service = BrowserUseRecordingService(db, session, browser_session)
 		else:
 			logger.info(f"Starting CDP recording for session {session_id}")
 			recording_service = UserRecordingService(db, session, browser_session)
@@ -1131,17 +1143,19 @@ async def stop_recording(
 	db: Session = Depends(get_db),
 	current_user: User = Depends(get_current_user),
 ):
-	"""Stop recording user interactions (either Playwright or CDP mode)."""
+	"""Stop recording user interactions (Playwright, BrowserUse, or CDP mode)."""
 	from app.services.user_recording_service import get_active_recording
 	from app.services.playwright_recording_service import get_active_playwright_recording
+	from app.services.browseruse_recording_service import get_active_browseruse_recording
 
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
 
-	# Check both recording modes
+	# Check all recording modes
 	cdp_recording = get_active_recording(session_id)
 	playwright_recording = get_active_playwright_recording(session_id)
+	browseruse_recording = get_active_browseruse_recording(session_id)
 
 	if cdp_recording:
 		recording = cdp_recording
@@ -1149,6 +1163,9 @@ async def stop_recording(
 	elif playwright_recording:
 		recording = playwright_recording
 		recording_mode = 'playwright'
+	elif browseruse_recording:
+		recording = browseruse_recording
+		recording_mode = 'browser_use'
 	else:
 		return RecordingStatusResponse(
 			is_recording=False,
@@ -1182,17 +1199,19 @@ async def get_recording_status(
 	db: Session = Depends(get_db),
 	current_user: User = Depends(get_current_user),
 ):
-	"""Get current recording status for a session (checks both Playwright and CDP modes)."""
+	"""Get current recording status for a session (checks all recording modes)."""
 	from app.services.user_recording_service import get_active_recording
 	from app.services.playwright_recording_service import get_active_playwright_recording
+	from app.services.browseruse_recording_service import get_active_browseruse_recording
 
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
 
-	# Check both recording modes
+	# Check all recording modes
 	cdp_recording = get_active_recording(session_id)
 	playwright_recording = get_active_playwright_recording(session_id)
+	browseruse_recording = get_active_browseruse_recording(session_id)
 
 	if cdp_recording:
 		recording = cdp_recording
@@ -1200,6 +1219,9 @@ async def get_recording_status(
 	elif playwright_recording:
 		recording = playwright_recording
 		recording_mode = 'playwright'
+	elif browseruse_recording:
+		recording = browseruse_recording
+		recording_mode = 'browser_use'
 	else:
 		return RecordingStatusResponse(
 			is_recording=False,

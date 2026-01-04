@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { analysisApi } from '../services/api';
 import { getAuthToken } from '../contexts/AuthContext';
 import { config } from '../config';
-import type { TestSession, LlmModel, ReplayResponse } from '../types/analysis';
+import type { TestSession, LlmModel, ReplayResponse, RecordingMode } from '../types/analysis';
 import type {
   TimelineMessage,
   ChatMode,
@@ -76,7 +76,7 @@ interface UseExistingSessionReturn {
   forkFromStep: (stepNumber: number) => Promise<void>;
   undoToStep: (stepNumber: number) => Promise<void>;
   clearReplayFailure: () => void;
-  startRecording: () => Promise<void>;
+  startRecording: (mode?: RecordingMode) => Promise<void>;
   stopRecording: () => Promise<void>;
   setMode: (mode: ChatMode) => void;
   setSelectedLlm: (llm: LlmModel) => void;
@@ -760,16 +760,21 @@ export function useExistingSession(): UseExistingSessionReturn {
   }, [sessionId, stopBrowserPolling, isRecording]);
 
   // Start recording user interactions
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (mode: RecordingMode = 'playwright') => {
     if (!sessionId || !browserSession?.id) return;
 
     try {
-      await analysisApi.startRecording(sessionId, browserSession.id, 'playwright');
+      const modeLabels: Record<RecordingMode, string> = {
+        'playwright': 'Playwright',
+        'browser_use': 'Browser-Use (semantic selectors)',
+        'cdp': 'CDP (legacy)',
+      };
+      await analysisApi.startRecording(sessionId, browserSession.id, mode);
       setIsRecording(true);
       setMessages((prev) => [
         ...prev,
         createTimelineMessage('system', {
-          content: 'Recording started. Your interactions will be captured as new test steps.',
+          content: `Recording started (${modeLabels[mode]} mode). Your interactions will be captured as new test steps.`,
         }),
       ]);
     } catch (e) {

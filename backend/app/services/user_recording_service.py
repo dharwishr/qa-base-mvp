@@ -26,6 +26,7 @@ from browser_use.actor.page import Page
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import SessionLocal
 from app.models import StepAction, TestSession, TestStep
 from app.services.browser_orchestrator import BrowserSession as OrchestratorSession
 
@@ -171,9 +172,15 @@ class UserRecordingService:
         test_session: TestSession,
         browser_session: OrchestratorSession,
     ):
-        self.db = db
-        self.test_session = test_session
-        self.browser_session = browser_session
+        # Store IDs as strings to avoid detached session issues
+        self._test_session_id = test_session.id
+        self._browser_session_id = browser_session.id
+        
+        # Store browser session info needed for CDP connection
+        self._browser_session_container_ip = browser_session.container_ip
+        self._browser_session_cdp_host = browser_session.cdp_host
+        self._browser_session_cdp_port = browser_session.cdp_port
+        
         self._browser: BrowserSession | None = None
         self._session_id: str | None = None
         self._target_id: str | None = None
@@ -196,6 +203,51 @@ class UserRecordingService:
         if existing_steps:
             self._current_step_number = existing_steps.step_number
 
+    async def _get_cdp_ws_url(self) -> str | None:
+        """Get CDP WebSocket URL using stored session info."""
+        running_in_docker = os.path.exists("/.dockerenv")
+
+        if running_in_docker and self._browser_session_container_ip:
+            check_host = self._browser_session_container_ip
+            check_port = 9222
+        elif self._browser_session_cdp_port:
+            check_host = self._browser_session_cdp_host
+            check_port = self._browser_session_cdp_port
+        else:
+            logger.warning("No CDP port or container IP available")
+            return None
+
+        cdp_http_url = f"http://{check_host}:{check_port}"
+
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(
+                    f"{cdp_http_url}/json/version",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 200:
+                        version_info = await resp.json()
+                        ws_url = version_info.get("webSocketDebuggerUrl")
+                        if ws_url:
+                            if running_in_docker and self._browser_session_container_ip:
+                                fresh_url = re.sub(
+                                    r'ws://[^/]+',
+                                    f'ws://{self._browser_session_container_ip}:9222',
+                                    ws_url
+                                )
+                            else:
+                                fresh_url = re.sub(
+                                    r'ws://[^/]+',
+                                    f'ws://{self._browser_session_cdp_host}:{self._browser_session_cdp_port}',
+                                    ws_url
+                                )
+                            logger.info(f"Got CDP WebSocket URL: {fresh_url}")
+                            return fresh_url
+        except Exception as e:
+            logger.warning(f"Error getting CDP URL: {e}")
+
+        return None
+
     async def start(self) -> RecordingState:
         """
         Start recording by connecting to the browser and setting up event capture.
@@ -206,13 +258,13 @@ class UserRecordingService:
         if self._is_recording:
             raise RuntimeError("Recording already in progress")
 
-        logger.info(f"Starting user recording for session {self.test_session.id}")
+        logger.info(f"Starting user recording for session {self._test_session_id}")
 
         try:
             # Connect to browser via CDP - fetch fresh URL from /json/version
-            cdp_url = await _get_cdp_ws_url(self.browser_session)
+            cdp_url = await self._get_cdp_ws_url()
             if not cdp_url:
-                raise RuntimeError(f"Browser session {self.browser_session.id} has no CDP URL - browser may not be ready")
+                raise RuntimeError(f"Browser session {self._browser_session_id} has no CDP URL - browser may not be ready")
 
             logger.info(f"Connecting to CDP at: {cdp_url}")
 
@@ -239,16 +291,16 @@ class UserRecordingService:
             # Update state
             self._is_recording = True
             self._state = RecordingState(
-                test_session_id=self.test_session.id,
-                browser_session_id=self.browser_session.id,
+                test_session_id=self._test_session_id,
+                browser_session_id=self._browser_session_id,
                 started_at=datetime.utcnow(),
                 steps_recorded=0,
             )
 
             # Register in global registry
-            _active_recordings[self.test_session.id] = self
+            _active_recordings[self._test_session_id] = self
 
-            logger.info(f"User recording started for session {self.test_session.id}")
+            logger.info(f"User recording started for session {self._test_session_id}")
             return self._state
 
         except Exception as e:
@@ -263,7 +315,7 @@ class UserRecordingService:
         Returns:
             Final RecordingState
         """
-        logger.info(f"Stopping user recording for session {self.test_session.id}")
+        logger.info(f"Stopping user recording for session {self._test_session_id}")
 
         # Flush any pending debounced events
         await self._flush_pending_events()
@@ -277,13 +329,13 @@ class UserRecordingService:
         await self._cleanup()
 
         # Remove from registry
-        if self.test_session.id in _active_recordings:
-            del _active_recordings[self.test_session.id]
+        if self._test_session_id in _active_recordings:
+            del _active_recordings[self._test_session_id]
 
         logger.info(f"User recording stopped. Total steps: {final_state.steps_recorded if final_state else 0}")
         return final_state or RecordingState(
-            test_session_id=self.test_session.id,
-            browser_session_id=self.browser_session.id,
+            test_session_id=self._test_session_id,
+            browser_session_id=self._browser_session_id,
             started_at=datetime.utcnow(),
             is_active=False,
         )
@@ -675,7 +727,11 @@ class UserRecordingService:
         action_params: dict[str, Any],
         element_info: ElementInfo | None,
     ) -> TestStep:
-        """Create a TestStep + StepAction for a recorded user action."""
+        """Create a TestStep + StepAction for a recorded user action.
+        
+        Uses a fresh database session to avoid detached instance issues
+        when called asynchronously from the CDP callback.
+        """
 
         # Increment step number
         self._current_step_number += 1
@@ -713,11 +769,13 @@ class UserRecordingService:
         else:
             next_goal = f"User action: {action_name}"
 
+        # Create a fresh database session for this async callback
+        db = SessionLocal()
         try:
             logger.info(f"Step {step_number}: Saving to database...")
             # Create TestStep
             test_step = TestStep(
-                session_id=self.test_session.id,
+                session_id=self._test_session_id,
                 step_number=step_number,
                 url=url,
                 page_title=title,
@@ -729,8 +787,8 @@ class UserRecordingService:
                 status="completed",
             )
 
-            self.db.add(test_step)
-            self.db.flush()
+            db.add(test_step)
+            db.flush()
 
             # Create StepAction with rich element context
             # Use element_context_dict for replay compatibility, store full info separately
@@ -741,6 +799,7 @@ class UserRecordingService:
                 action_params={
                     **action_params,
                     "source": "user",  # Mark as user-recorded
+                    "recording_mode": "cdp",
                     "element_context": element_info.to_element_context_dict() if element_info else None,
                     "raw_element_info": element_info.to_dict() if element_info else None,  # Full info for debugging
                 },
@@ -752,8 +811,8 @@ class UserRecordingService:
                 ) if element_info else None,
             )
 
-            self.db.add(step_action)
-            self.db.commit()
+            db.add(step_action)
+            db.commit()
 
             # Update state
             if self._state:
@@ -764,8 +823,10 @@ class UserRecordingService:
 
         except Exception as e:
             logger.error(f"Failed to save recorded step {step_number}: {e}", exc_info=True)
-            self.db.rollback()
+            db.rollback()
             raise
+        finally:
+            db.close()
 
     async def _take_screenshot(self, step_number: int) -> str | None:
         """Take a screenshot and save it to disk."""
@@ -786,7 +847,7 @@ class UserRecordingService:
                 return None
 
             # Generate filename
-            filename = f"{self.test_session.id}_{step_number}.png"
+            filename = f"{self._test_session_id}_{step_number}.png"
 
             # Ensure screenshots directory exists
             screenshots_dir = Path(settings.SCREENSHOTS_DIR)

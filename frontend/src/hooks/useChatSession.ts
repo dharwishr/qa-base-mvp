@@ -19,6 +19,7 @@ import type {
   WSExecutionPaused,
   WSAllStopped,
   ReplayResponse,
+  RecordingMode,
 } from '../types/analysis';
 import type {
   TimelineMessage,
@@ -94,6 +95,7 @@ interface UseChatSessionReturn {
   undoTargetStep: number | null;
   totalSteps: number;
   isRecording: boolean;
+  currentRecordingMode: RecordingMode | null;
   wsConnectionMode: 'websocket' | 'polling' | 'disconnected';
   // Run Till End state
   isRunningTillEnd: boolean;
@@ -120,7 +122,7 @@ interface UseChatSessionReturn {
   confirmUndo: () => Promise<void>;
   cancelUndo: () => void;
   deleteStep: (stepId: string) => Promise<void>;
-  startRecording: () => Promise<void>;
+  startRecording: (mode?: RecordingMode) => Promise<void>;
   stopRecording: () => Promise<void>;
   setMode: (mode: ChatMode) => void;
   setSelectedLlm: (llm: LlmModel) => void;
@@ -178,6 +180,7 @@ export function useChatSession(): UseChatSessionReturn {
 
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
+  const [currentRecordingMode, setCurrentRecordingMode] = useState<RecordingMode | null>(null);
   const isRecordingRef = useRef(false);
 
   // Run Till End state
@@ -1538,20 +1541,25 @@ export function useChatSession(): UseChatSessionReturn {
   }, [sessionId, undoTargetStep]);
 
   // Start recording user interactions
-  // Uses Playwright recording mode by default (blur-based input capture, better backspace handling)
-  const startRecording = useCallback(async () => {
+  // Supports multiple recording modes: 'playwright', 'browser_use', or 'cdp'
+  const startRecording = useCallback(async (mode: RecordingMode = 'playwright') => {
     if (!sessionId || !browserSession?.id) return;
 
     try {
-      // Use 'playwright' mode (default) - captures final input values on blur, handles backspace correctly
-      const result = await analysisApi.startRecording(sessionId, browserSession.id, 'playwright');
+      const result = await analysisApi.startRecording(sessionId, browserSession.id, mode);
       setIsRecording(true);
+      setCurrentRecordingMode(result.recording_mode || mode);
       // Start polling for steps during recording
       startPolling();
+      const modeLabels: Record<RecordingMode, string> = {
+        'playwright': 'Playwright',
+        'browser_use': 'Browser-Use (semantic selectors)',
+        'cdp': 'CDP (legacy)',
+      };
       setMessages(prev => [
         ...prev,
         createTimelineMessage('system', {
-          content: `Recording started (${result.recording_mode || 'playwright'} mode). Your interactions with the browser will be captured.`,
+          content: `Recording started (${modeLabels[result.recording_mode || mode]} mode). Your interactions with the browser will be captured.`,
         }),
       ]);
     } catch (e) {
@@ -1572,6 +1580,7 @@ export function useChatSession(): UseChatSessionReturn {
     try {
       await analysisApi.stopRecording(sessionId);
       setIsRecording(false);
+      setCurrentRecordingMode(null);
       // Stop polling when recording stops
       stopPolling();
       setMessages(prev => [
@@ -2035,6 +2044,7 @@ export function useChatSession(): UseChatSessionReturn {
     undoTargetStep,
     totalSteps,
     isRecording,
+    currentRecordingMode,
     wsConnectionMode,
     // Run Till End state
     isRunningTillEnd,
