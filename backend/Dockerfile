@@ -84,7 +84,7 @@ COPY backend/alembic /app/alembic
 COPY backend/alembic.ini /app/alembic.ini
 
 # Create necessary directories
-RUN mkdir -p /app/data/screenshots /app/data/logs
+RUN mkdir -p /app/data/screenshots /app/data/logs /app/data/videos
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

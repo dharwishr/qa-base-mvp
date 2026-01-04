@@ -113,7 +113,7 @@ interface UseChatSessionReturn {
   rejectPlan: (planId: string, reason?: string) => Promise<void>;
   injectCommand: (text: string) => void;
   stopExecution: () => Promise<void>;
-  resetSession: () => void;
+  resetSession: () => Promise<void>;
   endBrowserSession: () => Promise<void>;
   clearQueueAndProceed: () => void;
   processRemainingQueue: () => void;
@@ -1313,8 +1313,18 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, [browserSession, sessionId, clearInactivityTimeout, stopBrowserPolling]);
 
-  // Reset session
-  const resetSession = useCallback(() => {
+  // Reset session - clears all data from backend and frontend
+  const resetSession = useCallback(async () => {
+    // If there's a session, reset it in the backend first
+    if (sessionId) {
+      try {
+        await analysisApi.resetSession(sessionId);
+      } catch (e) {
+        console.error('Error resetting session:', e);
+        // Continue with frontend reset even if backend fails
+      }
+    }
+
     stopPolling();
     stopBrowserPolling();
     clearInactivityTimeout();
@@ -1336,8 +1346,14 @@ export function useChatSession(): UseChatSessionReturn {
     setMessageQueue([]);
     setQueueFailure(null);
     setWsConnectionMode('disconnected');
+    setIsRecording(false);
+    setCurrentRecordingMode(null);
+    setIsRunningTillEnd(false);
+    setRunTillEndPaused(null);
+    setSkippedSteps([]);
+    setCurrentExecutingStepNumber(null);
     lastStepCountRef.current = 0;
-  }, [stopPolling, stopBrowserPolling, clearInactivityTimeout, disconnectWebSocket]);
+  }, [sessionId, stopPolling, stopBrowserPolling, clearInactivityTimeout, disconnectWebSocket]);
 
   // Generate test script from session steps
   const generateScript = useCallback(async (): Promise<string | null> => {

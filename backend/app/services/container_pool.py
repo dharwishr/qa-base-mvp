@@ -50,16 +50,19 @@ class ContainerStatus(str, Enum):
     ERROR = "error"
 
 
-# Browser-specific Docker images (local builds)
+# Single unified image for all browsers (Docker Hub)
+# Supports chromium, firefox, webkit, edge via BROWSER_TYPE env var
+UNIFIED_BROWSER_IMAGE = "librekid/test-run-browser:latest"
+
 BROWSER_IMAGES = {
-    BrowserType.CHROMIUM: "qa-test-browser:chromium",
-    BrowserType.FIREFOX: "qa-test-browser:firefox",
-    BrowserType.WEBKIT: "qa-test-browser:webkit",
-    BrowserType.EDGE: "qa-test-browser:edge",
+    BrowserType.CHROMIUM: UNIFIED_BROWSER_IMAGE,
+    BrowserType.FIREFOX: UNIFIED_BROWSER_IMAGE,
+    BrowserType.WEBKIT: UNIFIED_BROWSER_IMAGE,
+    BrowserType.EDGE: UNIFIED_BROWSER_IMAGE,
 }
 
-# Default image (Chromium)
-DEFAULT_IMAGE = "qa-test-browser:chromium"
+# Default image
+DEFAULT_IMAGE = UNIFIED_BROWSER_IMAGE
 
 
 @dataclass
@@ -235,6 +238,10 @@ class ContainerPool:
 
         loop = asyncio.get_event_loop()
 
+        # Use named Docker volume for videos (shared with backend/celery via docker-compose)
+        # This allows browser containers to write videos that backend can serve
+        videos_volume_name = "qa-base_videos"  # docker-compose prefixes with project name
+
         try:
             container = await loop.run_in_executor(
                 None,
@@ -243,6 +250,7 @@ class ContainerPool:
                     detach=True,
                     name=container_name,
                     environment={
+                        "BROWSER_TYPE": browser_type.value,
                         "SCREEN_WIDTH": str(resolution[0]),
                         "SCREEN_HEIGHT": str(resolution[1]),
                         "SCREEN_DEPTH": "24",
@@ -254,6 +262,9 @@ class ContainerPool:
                         "app": "qa-base",
                         "pool_container": "true",
                         "browser_type": browser_type.value,
+                    },
+                    volumes={
+                        videos_volume_name: {"bind": "/videos", "mode": "rw"},
                     },
                     network=self.network_name,
                     shm_size="2g",

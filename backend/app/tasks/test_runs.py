@@ -145,6 +145,7 @@ async def _execute_test_run_async(task, run_id: str) -> dict:
             logger.debug(f"Run {run_id}: Step {step_index} completed with status {result.status}")
 
         # Create runner with container's CDP URL
+        # Video is recorded inside container at /videos (mounted to host data/videos)
         async with create_runner(
             runner_type="playwright",
             headless=True,
@@ -160,6 +161,7 @@ async def _execute_test_run_async(task, run_id: str) -> dict:
             on_network_request=on_network_request,
             on_console_log=on_console_log,
             run_id=run_id,
+            video_dir="/videos",  # Container path, mounted to host data/videos
         ) as runner:
             # Execute the test - convert dict steps to PlaywrightStep objects
             steps = [PlaywrightStep(**step) for step in script.steps_json]

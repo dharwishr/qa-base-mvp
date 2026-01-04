@@ -146,6 +146,19 @@ export const analysisApi = {
   },
 
   /**
+   * Reset a test session to its initial state while keeping the same ID.
+   * This deletes all steps, chat messages, execution logs, and the plan,
+   * then resets the session status to 'idle'.
+   */
+  async resetSession(sessionId: string): Promise<TestSession> {
+    const response = await fetch(`${API_BASE}/api/analysis/sessions/${sessionId}/reset`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestSession>(response);
+  },
+
+  /**
    * Delete a single step and renumber remaining steps.
    */
   async deleteStep(stepId: string): Promise<void> {

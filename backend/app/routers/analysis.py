@@ -737,6 +737,60 @@ async def clear_session_steps(
 	db.commit()
 
 
+@router.post("/sessions/{session_id}/reset", response_model=TestSessionResponse)
+async def reset_session(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Reset a test session to its initial state while keeping the same ID.
+
+	This will:
+	1. Delete all steps and their actions
+	2. Delete all chat messages
+	3. Delete the plan
+	4. Delete execution logs
+	5. Reset the session status to 'idle'
+	6. Clear the prompt
+
+	The session ID is preserved for a fresh start.
+	"""
+	from app.models import ChatMessage, ExecutionLog, StepAction
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# 1. Delete step actions first (foreign key constraint)
+	step_ids = db.query(TestStep.id).filter(TestStep.session_id == session_id).subquery()
+	db.query(StepAction).filter(StepAction.step_id.in_(step_ids)).delete(synchronize_session=False)
+
+	# 2. Delete all steps
+	db.query(TestStep).filter(TestStep.session_id == session_id).delete(synchronize_session=False)
+
+	# 3. Delete all chat messages
+	db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete(synchronize_session=False)
+
+	# 4. Delete execution logs
+	db.query(ExecutionLog).filter(ExecutionLog.session_id == session_id).delete(synchronize_session=False)
+
+	# 5. Delete the plan if exists
+	if session.plan:
+		db.query(TestPlan).filter(TestPlan.session_id == session_id).delete(synchronize_session=False)
+
+	# 6. Reset session state
+	session.status = "idle"
+	session.prompt = ""
+	session.title = ""
+	session.celery_task_id = None
+
+	db.commit()
+	db.refresh(session)
+
+	logger.info(f"Reset session {session_id} to initial state")
+	return session
+
+
 @router.delete("/steps/{step_id}", status_code=204)
 async def delete_step(
 	step_id: str,
@@ -1402,38 +1456,70 @@ async def get_screenshot(
 	path: str,
 	token: str,
 ):
-	"""Serve a screenshot file from the configured screenshots directory.
-	
+	"""Serve a screenshot or video file from the configured directories.
+
 	Token is passed as query parameter since img src URLs cannot set Authorization headers.
+	Supports:
+	- Screenshot files (.png) from screenshots directory
+	- Video files (.webm, .mp4) from videos directory (when path starts with 'videos/')
 	"""
 	from app.config import settings
-	
+
 	# Verify token from query parameter
 	await verify_token_from_query(token)
 
-	# Resolve path relative to screenshots directory
-	screenshots_dir = Path(settings.SCREENSHOTS_DIR).resolve()
-	screenshot_path = (screenshots_dir / path).resolve()
+	# Check if this is a video request (path starts with 'videos/')
+	if path.startswith("videos/"):
+		# Serve from videos directory
+		videos_dir = Path(settings.VIDEOS_DIR).resolve()
+		# Remove 'videos/' prefix to get the actual filename
+		video_filename = path[7:]  # len("videos/") = 7
+		file_path = (videos_dir / video_filename).resolve()
 
-	# Security: Ensure path doesn't escape screenshots directory
-	if not str(screenshot_path).startswith(str(screenshots_dir)):
-		raise HTTPException(status_code=400, detail="Invalid path")
+		# Security: Ensure path doesn't escape videos directory
+		if not str(file_path).startswith(str(videos_dir)):
+			raise HTTPException(status_code=400, detail="Invalid path")
 
-	if not screenshot_path.exists():
-		raise HTTPException(status_code=404, detail="Screenshot not found")
+		if not file_path.exists():
+			raise HTTPException(status_code=404, detail="Video not found")
 
-	if not screenshot_path.is_file():
-		raise HTTPException(status_code=400, detail="Path is not a file")
+		if not file_path.is_file():
+			raise HTTPException(status_code=400, detail="Path is not a file")
 
-	# Security check: ensure it's a PNG file
-	if screenshot_path.suffix.lower() != ".png":
-		raise HTTPException(status_code=400, detail="Invalid file type")
+		# Security check: ensure it's a video file
+		if file_path.suffix.lower() not in [".webm", ".mp4"]:
+			raise HTTPException(status_code=400, detail="Invalid file type")
 
-	return FileResponse(
-		path=screenshot_path,
-		media_type="image/png",
-		filename=screenshot_path.name,
-	)
+		media_type = "video/webm" if file_path.suffix.lower() == ".webm" else "video/mp4"
+		return FileResponse(
+			path=file_path,
+			media_type=media_type,
+			filename=file_path.name,
+		)
+	else:
+		# Serve from screenshots directory
+		screenshots_dir = Path(settings.SCREENSHOTS_DIR).resolve()
+		screenshot_path = (screenshots_dir / path).resolve()
+
+		# Security: Ensure path doesn't escape screenshots directory
+		if not str(screenshot_path).startswith(str(screenshots_dir)):
+			raise HTTPException(status_code=400, detail="Invalid path")
+
+		if not screenshot_path.exists():
+			raise HTTPException(status_code=404, detail="Screenshot not found")
+
+		if not screenshot_path.is_file():
+			raise HTTPException(status_code=400, detail="Path is not a file")
+
+		# Security check: ensure it's a PNG file
+		if screenshot_path.suffix.lower() != ".png":
+			raise HTTPException(status_code=400, detail="Invalid file type")
+
+		return FileResponse(
+			path=screenshot_path,
+			media_type="image/png",
+			filename=screenshot_path.name,
+		)
 
 
 @router.post("/sessions/{session_id}/end-browser")

@@ -202,8 +202,22 @@ export default function TestAnalysis() {
         }
     }
 
-    // Reset to try again
-    const handleReset = () => {
+    // Reset to try again - clears all data from backend and frontend
+    const handleReset = async () => {
+        // If there's a session, reset it in the backend first
+        if (session?.id) {
+            try {
+                await analysisApi.resetSession(session.id)
+            } catch (e) {
+                console.error('Error resetting session:', e)
+                // Continue with frontend reset even if backend fails
+            }
+        }
+
+        // Clear the subscription state (steps, status, etc.)
+        clear()
+
+        // Reset all frontend state
         setSession(null)
         setAnalysisState('idle')
         setError(null)
@@ -211,6 +225,8 @@ export default function TestAnalysis() {
         setSelectedStepId(null)
         setSelectedLlm('gemini-2.5-flash')
         setIsRecording(false)
+        setBrowserSession(null)
+        setLinkedScript(null)
     }
 
     // Start recording user interactions
@@ -286,6 +302,16 @@ export default function TestAnalysis() {
 
     // Get plan steps for display
     const planSteps = session?.plan?.steps_json?.steps || []
+
+    // Tab state for switching between views
+    const [activeTab, setActiveTab] = useState<'live' | 'screenshot'>('screenshot')
+
+    // Auto-switch to live tab when execution starts or recording begins
+    useEffect(() => {
+        if (!headless && (isExecuting || isRecording || browserSession)) {
+            setActiveTab('live')
+        }
+    }, [isExecuting, isRecording, browserSession, headless])
 
     return (
         <div
@@ -544,30 +570,48 @@ export default function TestAnalysis() {
                         headless={headless}
                         onHeadlessChange={setHeadless}
                         disabled={analysisState !== 'idle'}
+                        activeTab={activeTab}
+                        onTabChange={setActiveTab}
                     />
-                    {/* Show live browser when executing, recording, or browser session is available */}
-                    {!headless && (isExecuting || isRecording || browserSession) ? (
-                        browserSession ? (
-                            <LiveBrowserView
-                                sessionId={browserSession.id}
-                                liveViewUrl={browserSession.liveViewUrl}
-                                novncUrl={browserSession.novncUrl}
-                                className="flex-1"
-                                isRecording={isRecording}
-                                onStartRecording={handleStartRecording}
-                                onStopRecording={handleStopRecording}
-                                canRecord={!!session?.id && !!browserSession?.id && !isExecuting}
-                                isAIExecuting={isExecuting}
-                            />
+
+                    {/* Tab Content */}
+                    {activeTab === 'live' ? (
+                        // Live Browser Tab
+                        !headless && (isExecuting || isRecording || browserSession) ? (
+                            browserSession ? (
+                                <LiveBrowserView
+                                    sessionId={browserSession.id}
+                                    liveViewUrl={browserSession.liveViewUrl}
+                                    novncUrl={browserSession.novncUrl}
+                                    className="flex-1"
+                                    isRecording={isRecording}
+                                    onStartRecording={handleStartRecording}
+                                    onStopRecording={handleStopRecording}
+                                    canRecord={!!session?.id && !!browserSession?.id && !isExecuting}
+                                    isAIExecuting={isExecuting}
+                                />
+                            ) : (
+                                <div className="flex-1 flex items-center justify-center">
+                                    <div className="text-center">
+                                        <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
+                                        <p className="text-sm text-muted-foreground">Starting live browser...</p>
+                                    </div>
+                                </div>
+                            )
                         ) : (
-                            <div className="flex-1 flex items-center justify-center">
-                                <div className="text-center">
-                                    <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
-                                    <p className="text-sm text-muted-foreground">Starting live browser...</p>
+                            <div className="flex-1 flex items-center justify-center p-8 text-center text-muted-foreground">
+                                <div>
+                                    <p className="mb-2">Live browser is not active.</p>
+                                    {headless && (
+                                        <p className="text-sm">
+                                            Turn off "Headless Mode" in settings to see the live browser.
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         )
                     ) : (
+                        // Screenshot Tab
                         <BrowserPreview
                             screenshotUrl={screenshotUrl}
                             currentUrl={selectedStep?.url}

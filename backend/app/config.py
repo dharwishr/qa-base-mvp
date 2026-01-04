@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
 	# Storage settings
 	SCREENSHOTS_DIR: str = str(Path(__file__).parent.parent / "data" / "screenshots")
+	VIDEOS_DIR: str = str(Path(__file__).parent.parent / "data" / "videos")
 	LOGS_DIR: str = str(Path(__file__).parent.parent / "data" / "logs")
 
 	# Celery settings
