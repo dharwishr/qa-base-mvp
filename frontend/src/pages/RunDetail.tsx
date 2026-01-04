@@ -272,6 +272,22 @@ export default function RunDetail() {
         }
     }, [runId, run?.status])
 
+    // Polling fallback for running tests - ensures updates even if WebSocket fails
+    useEffect(() => {
+        if (!runId || !run) return
+        if (run.status !== 'pending' && run.status !== 'running') return
+
+        // Poll every 2 seconds as backup to WebSocket
+        const pollInterval = setInterval(() => {
+            fetchRun()
+            // Also refresh network/console if those tabs are active
+            if (activeTab === 'network') fetchNetworkRequests()
+            if (activeTab === 'console') fetchConsoleLogs()
+        }, 2000)
+
+        return () => clearInterval(pollInterval)
+    }, [runId, run?.status, activeTab])
+
     useEffect(() => {
         fetchRun()
         fetchScript()
@@ -388,7 +404,7 @@ export default function RunDetail() {
             {/* Playwright Code Toggle */}
             {script && (
                 <div className="rounded-lg border bg-card shadow-sm">
-                    <div 
+                    <div
                         className="border-b px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-muted/30"
                         onClick={() => setShowCode(!showCode)}
                     >
@@ -438,11 +454,10 @@ export default function RunDetail() {
                 <div className="flex gap-1">
                     <button
                         onClick={() => setActiveTab('steps')}
-                        className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                            activeTab === 'steps'
+                        className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'steps'
                                 ? 'border-primary text-primary'
                                 : 'border-transparent text-muted-foreground hover:text-foreground'
-                        }`}
+                            }`}
                     >
                         <CheckCircle className="h-4 w-4" />
                         Steps
@@ -451,11 +466,10 @@ export default function RunDetail() {
                     {run?.network_recording_enabled && (
                         <button
                             onClick={() => setActiveTab('network')}
-                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                                activeTab === 'network'
+                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'network'
                                     ? 'border-primary text-primary'
                                     : 'border-transparent text-muted-foreground hover:text-foreground'
-                            }`}
+                                }`}
                         >
                             <Wifi className="h-4 w-4" />
                             Network
@@ -464,11 +478,10 @@ export default function RunDetail() {
                     )}
                     <button
                         onClick={() => setActiveTab('console')}
-                        className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                            activeTab === 'console'
+                        className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'console'
                                 ? 'border-primary text-primary'
                                 : 'border-transparent text-muted-foreground hover:text-foreground'
-                        }`}
+                            }`}
                     >
                         <Terminal className="h-4 w-4" />
                         Console
@@ -477,11 +490,10 @@ export default function RunDetail() {
                     {run?.recording_enabled && run?.video_path && (
                         <button
                             onClick={() => setActiveTab('video')}
-                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                                activeTab === 'video'
+                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'video'
                                     ? 'border-primary text-primary'
                                     : 'border-transparent text-muted-foreground hover:text-foreground'
-                            }`}
+                                }`}
                         >
                             <Video className="h-4 w-4" />
                             Video
@@ -498,132 +510,131 @@ export default function RunDetail() {
                         <div className="border-b px-4 py-3">
                             <h2 className="font-semibold">Steps</h2>
                         </div>
-                    <div className="divide-y max-h-[600px] overflow-y-auto">
-                        {steps.length === 0 ? (
-                            <div className="p-8 text-center text-muted-foreground">
-                                {run?.status === 'running' ? (
-                                    <>
-                                        <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
-                                        <p>Waiting for steps...</p>
-                                    </>
-                                ) : (
-                                    <p>No steps recorded</p>
-                                )}
-                            </div>
-                        ) : (
-                            steps.map((step) => (
-                                <div
-                                    key={step.id}
-                                    onClick={() => setSelectedStep(step)}
-                                    className={`px-4 py-3 cursor-pointer transition-colors ${
-                                        selectedStep?.id === step.id ? 'bg-muted' : 'hover:bg-muted/30'
-                                    }`}
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${STATUS_COLORS[step.status]}`}>
-                                                {STATUS_ICONS[step.status] || step.step_index + 1}
-                                            </div>
-                                            <div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-muted-foreground">
-                                                        {ACTION_ICONS[step.action] || null}
-                                                    </span>
-                                                    <span className="font-medium text-sm capitalize">{step.action}</span>
+                        <div className="divide-y max-h-[600px] overflow-y-auto">
+                            {steps.length === 0 ? (
+                                <div className="p-8 text-center text-muted-foreground">
+                                    {run?.status === 'running' ? (
+                                        <>
+                                            <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
+                                            <p>Waiting for steps...</p>
+                                        </>
+                                    ) : (
+                                        <p>No steps recorded</p>
+                                    )}
+                                </div>
+                            ) : (
+                                steps.map((step) => (
+                                    <div
+                                        key={step.id}
+                                        onClick={() => setSelectedStep(step)}
+                                        className={`px-4 py-3 cursor-pointer transition-colors ${selectedStep?.id === step.id ? 'bg-muted' : 'hover:bg-muted/30'
+                                            }`}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${STATUS_COLORS[step.status]}`}>
+                                                    {STATUS_ICONS[step.status] || step.step_index + 1}
+                                                </div>
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-muted-foreground">
+                                                            {ACTION_ICONS[step.action] || null}
+                                                        </span>
+                                                        <span className="font-medium text-sm capitalize">{step.action}</span>
+                                                    </div>
                                                 </div>
                                             </div>
+                                            <span className="text-xs text-muted-foreground">
+                                                {formatDuration(step.duration_ms)}
+                                            </span>
                                         </div>
-                                        <span className="text-xs text-muted-foreground">
-                                            {formatDuration(step.duration_ms)}
-                                        </span>
-                                    </div>
 
-                                    {/* Selector Used */}
-                                    {step.selector_used && (
-                                        <p className="text-xs text-muted-foreground mt-1 ml-10 font-mono truncate">
-                                            {step.selector_used}
-                                        </p>
-                                    )}
+                                        {/* Selector Used */}
+                                        {step.selector_used && (
+                                            <p className="text-xs text-muted-foreground mt-1 ml-10 font-mono truncate">
+                                                {step.selector_used}
+                                            </p>
+                                        )}
 
-                                    {/* Error */}
-                                    {step.error_message && (
-                                        <p className="text-xs text-red-600 mt-1 ml-10">
-                                            {step.error_message}
-                                        </p>
-                                    )}
+                                        {/* Error */}
+                                        {step.error_message && (
+                                            <p className="text-xs text-red-600 mt-1 ml-10">
+                                                {step.error_message}
+                                            </p>
+                                        )}
 
-                                    {/* Healing Info */}
-                                    {step.heal_attempts && step.heal_attempts.length > 0 && step.status === 'healed' && (
-                                        <div className="mt-2 ml-10">
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    setExpandedHealing(expandedHealing === step.id ? null : step.id)
-                                                }}
-                                                className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-700"
-                                            >
-                                                {expandedHealing === step.id ? (
-                                                    <ChevronDown className="h-3 w-3" />
-                                                ) : (
-                                                    <ChevronRight className="h-3 w-3" />
+                                        {/* Healing Info */}
+                                        {step.heal_attempts && step.heal_attempts.length > 0 && step.status === 'healed' && (
+                                            <div className="mt-2 ml-10">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        setExpandedHealing(expandedHealing === step.id ? null : step.id)
+                                                    }}
+                                                    className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-700"
+                                                >
+                                                    {expandedHealing === step.id ? (
+                                                        <ChevronDown className="h-3 w-3" />
+                                                    ) : (
+                                                        <ChevronRight className="h-3 w-3" />
+                                                    )}
+                                                    <Zap className="h-3 w-3" />
+                                                    Self-healed ({step.heal_attempts.length} attempts)
+                                                </button>
+                                                {expandedHealing === step.id && (
+                                                    <div className="mt-2 space-y-1 text-xs">
+                                                        {step.heal_attempts.map((attempt, idx) => (
+                                                            <div key={idx} className={`flex items-center gap-2 ${attempt.success ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {attempt.success ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                                                                <span className="font-mono truncate">{attempt.selector}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 )}
-                                                <Zap className="h-3 w-3" />
-                                                Self-healed ({step.heal_attempts.length} attempts)
-                                            </button>
-                                            {expandedHealing === step.id && (
-                                                <div className="mt-2 space-y-1 text-xs">
-                                                    {step.heal_attempts.map((attempt, idx) => (
-                                                        <div key={idx} className={`flex items-center gap-2 ${attempt.success ? 'text-green-600' : 'text-red-600'}`}>
-                                                            {attempt.success ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                                                            <span className="font-mono truncate">{attempt.selector}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-
-                {/* Screenshot Panel */}
-                <div className="rounded-lg border bg-card shadow-sm">
-                    <div className="border-b px-4 py-3 flex items-center justify-between">
-                        <h2 className="font-semibold flex items-center gap-2">
-                            Screenshot
-                            {selectedStep && (
-                                <span className="text-muted-foreground font-normal">
-                                    Step {selectedStep.step_index + 1}
-                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))
                             )}
-                        </h2>
+                        </div>
                     </div>
-                    <div className="p-4">
-                        {selectedStep?.screenshot_path ? (
-                            <img
-                                src={getScreenshotUrl(selectedStep.screenshot_path)}
-                                alt={`Step ${selectedStep.step_index + 1} screenshot`}
-                                className="w-full rounded-lg border shadow-sm"
-                            />
-                        ) : run?.status === 'running' ? (
-                            <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
-                                <div className="text-center">
-                                    <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
-                                    <p className="text-muted-foreground">Test running on container...</p>
-                                    <p className="text-xs text-muted-foreground mt-1">Screenshots will appear as steps complete</p>
+
+                    {/* Screenshot Panel */}
+                    <div className="rounded-lg border bg-card shadow-sm">
+                        <div className="border-b px-4 py-3 flex items-center justify-between">
+                            <h2 className="font-semibold flex items-center gap-2">
+                                Screenshot
+                                {selectedStep && (
+                                    <span className="text-muted-foreground font-normal">
+                                        Step {selectedStep.step_index + 1}
+                                    </span>
+                                )}
+                            </h2>
+                        </div>
+                        <div className="p-4">
+                            {selectedStep?.screenshot_path ? (
+                                <img
+                                    src={getScreenshotUrl(selectedStep.screenshot_path)}
+                                    alt={`Step ${selectedStep.step_index + 1} screenshot`}
+                                    className="w-full rounded-lg border shadow-sm"
+                                />
+                            ) : run?.status === 'running' ? (
+                                <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
+                                    <div className="text-center">
+                                        <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+                                        <p className="text-muted-foreground">Test running on container...</p>
+                                        <p className="text-xs text-muted-foreground mt-1">Screenshots will appear as steps complete</p>
+                                    </div>
                                 </div>
-                            </div>
-                        ) : (
-                            <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
-                                <p className="text-muted-foreground">
-                                    {selectedStep ? 'No screenshot available' : 'Select a step to view screenshot'}
-                                </p>
-                            </div>
-                        )}
+                            ) : (
+                                <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
+                                    <p className="text-muted-foreground">
+                                        {selectedStep ? 'No screenshot available' : 'Select a step to view screenshot'}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                </div>
                 </div>
             )}
 
@@ -665,20 +676,18 @@ export default function RunDetail() {
                                 <div key={req.id} className="px-4 py-3">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
-                                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${
-                                                req.method === 'GET' ? 'bg-green-100 text-green-700' :
-                                                req.method === 'POST' ? 'bg-blue-100 text-blue-700' :
-                                                req.method === 'PUT' ? 'bg-yellow-100 text-yellow-700' :
-                                                req.method === 'DELETE' ? 'bg-red-100 text-red-700' :
-                                                'bg-gray-100 text-gray-700'
-                                            }`}>
+                                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${req.method === 'GET' ? 'bg-green-100 text-green-700' :
+                                                    req.method === 'POST' ? 'bg-blue-100 text-blue-700' :
+                                                        req.method === 'PUT' ? 'bg-yellow-100 text-yellow-700' :
+                                                            req.method === 'DELETE' ? 'bg-red-100 text-red-700' :
+                                                                'bg-gray-100 text-gray-700'
+                                                }`}>
                                                 {req.method}
                                             </span>
-                                            <span className={`text-xs ${
-                                                req.status_code && req.status_code >= 200 && req.status_code < 300 ? 'text-green-600' :
-                                                req.status_code && req.status_code >= 400 ? 'text-red-600' :
-                                                'text-muted-foreground'
-                                            }`}>
+                                            <span className={`text-xs ${req.status_code && req.status_code >= 200 && req.status_code < 300 ? 'text-green-600' :
+                                                    req.status_code && req.status_code >= 400 ? 'text-red-600' :
+                                                        'text-muted-foreground'
+                                                }`}>
                                                 {req.status_code || '-'}
                                             </span>
                                         </div>
@@ -728,18 +737,16 @@ export default function RunDetail() {
                             </div>
                         ) : (
                             consoleLogs.map((log) => (
-                                <div key={log.id} className={`px-4 py-2 ${
-                                    log.level === 'error' ? 'bg-red-50' :
-                                    log.level === 'warn' ? 'bg-yellow-50' :
-                                    ''
-                                }`}>
+                                <div key={log.id} className={`px-4 py-2 ${log.level === 'error' ? 'bg-red-50' :
+                                        log.level === 'warn' ? 'bg-yellow-50' :
+                                            ''
+                                    }`}>
                                     <div className="flex items-start gap-2">
-                                        <span className={`inline-flex items-center rounded px-1 py-0.5 text-xs font-medium ${
-                                            log.level === 'error' ? 'bg-red-100 text-red-700' :
-                                            log.level === 'warn' ? 'bg-yellow-100 text-yellow-700' :
-                                            log.level === 'info' ? 'bg-blue-100 text-blue-700' :
-                                            'bg-gray-100 text-gray-700'
-                                        }`}>
+                                        <span className={`inline-flex items-center rounded px-1 py-0.5 text-xs font-medium ${log.level === 'error' ? 'bg-red-100 text-red-700' :
+                                                log.level === 'warn' ? 'bg-yellow-100 text-yellow-700' :
+                                                    log.level === 'info' ? 'bg-blue-100 text-blue-700' :
+                                                        'bg-gray-100 text-gray-700'
+                                            }`}>
                                             {log.level}
                                         </span>
                                         <span className="flex-1 break-all">{log.message}</span>

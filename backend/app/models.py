@@ -166,7 +166,7 @@ class PlaywrightScript(Base):
 	# Relationships
 	session: Mapped["TestSession"] = relationship("TestSession", backref="scripts")
 	runs: Mapped[list["TestRun"]] = relationship(
-		"TestRun", back_populates="script", order_by="TestRun.created_at.desc()"
+		"TestRun", back_populates="script", order_by="TestRun.created_at.desc()", cascade="all, delete-orphan"
 	)
 
 

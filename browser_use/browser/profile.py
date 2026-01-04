@@ -189,6 +189,9 @@ CHROME_DEFAULT_ARGS = [
 	'--extensions-on-chrome-urls',
 	'--disable-default-apps',
 	f'--disable-features={",".join(CHROME_DISABLED_COMPONENTS)}',
+	# Disable password manager and save password popup
+	'--disable-save-password-bubble',
+	'--password-store=basic',
 ]
 
 
