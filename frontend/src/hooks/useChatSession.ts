@@ -83,7 +83,6 @@ interface UseChatSessionReturn {
   headless: boolean;
   isGeneratingPlan: boolean;
   isExecuting: boolean;
-  isPausing: boolean;
   isStopping: boolean;
   isPlanPending: boolean;
   isBusy: boolean;
@@ -113,7 +112,7 @@ interface UseChatSessionReturn {
   rejectPlan: (planId: string, reason?: string) => Promise<void>;
   injectCommand: (text: string) => void;
   stopExecution: () => Promise<void>;
-  resetSession: () => Promise<void>;
+  resetSession: () => Promise<string | null>;
   endBrowserSession: () => Promise<void>;
   clearQueueAndProceed: () => void;
   processRemainingQueue: () => void;
@@ -133,12 +132,11 @@ interface UseChatSessionReturn {
   skipFailedStep: (stepNumber: number) => void;
   continueRunTillEnd: () => void;
   cancelRunTillEnd: () => void;
-  // Pause/Stop actions
-  pauseExecution: () => void;
-  stopAll: () => void;
+  // Stop AI execution (keeps browser alive)
+  stopAIExecution: () => void;
   // Existing session actions
   loadExistingSession: (id: string) => Promise<void>;
-  replaySession: (startRecordingAfterReplay?: boolean) => Promise<void>;
+  replaySession: (startRecordingAfterReplay?: boolean, prepareOnly?: boolean) => Promise<void>;
   forkFromStep: (stepNumber: number) => Promise<void>;
   clearReplayFailure: () => void;
   // Plan editing state and actions
@@ -195,10 +193,7 @@ export function useChatSession(): UseChatSessionReturn {
   const [replayFailure, setReplayFailure] = useState<ReplayFailure | null>(null);
   const startRecordingAfterReplayRef = useRef(false);
 
-  // Pause state
-  const [isPausing, setIsPausing] = useState(false);
-
-  // Stop state
+  // Stop AI execution state
   const [isStopping, setIsStopping] = useState(false);
 
   // Plan editing state
@@ -441,7 +436,7 @@ export function useChatSession(): UseChatSessionReturn {
 
           case 'execution_paused': {
             const msg = message as WSExecutionPaused;
-            setIsPausing(false);  // Clear pausing state
+            setIsStopping(false);  // Clear stopping state
             setIsExecuting(false);
             setIsRunningTillEnd(false);
             // Update session status so canContinueSession() returns true
@@ -450,7 +445,7 @@ export function useChatSession(): UseChatSessionReturn {
             setMessages(prev => [
               ...prev,
               createTimelineMessage('system', {
-                content: msg.message || 'Execution paused. You can send new plan/act commands.',
+                content: msg.message || 'Execution stopped. You can send new plan/act commands.',
               }),
             ]);
             break;
@@ -458,7 +453,6 @@ export function useChatSession(): UseChatSessionReturn {
 
           case 'all_stopped': {
             const msg = message as WSAllStopped;
-            setIsPausing(false);  // Clear pausing state if stop is called
             setIsStopping(false);  // Clear stopping state
             setIsExecuting(false);
             setIsRunningTillEnd(false);
@@ -1313,12 +1307,15 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, [browserSession, sessionId, clearInactivityTimeout, stopBrowserPolling]);
 
-  // Reset session - clears all data from backend and frontend
-  const resetSession = useCallback(async () => {
+  // Reset session - clears steps/messages from backend, returns original prompt for editing
+  const resetSession = useCallback(async (): Promise<string | null> => {
+    let originalPrompt: string | null = null;
+
     // If there's a session, reset it in the backend first
     if (sessionId) {
       try {
-        await analysisApi.resetSession(sessionId);
+        const resetResult = await analysisApi.resetSession(sessionId);
+        originalPrompt = resetResult.prompt || null;
       } catch (e) {
         console.error('Error resetting session:', e);
         // Continue with frontend reset even if backend fails
@@ -1337,7 +1334,6 @@ export function useChatSession(): UseChatSessionReturn {
     setBrowserSession(null);
     setIsGeneratingPlan(false);
     setIsExecuting(false);
-    setIsPausing(false);
     setIsStopping(false);
     setIsPlanPending(false);
     setPendingPlanId(null);
@@ -1353,6 +1349,8 @@ export function useChatSession(): UseChatSessionReturn {
     setSkippedSteps([]);
     setCurrentExecutingStepNumber(null);
     lastStepCountRef.current = 0;
+
+    return originalPrompt;
   }, [sessionId, stopPolling, stopBrowserPolling, clearInactivityTimeout, disconnectWebSocket]);
 
   // Generate test script from session steps
@@ -1664,28 +1662,15 @@ export function useChatSession(): UseChatSessionReturn {
     setRunTillEndPaused(null);
   }, [sessionId]);
 
-  // Pause AI execution (keeps browser alive)
-  const pauseExecution = useCallback(() => {
-    if (!sessionId) return;
-
-    setIsPausing(true);  // Show spinner immediately
-
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ command: 'pause_execution' }));
-    }
-  }, [sessionId]);
-
-  // Stop all execution and terminate browser session
-  const stopAll = useCallback(() => {
+  // Stop AI execution (keeps browser alive)
+  const stopAIExecution = useCallback(() => {
     if (!sessionId) return;
 
     setIsStopping(true);  // Show spinner immediately
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ command: 'stop_all' }));
+      wsRef.current.send(JSON.stringify({ command: 'pause_execution' }));
     }
-    setIsExecuting(false);
-    setIsRunningTillEnd(false);
   }, [sessionId]);
 
   // Load an existing session
@@ -1876,7 +1861,8 @@ export function useChatSession(): UseChatSessionReturn {
   }, [connectWebSocket, startBrowserPolling]);
 
   // Replay all steps in the session
-  const replaySession = useCallback(async (startRecordingAfterReplay = false) => {
+  // If prepareOnly=true, only start the browser without replaying steps (useful for Run Till End with skip support)
+  const replaySession = useCallback(async (startRecordingAfterReplay = false, prepareOnly = false) => {
     if (!sessionId) return;
 
     setIsReplaying(true);
@@ -1887,14 +1873,16 @@ export function useChatSession(): UseChatSessionReturn {
     setMessages((prev) => [
       ...prev,
       createTimelineMessage('system', {
-        content: startRecordingAfterReplay
-          ? 'Re-initiating session with recording... Starting browser and replaying steps.'
-          : 'Re-initiating session... Starting browser and replaying steps.',
+        content: prepareOnly
+          ? 'Starting browser for Run Till End...'
+          : startRecordingAfterReplay
+            ? 'Re-initiating session with recording... Starting browser and replaying steps.'
+            : 'Re-initiating session... Starting browser and replaying steps.',
       }),
     ]);
 
     try {
-      const result: ReplayResponse = await analysisApi.replaySession(sessionId, headless);
+      const result: ReplayResponse = await analysisApi.replaySession(sessionId, headless, prepareOnly);
 
       if (result.success) {
         setMessages((prev) => [
@@ -2048,7 +2036,6 @@ export function useChatSession(): UseChatSessionReturn {
     headless,
     isGeneratingPlan,
     isExecuting,
-    isPausing,
     isStopping,
     isPlanPending,
     isBusy,
@@ -2098,9 +2085,8 @@ export function useChatSession(): UseChatSessionReturn {
     skipFailedStep,
     continueRunTillEnd,
     cancelRunTillEnd,
-    // Pause/Stop actions
-    pauseExecution,
-    stopAll,
+    // Stop AI execution action
+    stopAIExecution,
     // Existing session actions
     loadExistingSession,
     replaySession,

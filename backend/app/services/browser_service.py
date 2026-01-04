@@ -145,8 +145,18 @@ class BrowserService:
 				{"status": status}, synchronize_session=False
 			)
 			self.db.commit()
+			# Notify frontend via WebSocket
+			asyncio.create_task(self._send_status_changed(status))
 		except Exception as e:
 			logger.error(f"Error updating session status: {e}")
+
+	async def _send_status_changed(self, status: str) -> None:
+		"""Send status changed message to frontend via WebSocket."""
+		try:
+			from app.schemas import WSStatusChanged
+			await self.websocket.send_json(WSStatusChanged(status=status).model_dump())
+		except Exception as e:
+			logger.error(f"Error sending status changed message: {e}")
 
 	def _extract_target_url(self, plan: TestPlan) -> str | None:
 		"""Extract the target URL from a test plan.

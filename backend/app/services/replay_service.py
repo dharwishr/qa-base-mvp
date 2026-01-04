@@ -119,24 +119,27 @@ async def replay_session(
     db: Session,
     session: TestSession,
     headless: bool = False,
+    prepare_only: bool = False,
 ) -> ReplayResult:
     """
     Replay all steps in a test session.
-    
+
     This will:
     1. Start a new browser session (via orchestrator)
-    2. Build replay steps from the session's recorded steps
-    3. Execute replay using CDPRunner
-    
+    2. Build replay steps from the session's recorded steps (unless prepare_only=True)
+    3. Execute replay using CDPRunner (unless prepare_only=True)
+
     Args:
         db: Database session
         session: The test session to replay
         headless: Whether to run in headless mode
-    
+        prepare_only: If True, only start the browser without replaying steps.
+                     Useful for Run Till End flow with skip support.
+
     Returns:
         ReplayResult with details of the operation
     """
-    logger.info(f"Starting replay for session {session.id}, headless={headless}")
+    logger.info(f"Starting replay for session {session.id}, headless={headless}, prepare_only={prepare_only}")
     
     steps = list(session.steps)
     if not steps:
@@ -202,7 +205,21 @@ async def replay_session(
             error_message="Could not get CDP WebSocket URL",
             user_message="Browser started but could not connect. Please try again.",
         )
-    
+
+    # If prepare_only mode, return immediately without replaying steps
+    # This is used when the user wants to use Run Till End with skip support
+    if prepare_only:
+        logger.info(f"prepare_only mode: Browser ready, skipping step replay for session {session.id}")
+        await orchestrator.touch_session(browser_session.id)
+        return ReplayResult(
+            success=True,
+            total_steps=total_steps,
+            steps_replayed=0,
+            replay_status="prepared",
+            browser_session_id=browser_session.id,
+            user_message=f"Browser ready. Use 'Run Till End' to execute {total_steps} steps with skip support.",
+        )
+
     # Build replay steps
     pw_steps = build_playwright_steps_for_session(steps, max_step)
     

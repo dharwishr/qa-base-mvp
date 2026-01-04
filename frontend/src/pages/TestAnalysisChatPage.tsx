@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play, Pause, RefreshCw, Circle, CheckCircle, XCircle, PauseCircle, StopCircle, Clock, Loader2 } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play, RefreshCw, Circle, CheckCircle, XCircle, PauseCircle, StopCircle, Clock, Loader2 } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
@@ -31,6 +31,7 @@ const STATUS_COLORS: Record<string, string> = {
   'approved': 'bg-purple-100 text-purple-700',
   'queued': 'bg-orange-100 text-orange-700',
   'running': 'bg-yellow-100 text-yellow-700',
+  'rerunning': 'bg-cyan-100 text-cyan-700',
   'completed': 'bg-green-100 text-green-700',
   'failed': 'bg-red-100 text-red-700',
   'stopped': 'bg-orange-100 text-orange-700',
@@ -43,6 +44,7 @@ const STATUS_LABELS: Record<string, string> = {
   'approved': 'Approved',
   'queued': 'Queued',
   'running': 'Running',
+  'rerunning': 'Re-Running',
   'completed': 'Completed',
   'failed': 'Failed',
   'stopped': 'Stopped',
@@ -54,6 +56,7 @@ const getStatusIcon = (status: string) => {
     case 'completed': return <CheckCircle className="h-3 w-3" />;
     case 'failed': return <XCircle className="h-3 w-3" />;
     case 'running': return <Clock className="h-3 w-3 animate-pulse" />;
+    case 'rerunning': return <RefreshCw className="h-3 w-3 animate-spin" />;
     case 'queued': return <Clock className="h-3 w-3" />;
     case 'paused': return <PauseCircle className="h-3 w-3" />;
     case 'stopped': return <StopCircle className="h-3 w-3" />;
@@ -193,6 +196,7 @@ function ReplayFailureDialog({
 
 export default function TestAnalysisChatPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>();
   const {
     messages,
@@ -205,7 +209,6 @@ export default function TestAnalysisChatPage() {
     headless,
     isGeneratingPlan,
     isExecuting,
-    isPausing,
     isStopping,
     isPlanPending,
     queueFailure,
@@ -241,9 +244,8 @@ export default function TestAnalysisChatPage() {
     startRunTillEnd,
     skipFailedStep,
     continueRunTillEnd,
-    // Pause/Stop
-    pauseExecution,
-    stopAll,
+    // Stop AI execution
+    stopAIExecution,
     // Existing session
     isLoading,
     isReplaying,
@@ -275,23 +277,22 @@ export default function TestAnalysisChatPage() {
     }
   }, [sessionId, urlSessionId, navigate]);
 
-  // Track previous isPausing state to detect when pause completes
-  const wasPausingRef = useRef(false);
-
-  // Show toast when pause completes
+  // Handle reset navigation state - populate input with original prompt
   useEffect(() => {
-    if (wasPausingRef.current && !isPausing && sessionStatus === 'paused') {
-      toast.success('Execution paused successfully');
+    const state = location.state as { initialPrompt?: string; resetTimestamp?: number } | null;
+    if (state?.initialPrompt) {
+      setInitialInputValue(state.initialPrompt);
+      // Clear the navigation state to prevent re-triggering on future navigations
+      navigate(location.pathname, { replace: true, state: {} });
     }
-    wasPausingRef.current = isPausing;
-  }, [isPausing, sessionStatus]);
+  }, [location.state, location.pathname, navigate]);
 
   // Track previous isStopping state to detect when stop completes
   const wasStoppingRef = useRef(false);
 
   // Show toast when stop completes
   useEffect(() => {
-    if (wasStoppingRef.current && !isStopping && sessionStatus === 'stopped') {
+    if (wasStoppingRef.current && !isStopping && sessionStatus === 'paused') {
       toast.success('Execution stopped successfully');
     }
     wasStoppingRef.current = isStopping;
@@ -300,13 +301,6 @@ export default function TestAnalysisChatPage() {
   // Determine if "Generate Script" button should show
   const canGenerateScript = (sessionStatus === 'completed' || sessionStatus === 'stopped') &&
     messages.some(m => m.type === 'step');
-
-  // Determine if "Re-initiate Browser" button should show
-  const canReinitieBrowser = sessionStatus &&
-    ['completed', 'failed', 'stopped'].includes(sessionStatus) &&
-    totalSteps > 0 &&
-    !browserSession &&
-    !isReplaying;
 
   // Get session title
   const sessionTitle = currentSession?.title || 'Test Analysis';
@@ -319,6 +313,71 @@ export default function TestAnalysisChatPage() {
   const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null);
   const [stepToDelete, setStepToDelete] = useState<{ id: string; stepNumber: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [initialInputValue, setInitialInputValue] = useState<string | undefined>(undefined);
+  const [pendingRunTillEnd, setPendingRunTillEnd] = useState(false); // Flag to start Run Till End after browser is ready
+
+  // Handle reset button click - clears data and populates input with original prompt
+  const handleReset = useCallback(async () => {
+    // Get the browser session ID before reset (for navigating to about:blank)
+    const browserSessionIdToReset = browserSession?.id;
+
+    // Reset session in backend and get original prompt
+    const originalPrompt = await resetSession();
+
+    // Navigate the browser to about:blank if it exists
+    if (browserSessionIdToReset) {
+      try {
+        await fetch(`${import.meta.env.VITE_API_URL}/browser/sessions/${browserSessionIdToReset}/navigate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          },
+          body: JSON.stringify({ url: 'about:blank' }),
+        });
+      } catch (e) {
+        console.error('Error navigating browser to about:blank:', e);
+      }
+    }
+
+    setLinkedScript(null);
+    // Navigate to base URL with the original prompt in state
+    navigate('/test-analysis', {
+      replace: true,
+      state: { initialPrompt: originalPrompt, resetTimestamp: Date.now() }
+    });
+  }, [resetSession, navigate, browserSession?.id]);
+
+  // Clear initial input value after it's been consumed by ChatInput
+  const handleInitialValueConsumed = useCallback(() => {
+    setInitialInputValue(undefined);
+  }, []);
+
+  // Effect to start Run Till End after browser becomes available
+  useEffect(() => {
+    if (pendingRunTillEnd && browserSession && !isReplaying) {
+      // Browser is now ready, start Run Till End
+      setPendingRunTillEnd(false);
+      // Small delay to ensure WebSocket is connected
+      setTimeout(() => {
+        startRunTillEnd();
+      }, 300);
+    }
+  }, [pendingRunTillEnd, browserSession, isReplaying, startRunTillEnd]);
+
+  // Combined Re Run handler - initializes browser if needed, then runs all steps with skip support
+  // Uses "Run Till End" for step execution which provides skip/undo options when a step fails
+  const handleReRun = useCallback(async () => {
+    if (browserSession) {
+      // Browser is live - run all steps directly via WebSocket
+      startRunTillEnd();
+    } else {
+      // Browser not live - initialize browser first (prepareOnly=true), then use Run Till End
+      // This ensures we have skip support when steps fail
+      setPendingRunTillEnd(true); // Set flag to trigger Run Till End when browser is ready
+      await replaySession(false, true); // prepareOnly=true - just start browser
+    }
+  }, [browserSession, startRunTillEnd, replaySession]);
 
   // Check for existing script linked to this session
   useEffect(() => {
@@ -466,36 +525,14 @@ export default function TestAnalysisChatPage() {
 
           {/* Row 2: Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Pause Button - Shows when AI is executing, Run Till End is active, or pausing */}
-            {(isExecuting || isRunningTillEnd || isPausing) && (
+            {/* Stop Button - Stops AI execution, keeps browser alive */}
+            {(isExecuting || isRunningTillEnd || isStopping) && (
               <Button
                 size="sm"
                 variant="outline"
-                onClick={pauseExecution}
-                disabled={isPausing}
-                className="h-7 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 disabled:opacity-70"
-              >
-                {isPausing ? (
-                  <>
-                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                    Pausing...
-                  </>
-                ) : (
-                  <>
-                    <Pause className="h-3 w-3 mr-1" />
-                    Pause
-                  </>
-                )}
-              </Button>
-            )}
-            {/* Stop Button - Stops everything including browser */}
-            {(isExecuting || isRunningTillEnd || browserSession || isStopping) && (
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={stopAll}
+                onClick={stopAIExecution}
                 disabled={isStopping}
-                className="h-7 text-xs disabled:opacity-70"
+                className="h-7 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 disabled:opacity-70"
               >
                 {isStopping ? (
                   <>
@@ -514,35 +551,33 @@ export default function TestAnalysisChatPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={resetSession}
+                onClick={handleReset}
                 className="h-7 text-xs"
               >
                 <RotateCcw className="h-3 w-3 mr-1" />
                 Reset
               </Button>
             )}
-            {totalSteps > 0 && !isExecuting && !isRunningTillEnd && browserSession && (
+            {/* Re Run - combines "Run Till End" and "Re-initiate Browser" */}
+            {totalSteps > 0 && !isExecuting && !isRunningTillEnd && !isReplaying && (
               <Button
                 size="sm"
                 variant="default"
-                onClick={startRunTillEnd}
-                className="h-7 text-xs"
-              >
-                <Play className="h-3 w-3 mr-1" />
-                Run Till End
-              </Button>
-            )}
-            {/* Re-initiate Browser - for completed/stopped sessions without active browser */}
-            {canReinitieBrowser && (
-              <Button
-                size="sm"
-                variant="default"
-                onClick={() => replaySession(false)}
+                onClick={handleReRun}
                 disabled={isReplaying}
                 className="h-7 text-xs"
               >
-                <RefreshCw className={`h-3 w-3 mr-1 ${isReplaying ? 'animate-spin' : ''}`} />
-                {isReplaying ? 'Starting...' : 'Re-initiate Browser'}
+                {isReplaying ? (
+                  <>
+                    <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-3 w-3 mr-1" />
+                    Re Run
+                  </>
+                )}
               </Button>
             )}
             {linkedScript ? (
@@ -704,6 +739,8 @@ export default function TestAnalysisChatPage() {
                   ? 'Describe your test case...'
                   : 'Describe what you want to do...'
           }
+          initialValue={initialInputValue}
+          onInitialValueConsumed={handleInitialValueConsumed}
         />
       </div>
 

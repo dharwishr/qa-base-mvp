@@ -751,9 +751,9 @@ async def reset_session(
 	3. Delete the plan
 	4. Delete execution logs
 	5. Reset the session status to 'idle'
-	6. Clear the prompt
 
-	The session ID is preserved for a fresh start.
+	The session ID, title, and original prompt are preserved so the user
+	can edit and re-run the test case.
 	"""
 	from app.models import ChatMessage, ExecutionLog, StepAction
 
@@ -778,16 +778,14 @@ async def reset_session(
 	if session.plan:
 		db.query(TestPlan).filter(TestPlan.session_id == session_id).delete(synchronize_session=False)
 
-	# 6. Reset session state
+	# 6. Reset session state (keep title and prompt for user to edit)
 	session.status = "idle"
-	session.prompt = ""
-	session.title = ""
 	session.celery_task_id = None
 
 	db.commit()
 	db.refresh(session)
 
-	logger.info(f"Reset session {session_id} to initial state")
+	logger.info(f"Reset session {session_id} to initial state (kept title and prompt)")
 	return session
 
 
@@ -1049,27 +1047,38 @@ async def replay_session(
 	if not session:
 		raise HTTPException(status_code=404, detail="Session not found")
 
-	# Allow replay from various states
-	allowed_states = ("completed", "failed", "stopped", "plan_ready", "approved")
-	if session.status not in allowed_states:
+	# Allow replay from any state - user should be able to Re Run at any time
+	# Only block if session has no steps (nothing to replay)
+	if not session.steps:
 		raise HTTPException(
 			status_code=400,
-			detail=f"Cannot replay session in status: {session.status}. "
-				   f"Allowed states: {', '.join(allowed_states)}"
+			detail="Cannot replay session with no steps"
 		)
 
 	headless = request.headless if request else False
+	prepare_only = request.prepare_only if request else False
+
+	# Update session status to 'rerunning' when Re Run is triggered
+	if prepare_only:
+		session.status = "rerunning"
+		db.commit()
 
 	# Persist starting message for session history
-	create_system_message(db, session_id, "Re-initiating session...")
+	if prepare_only:
+		create_system_message(db, session_id, "Starting Re Run...")
+	else:
+		create_system_message(db, session_id, "Re-initiating session...")
 	db.commit()
 
 	try:
-		result = await do_replay(db, session, headless=headless)
+		result = await do_replay(db, session, headless=headless, prepare_only=prepare_only)
 
 		# Persist result message for session history
 		if result.success:
-			create_system_message(db, session_id, f"Session re-initiated successfully. {result.steps_replayed}/{result.total_steps} steps replayed.")
+			if prepare_only:
+				create_system_message(db, session_id, f"Browser ready. {result.total_steps} steps available for execution.")
+			else:
+				create_system_message(db, session_id, f"Session re-initiated successfully. {result.steps_replayed}/{result.total_steps} steps replayed.")
 		else:
 			error_msg = result.error_message or "Unknown error"
 			create_system_message(db, session_id, f"Re-initiation failed at step {result.failed_at_step}: {error_msg}")

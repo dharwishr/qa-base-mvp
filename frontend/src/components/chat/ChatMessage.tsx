@@ -356,8 +356,29 @@ function StepMessageCard({
       return null;
     }
 
+    // Determine container styles for simple mode
+    const getSimpleModeContainerStyle = () => {
+      if (isCurrentlyExecuting) return 'ring-2 ring-blue-300 bg-blue-50 rounded-lg p-2';
+      if (isStepSkipped) return 'opacity-60';
+      return '';
+    };
+
     return (
-      <div className="flex justify-start w-full group" data-step-number={step.step_number}>
+      <div
+        className={`flex justify-start w-full group ${getSimpleModeContainerStyle()}`}
+        data-step-number={step.step_number}
+      >
+        {/* Step indicator for currently executing */}
+        {isCurrentlyExecuting && (
+          <div className="flex items-center gap-1 mr-2 text-blue-600">
+            <Clock className="h-4 w-4 animate-pulse" />
+          </div>
+        )}
+        {isStepSkipped && (
+          <div className="flex items-center gap-1 mr-2 text-gray-400">
+            <SkipForward className="h-4 w-4" />
+          </div>
+        )}
         <div className="space-y-1.5 w-full">
           {filteredActions.map((action, idx) => {
             const actionNumber = startingActionNumber + idx + 1;
@@ -365,9 +386,11 @@ function StepMessageCard({
               <div
                 key={action.id || idx}
                 className={`flex items-start gap-2 cursor-pointer rounded-lg transition-all ${
-                  isSelected
-                    ? 'ring-2 ring-primary bg-primary/5'
-                    : 'hover:bg-muted/30'
+                  isCurrentlyExecuting
+                    ? 'bg-blue-50'
+                    : isSelected
+                      ? 'ring-2 ring-primary bg-primary/5'
+                      : 'hover:bg-muted/30'
                 }`}
                 onClick={() => onStepSelect?.(step.id)}
               >

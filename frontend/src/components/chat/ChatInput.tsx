@@ -11,6 +11,8 @@ interface ChatInputProps {
   disabled?: boolean;
   placeholder?: string;
   isExecuting?: boolean;
+  initialValue?: string;
+  onInitialValueConsumed?: () => void;
 }
 
 export default function ChatInput({
@@ -20,8 +22,18 @@ export default function ChatInput({
   disabled = false,
   placeholder = 'Describe what you want to test...',
   isExecuting = false,
+  initialValue,
+  onInitialValueConsumed,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
+
+  // Set initial value when provided (e.g., after reset)
+  useEffect(() => {
+    if (initialValue) {
+      setInput(initialValue);
+      onInitialValueConsumed?.();
+    }
+  }, [initialValue, onInitialValueConsumed]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Voice input hook

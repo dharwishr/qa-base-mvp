@@ -202,12 +202,14 @@ export default function TestAnalysis() {
         }
     }
 
-    // Reset to try again - clears all data from backend and frontend
+    // Reset to try again - clears steps/messages from backend, keeps prompt for editing
     const handleReset = async () => {
         // If there's a session, reset it in the backend first
         if (session?.id) {
             try {
-                await analysisApi.resetSession(session.id)
+                const resetSession = await analysisApi.resetSession(session.id)
+                // Set the original prompt in the input box for editing
+                setPrompt(resetSession.prompt || "")
             } catch (e) {
                 console.error('Error resetting session:', e)
                 // Continue with frontend reset even if backend fails
@@ -217,13 +219,11 @@ export default function TestAnalysis() {
         // Clear the subscription state (steps, status, etc.)
         clear()
 
-        // Reset all frontend state
+        // Reset frontend state but keep the prompt (already set above)
         setSession(null)
         setAnalysisState('idle')
         setError(null)
-        setPrompt("")
         setSelectedStepId(null)
-        setSelectedLlm('gemini-2.5-flash')
         setIsRecording(false)
         setBrowserSession(null)
         setLinkedScript(null)

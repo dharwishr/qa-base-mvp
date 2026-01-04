@@ -175,11 +175,48 @@ async def touch_browser_session(session_id: str):
     """Mark a browser session as active (reset inactivity timer)."""
     orchestrator = get_orchestrator()
     success = await orchestrator.touch_session(session_id)
-    
+
     if not success:
         raise HTTPException(status_code=404, detail="Browser session not found")
-    
+
     return {"status": "touched", "session_id": session_id}
+
+
+class NavigateRequest(BaseModel):
+    url: str
+
+
+@router.post("/sessions/{session_id}/navigate")
+async def navigate_browser(session_id: str, request: NavigateRequest):
+    """Navigate the browser to a specific URL.
+
+    Useful for resetting the browser to about:blank or navigating to a start page.
+    """
+    from playwright.async_api import async_playwright
+
+    orchestrator = get_orchestrator()
+    session = await orchestrator.get_session(session_id)
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Browser session not found")
+
+    if not session.cdp_url:
+        raise HTTPException(status_code=400, detail="Browser session has no CDP URL")
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(session.cdp_url)
+            contexts = browser.contexts
+            if contexts:
+                pages = contexts[0].pages
+                if pages:
+                    await pages[0].goto(request.url, wait_until="domcontentloaded", timeout=10000)
+                    return {"status": "navigated", "session_id": session_id, "url": request.url}
+
+            raise HTTPException(status_code=400, detail="No active page found in browser")
+    except Exception as e:
+        logger.error(f"Error navigating browser {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to navigate browser: {str(e)}")
 
 
 @router.post("/sessions/stop-all")

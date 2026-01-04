@@ -31,6 +31,12 @@ from app.services.script_recorder import PlaywrightStep
 
 logger = logging.getLogger(__name__)
 
+# Assert action names to skip during Re Run (assertions shouldn't block re-execution)
+ASSERT_ACTIONS = {
+    "assert", "assert_text", "assert_text_visible", "assert_element_visible",
+    "assert_url", "assert_value", "verify"
+}
+
 
 @dataclass
 class RunTillEndState:
@@ -168,13 +174,17 @@ class RunTillEndService:
         self.state.total_steps = len(steps)
         self.state.is_running = True
 
+        # Update session status to 'rerunning'
+        self.session.status = "rerunning"
+        self.db.commit()
+
         # Send started message
         await self.send_message({
             "type": "run_till_end_started",
             "total_steps": len(steps),
         })
         # Persist message for session history
-        self._create_chat_message(f"Run Till End started: executing {len(steps)} steps...")
+        self._create_chat_message(f"Re Run started: executing {len(steps)} steps...")
 
         # Find active browser session
         orchestrator = get_orchestrator()
@@ -245,7 +255,10 @@ class RunTillEndService:
                 while current_pw_index < len(self._pw_steps):
                     # Check for cancellation
                     if self.state.cancel_requested:
-                        logger.info(f"Run Till End cancelled at step {current_pw_index}")
+                        logger.info(f"Re Run cancelled at step {current_pw_index}")
+                        # Update session status to 'stopped'
+                        self.session.status = "stopped"
+                        self.db.commit()
                         await self.send_message({
                             "type": "run_till_end_completed",
                             "success": False,
@@ -255,7 +268,7 @@ class RunTillEndService:
                             "cancelled": True,
                         })
                         # Persist cancellation message for session history
-                        self._create_chat_message("Run Till End cancelled")
+                        self._create_chat_message("Re Run cancelled")
                         return RunTillEndResult(
                             success=False,
                             total_steps=len(steps),
@@ -266,6 +279,12 @@ class RunTillEndService:
 
                     pw_step = self._pw_steps[current_pw_index]
                     step_number = self._get_step_number_for_pw_index(current_pw_index, steps)
+
+                    # Skip assert actions during Re Run (assertions shouldn't block re-execution)
+                    if pw_step.action in ASSERT_ACTIONS:
+                        logger.info(f"Skipping assert action '{pw_step.action}' at pw_index {current_pw_index}")
+                        current_pw_index += 1
+                        continue
 
                     # Send progress update
                     self.state.current_step = step_number
@@ -335,6 +354,10 @@ class RunTillEndService:
             # All steps completed
             self.state.is_running = False
 
+            # Update session status back to 'completed'
+            self.session.status = "completed"
+            self.db.commit()
+
             # Touch the browser session to keep it active for user interaction
             await orchestrator.touch_session(browser_session.id)
 
@@ -347,7 +370,7 @@ class RunTillEndService:
             })
             # Persist completion message for session history
             skipped_text = f" ({len(self.state.skipped_steps)} skipped)" if self.state.skipped_steps else ""
-            self._create_chat_message(f"Run Till End completed: {completed_steps}/{len(steps)} steps successful{skipped_text}")
+            self._create_chat_message(f"Re Run completed: {completed_steps}/{len(steps)} steps successful{skipped_text}")
 
             # Log completion
             self.db.add(ExecutionLog(
@@ -370,6 +393,10 @@ class RunTillEndService:
 
             self.state.is_running = False
 
+            # Update session status to 'failed'
+            self.session.status = "failed"
+            self.db.commit()
+
             await self.send_message({
                 "type": "run_till_end_completed",
                 "success": False,
@@ -379,7 +406,7 @@ class RunTillEndService:
                 "error_message": str(e),
             })
             # Persist error message for session history
-            self._create_chat_message(f"Run Till End failed: {str(e)}", "error")
+            self._create_chat_message(f"Re Run failed: {str(e)}", "error")
 
             return RunTillEndResult(
                 success=False,

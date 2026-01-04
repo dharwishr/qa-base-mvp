@@ -648,6 +648,10 @@ class ReplaySessionRequest(BaseModel):
 		default=False,
 		description="If True, run in headless mode. If False, show live browser view."
 	)
+	prepare_only: bool = Field(
+		default=False,
+		description="If True, only start the browser without replaying steps. Useful for Run Till End flow with skip support."
+	)
 
 
 class ReplaySessionResponse(BaseModel):

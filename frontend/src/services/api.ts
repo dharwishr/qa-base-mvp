@@ -371,11 +371,18 @@ export const analysisApi = {
    * Replay all steps in an existing test session.
    * This starts a new browser session and replays all recorded steps.
    * Use this to re-initiate an older test case analysis session.
+   *
+   * @param sessionId - The session ID to replay
+   * @param headless - Whether to run in headless mode
+   * @param prepareOnly - If true, only start the browser without replaying steps.
+   *                      Useful for Run Till End flow with skip support.
    */
-  async replaySession(sessionId: string, headless: boolean = false): Promise<ReplayResponse> {
+  async replaySession(sessionId: string, headless: boolean = false, prepareOnly: boolean = false): Promise<ReplayResponse> {
     // Use AbortController for timeout - replay can take a while for many steps
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
+    // Use shorter timeout for prepareOnly since we're just starting browser
+    const timeoutMs = prepareOnly ? 60000 : 300000; // 1 min for prepare, 5 min for full replay
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(
@@ -383,14 +390,15 @@ export const analysisApi = {
         {
           method: 'POST',
           headers: getAuthHeaders(),
-          body: JSON.stringify({ headless }),
+          body: JSON.stringify({ headless, prepare_only: prepareOnly }),
           signal: controller.signal,
         }
       );
       return handleResponse<ReplayResponse>(response);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('Replay timed out after 5 minutes. Please try again.');
+        const timeoutMsg = prepareOnly ? '1 minute' : '5 minutes';
+        throw new Error(`Operation timed out after ${timeoutMsg}. Please try again.`);
       }
       throw error;
     } finally {
