@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck, Code, Copy, Check, Monitor, Timer } from "lucide-react"
+import { ArrowLeft, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck, Code, Copy, Check, Timer, Wifi, Terminal, Video, Chrome } from "lucide-react"
 import { runsApi, scriptsApi, getScreenshotUrl, getRunWebSocketUrl } from "@/services/api"
-import type { TestRun, RunStep, WSRunMessage, PlaywrightScript } from "@/types/scripts"
+import type { TestRun, RunStep, PlaywrightScript, NetworkRequest, ConsoleLog } from "@/types/scripts"
 import { getAuthToken } from "@/contexts/AuthContext"
 import { generatePlaywrightCode } from "@/utils/playwrightCodeGen"
-import LiveBrowserView from "@/components/LiveBrowserView"
+
+type Tab = 'steps' | 'network' | 'console' | 'video'
 
 const STATUS_COLORS: Record<string, string> = {
     'pending': 'bg-gray-100 text-gray-700 border-gray-200',
@@ -79,8 +80,15 @@ export default function RunDetail() {
     const [expandedHealing, setExpandedHealing] = useState<string | null>(null)
     const [showCode, setShowCode] = useState(false)
     const [copied, setCopied] = useState(false)
-    const [browserSession, setBrowserSession] = useState<{ id: string; liveViewUrl: string } | null>(null)
     const wsRef = useRef<WebSocket | null>(null)
+    const networkScrollRef = useRef<HTMLDivElement | null>(null)
+    const consoleScrollRef = useRef<HTMLDivElement | null>(null)
+    // New state for tabs
+    const [activeTab, setActiveTab] = useState<Tab>('steps')
+    const [networkRequests, setNetworkRequests] = useState<NetworkRequest[]>([])
+    const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([])
+    const [loadingNetwork, setLoadingNetwork] = useState(false)
+    const [loadingConsole, setLoadingConsole] = useState(false)
 
     const fetchRun = async () => {
         if (!runId) return
@@ -120,6 +128,55 @@ export default function RunDetail() {
         setTimeout(() => setCopied(false), 2000)
     }
 
+    const fetchNetworkRequests = async () => {
+        if (!runId) return
+        setLoadingNetwork(true)
+        try {
+            const data = await runsApi.getNetworkRequests(runId)
+            setNetworkRequests(data)
+        } catch (e) {
+            console.error('Failed to fetch network requests:', e)
+        } finally {
+            setLoadingNetwork(false)
+        }
+    }
+
+    const fetchConsoleLogs = async () => {
+        if (!runId) return
+        setLoadingConsole(true)
+        try {
+            const data = await runsApi.getConsoleLogs(runId)
+            setConsoleLogs(data)
+        } catch (e) {
+            console.error('Failed to fetch console logs:', e)
+        } finally {
+            setLoadingConsole(false)
+        }
+    }
+
+    // Fetch network/console data when tab changes
+    useEffect(() => {
+        if (activeTab === 'network' && networkRequests.length === 0) {
+            fetchNetworkRequests()
+        } else if (activeTab === 'console' && consoleLogs.length === 0) {
+            fetchConsoleLogs()
+        }
+    }, [activeTab])
+
+    // Auto-scroll network logs when new items arrive
+    useEffect(() => {
+        if (networkScrollRef.current && run?.status === 'running') {
+            networkScrollRef.current.scrollTop = networkScrollRef.current.scrollHeight
+        }
+    }, [networkRequests.length])
+
+    // Auto-scroll console logs when new items arrive
+    useEffect(() => {
+        if (consoleScrollRef.current && run?.status === 'running') {
+            consoleScrollRef.current.scrollTop = consoleScrollRef.current.scrollHeight
+        }
+    }, [consoleLogs.length])
+
     // WebSocket for live updates - only connect for pending/running runs
     useEffect(() => {
         // Only connect to WebSocket if run is pending or running
@@ -135,15 +192,9 @@ export default function RunDetail() {
 
         ws.onmessage = (event) => {
             try {
-                const message: WSRunMessage = JSON.parse(event.data)
+                const message = JSON.parse(event.data)
 
-                if (message.type === 'browser_session_started') {
-                    // Live browser session started
-                    setBrowserSession({
-                        id: message.session_id,
-                        liveViewUrl: message.live_view_url,
-                    })
-                } else if (message.type === 'run_step_completed') {
+                if (message.type === 'run_step_completed') {
                     const step = message.step
                     setSteps(prev => {
                         const existing = prev.findIndex(s => s.step_index === step.step_index)
@@ -157,10 +208,51 @@ export default function RunDetail() {
                     setSelectedStep(step)
                 } else if (message.type === 'run_completed') {
                     setRun(message.run)
-                    // Clear browser session on completion
-                    setBrowserSession(null)
                 } else if (message.type === 'error') {
                     setError(message.message)
+                } else if (message.type === 'live_network') {
+                    // Live network request from Redis pub/sub
+                    const req = message.data
+                    setNetworkRequests(prev => {
+                        // Create a temporary ID for live requests
+                        const liveReq: NetworkRequest = {
+                            id: `live-${Date.now()}-${Math.random()}`,
+                            run_id: runId || '',
+                            step_index: req.step_index,
+                            url: req.url || '',
+                            method: req.method || 'GET',
+                            resource_type: req.resource_type || 'other',
+                            status_code: req.status_code,
+                            response_size_bytes: req.response_size_bytes,
+                            timing_total_ms: req.timing_total_ms,
+                            timing_dns_ms: req.timing_dns_ms,
+                            timing_connect_ms: req.timing_connect_ms,
+                            timing_ssl_ms: req.timing_ssl_ms,
+                            timing_ttfb_ms: req.timing_ttfb_ms,
+                            timing_download_ms: req.timing_download_ms,
+                            started_at: req.started_at || new Date().toISOString(),
+                            completed_at: req.completed_at || new Date().toISOString(),
+                        }
+                        return [...prev, liveReq]
+                    })
+                } else if (message.type === 'live_console') {
+                    // Live console log from Redis pub/sub
+                    const log = message.data
+                    setConsoleLogs(prev => {
+                        const liveLog: ConsoleLog = {
+                            id: `live-${Date.now()}-${Math.random()}`,
+                            run_id: runId || '',
+                            step_index: log.step_index,
+                            level: log.level || 'log',
+                            message: log.message || '',
+                            source: log.source,
+                            line_number: log.line_number,
+                            column_number: log.column_number,
+                            stack_trace: log.stack_trace,
+                            timestamp: log.timestamp || new Date().toISOString(),
+                        }
+                        return [...prev, liveLog]
+                    })
                 }
             } catch (e) {
                 console.error('Failed to parse WebSocket message:', e)
@@ -227,10 +319,15 @@ export default function RunDetail() {
                             )}
                         </h1>
                         {run && (
-                            <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${run.runner_type === 'cdp' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
-                                    {run.runner_type === 'cdp' ? 'CDP Runner' : 'Playwright Runner'}
+                            <div className="flex flex-wrap items-center gap-2 mt-2 text-sm text-muted-foreground">
+                                <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">
+                                    <Chrome className="h-3 w-3" />
+                                    {run.browser_type?.charAt(0).toUpperCase() + run.browser_type?.slice(1) || 'Chromium'}
                                 </span>
+                                <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">
+                                    {run.resolution_width || 1920}x{run.resolution_height || 1080}
+                                </span>
+                                <span className="text-muted-foreground">•</span>
                                 <span>Started: {run.started_at ? formatDate(run.started_at) : 'Pending'}</span>
                                 {run.completed_at && <span>Completed: {formatDate(run.completed_at)}</span>}
                             </div>
@@ -336,13 +433,71 @@ export default function RunDetail() {
 
 
 
-            {/* Steps and Screenshot */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Steps List */}
-                <div className="rounded-lg border bg-card shadow-sm">
-                    <div className="border-b px-4 py-3">
-                        <h2 className="font-semibold">Steps</h2>
-                    </div>
+            {/* Tab Navigation */}
+            <div className="border-b">
+                <div className="flex gap-1">
+                    <button
+                        onClick={() => setActiveTab('steps')}
+                        className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                            activeTab === 'steps'
+                                ? 'border-primary text-primary'
+                                : 'border-transparent text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                        <CheckCircle className="h-4 w-4" />
+                        Steps
+                        <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{steps.length}</span>
+                    </button>
+                    {run?.network_recording_enabled && (
+                        <button
+                            onClick={() => setActiveTab('network')}
+                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                                activeTab === 'network'
+                                    ? 'border-primary text-primary'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                            <Wifi className="h-4 w-4" />
+                            Network
+                            <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{networkRequests.length}</span>
+                        </button>
+                    )}
+                    <button
+                        onClick={() => setActiveTab('console')}
+                        className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                            activeTab === 'console'
+                                ? 'border-primary text-primary'
+                                : 'border-transparent text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                        <Terminal className="h-4 w-4" />
+                        Console
+                        <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{consoleLogs.length}</span>
+                    </button>
+                    {run?.recording_enabled && run?.video_path && (
+                        <button
+                            onClick={() => setActiveTab('video')}
+                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                                activeTab === 'video'
+                                    ? 'border-primary text-primary'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                            <Video className="h-4 w-4" />
+                            Video
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Tab Content */}
+            {activeTab === 'steps' && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Steps List */}
+                    <div className="rounded-lg border bg-card shadow-sm">
+                        <div className="border-b px-4 py-3">
+                            <h2 className="font-semibold">Steps</h2>
+                        </div>
                     <div className="divide-y max-h-[600px] overflow-y-auto">
                         {steps.length === 0 ? (
                             <div className="p-8 text-center text-muted-foreground">
@@ -433,58 +588,33 @@ export default function RunDetail() {
                     </div>
                 </div>
 
-                {/* Live Browser View (when running) OR Screenshot (when complete) */}
+                {/* Screenshot Panel */}
                 <div className="rounded-lg border bg-card shadow-sm">
                     <div className="border-b px-4 py-3 flex items-center justify-between">
                         <h2 className="font-semibold flex items-center gap-2">
-                            {run?.status === 'running' && browserSession ? (
-                                <>
-                                    <Monitor className="h-5 w-5 text-green-500" />
-                                    Live Browser
-                                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded animate-pulse font-normal">
-                                        Connected
-                                    </span>
-                                </>
-                            ) : run?.status === 'running' ? (
-                                <>
-                                    <Monitor className="h-5 w-5 text-yellow-500" />
-                                    Live Browser
-                                    <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
-                                </>
-                            ) : (
-                                <>
-                                    Screenshot
-                                    {selectedStep && (
-                                        <span className="text-muted-foreground font-normal">
-                                            Step {selectedStep.step_index + 1}
-                                        </span>
-                                    )}
-                                </>
+                            Screenshot
+                            {selectedStep && (
+                                <span className="text-muted-foreground font-normal">
+                                    Step {selectedStep.step_index + 1}
+                                </span>
                             )}
                         </h2>
                     </div>
                     <div className="p-4">
-                        {run?.status === 'running' ? (
-                            browserSession ? (
-                                <LiveBrowserView
-                                    sessionId={browserSession.id}
-                                    liveViewUrl={browserSession.liveViewUrl}
-                                    className="min-h-[400px]"
-                                />
-                            ) : (
-                                <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
-                                    <div className="text-center">
-                                        <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
-                                        <p className="text-muted-foreground">Waiting for browser session...</p>
-                                    </div>
-                                </div>
-                            )
-                        ) : selectedStep?.screenshot_path ? (
+                        {selectedStep?.screenshot_path ? (
                             <img
                                 src={getScreenshotUrl(selectedStep.screenshot_path)}
                                 alt={`Step ${selectedStep.step_index + 1} screenshot`}
                                 className="w-full rounded-lg border shadow-sm"
                             />
+                        ) : run?.status === 'running' ? (
+                            <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
+                                <div className="text-center">
+                                    <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+                                    <p className="text-muted-foreground">Test running on container...</p>
+                                    <p className="text-xs text-muted-foreground mt-1">Screenshots will appear as steps complete</p>
+                                </div>
+                            </div>
                         ) : (
                             <div className="flex items-center justify-center h-64 bg-muted/30 rounded-lg">
                                 <p className="text-muted-foreground">
@@ -494,7 +624,158 @@ export default function RunDetail() {
                         )}
                     </div>
                 </div>
-            </div>
+                </div>
+            )}
+
+            {/* Network Tab */}
+            {activeTab === 'network' && (
+                <div className="rounded-lg border bg-card shadow-sm">
+                    <div className="border-b px-4 py-3 flex items-center justify-between">
+                        <h2 className="font-semibold">Network Requests</h2>
+                        {run?.status === 'running' && (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">
+                                <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                                Live
+                            </span>
+                        )}
+                    </div>
+                    <div ref={networkScrollRef} className="divide-y max-h-[600px] overflow-y-auto">
+                        {loadingNetwork ? (
+                            <div className="p-8 text-center text-muted-foreground">
+                                <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
+                                <p>Loading network requests...</p>
+                            </div>
+                        ) : networkRequests.length === 0 ? (
+                            <div className="p-8 text-center text-muted-foreground">
+                                <Wifi className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                                {run?.status === 'running' ? (
+                                    <>
+                                        <p>Waiting for network requests...</p>
+                                        <p className="text-xs mt-1">Requests will appear here in real-time</p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <p>No network requests captured</p>
+                                        <p className="text-xs mt-1">Enable network recording to capture API calls</p>
+                                    </>
+                                )}
+                            </div>
+                        ) : (
+                            networkRequests.map((req) => (
+                                <div key={req.id} className="px-4 py-3">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${
+                                                req.method === 'GET' ? 'bg-green-100 text-green-700' :
+                                                req.method === 'POST' ? 'bg-blue-100 text-blue-700' :
+                                                req.method === 'PUT' ? 'bg-yellow-100 text-yellow-700' :
+                                                req.method === 'DELETE' ? 'bg-red-100 text-red-700' :
+                                                'bg-gray-100 text-gray-700'
+                                            }`}>
+                                                {req.method}
+                                            </span>
+                                            <span className={`text-xs ${
+                                                req.status_code && req.status_code >= 200 && req.status_code < 300 ? 'text-green-600' :
+                                                req.status_code && req.status_code >= 400 ? 'text-red-600' :
+                                                'text-muted-foreground'
+                                            }`}>
+                                                {req.status_code || '-'}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                            {req.timing_total_ms && <span>{req.timing_total_ms}ms</span>}
+                                            {req.response_size_bytes && <span>{(req.response_size_bytes / 1024).toFixed(1)}KB</span>}
+                                        </div>
+                                    </div>
+                                    <p className="text-sm text-muted-foreground mt-1 font-mono truncate">{req.url}</p>
+                                    <span className="text-xs text-muted-foreground">{req.resource_type}</span>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Console Tab */}
+            {activeTab === 'console' && (
+                <div className="rounded-lg border bg-card shadow-sm">
+                    <div className="border-b px-4 py-3 flex items-center justify-between">
+                        <h2 className="font-semibold">Console Logs</h2>
+                        {run?.status === 'running' && (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">
+                                <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                                Live
+                            </span>
+                        )}
+                    </div>
+                    <div ref={consoleScrollRef} className="divide-y max-h-[600px] overflow-y-auto font-mono text-sm">
+                        {loadingConsole ? (
+                            <div className="p-8 text-center text-muted-foreground">
+                                <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
+                                <p>Loading console logs...</p>
+                            </div>
+                        ) : consoleLogs.length === 0 ? (
+                            <div className="p-8 text-center text-muted-foreground">
+                                <Terminal className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                                {run?.status === 'running' ? (
+                                    <>
+                                        <p>Waiting for console logs...</p>
+                                        <p className="text-xs mt-1 font-sans">Logs will appear here in real-time</p>
+                                    </>
+                                ) : (
+                                    <p>No console logs captured</p>
+                                )}
+                            </div>
+                        ) : (
+                            consoleLogs.map((log) => (
+                                <div key={log.id} className={`px-4 py-2 ${
+                                    log.level === 'error' ? 'bg-red-50' :
+                                    log.level === 'warn' ? 'bg-yellow-50' :
+                                    ''
+                                }`}>
+                                    <div className="flex items-start gap-2">
+                                        <span className={`inline-flex items-center rounded px-1 py-0.5 text-xs font-medium ${
+                                            log.level === 'error' ? 'bg-red-100 text-red-700' :
+                                            log.level === 'warn' ? 'bg-yellow-100 text-yellow-700' :
+                                            log.level === 'info' ? 'bg-blue-100 text-blue-700' :
+                                            'bg-gray-100 text-gray-700'
+                                        }`}>
+                                            {log.level}
+                                        </span>
+                                        <span className="flex-1 break-all">{log.message}</span>
+                                    </div>
+                                    {log.source && (
+                                        <p className="text-xs text-muted-foreground mt-1 ml-12">
+                                            {log.source}{log.line_number ? `:${log.line_number}` : ''}
+                                        </p>
+                                    )}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Video Tab */}
+            {activeTab === 'video' && run?.video_path && (
+                <div className="rounded-lg border bg-card shadow-sm">
+                    <div className="border-b px-4 py-3">
+                        <h2 className="font-semibold">Video Recording</h2>
+                    </div>
+                    <div className="p-4">
+                        <video
+                            controls
+                            className="w-full rounded-lg border shadow-sm"
+                            src={getScreenshotUrl(`videos/${run.video_path.split('/').pop()}`)}
+                        >
+                            Your browser does not support the video tag.
+                        </video>
+                        <p className="text-xs text-muted-foreground mt-2">
+                            Video path: {run.video_path}
+                        </p>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

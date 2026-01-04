@@ -22,6 +22,8 @@ exec chromium \
     --metrics-recording-only \
     --no-first-run \
     --safebrowsing-disable-auto-update \
+    --password-store=basic \
+    --disable-save-password-bubble \
     --remote-debugging-port=9223 \
     --remote-debugging-address=127.0.0.1 \
     --remote-allow-origins=* \

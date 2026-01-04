@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Monitor, Trash2, RefreshCw, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
-import { browserApi, type BrowserSession } from '@/services/api';
+import { Monitor, Trash2, RefreshCw, AlertTriangle, CheckCircle, Loader2, Play, Container, Zap } from 'lucide-react';
+import { browserApi, settingsApi, type BrowserSession } from '@/services/api';
+import type { IsolationMode, SystemSettings, ContainerPoolStats } from '@/types/scripts';
 
 export default function SettingsPage() {
     const [browserSessions, setBrowserSessions] = useState<BrowserSession[]>([]);
@@ -8,6 +9,16 @@ export default function SettingsPage() {
     const [killing, setKilling] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
+
+    // System settings state
+    const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
+    const [settingsLoading, setSettingsLoading] = useState(true);
+    const [savingSettings, setSavingSettings] = useState(false);
+
+    // Container pool state
+    const [poolStats, setPoolStats] = useState<ContainerPoolStats | null>(null);
+    const [poolLoading, setPoolLoading] = useState(true);
+    const [warmingUp, setWarmingUp] = useState(false);
 
     const fetchBrowserSessions = async () => {
         setLoading(true);
@@ -50,11 +61,76 @@ export default function SettingsPage() {
         }
     };
 
+    // Fetch system settings
+    const fetchSystemSettings = async () => {
+        setSettingsLoading(true);
+        try {
+            const settings = await settingsApi.getSettings();
+            setSystemSettings(settings);
+        } catch (e) {
+            console.error('Failed to load system settings:', e);
+        } finally {
+            setSettingsLoading(false);
+        }
+    };
+
+    // Fetch container pool stats
+    const fetchPoolStats = async () => {
+        setPoolLoading(true);
+        try {
+            const stats = await settingsApi.getContainerPoolStats();
+            setPoolStats(stats);
+        } catch (e) {
+            console.error('Failed to load container pool stats:', e);
+        } finally {
+            setPoolLoading(false);
+        }
+    };
+
+    // Warmup container pool
+    const handleWarmupPool = async () => {
+        setWarmingUp(true);
+        setError(null);
+        setSuccess(null);
+        try {
+            const stats = await settingsApi.warmupContainerPool();
+            setPoolStats(stats);
+            setSuccess('Container pool warmed up successfully');
+        } catch (e) {
+            setError(e instanceof Error ? e.message : 'Failed to warmup container pool');
+        } finally {
+            setWarmingUp(false);
+        }
+    };
+
+    // Update isolation mode
+    const handleIsolationModeChange = async (mode: IsolationMode) => {
+        if (!systemSettings) return;
+
+        setSavingSettings(true);
+        setError(null);
+        setSuccess(null);
+        try {
+            const updated = await settingsApi.updateSettings({ isolation_mode: mode });
+            setSystemSettings(updated);
+            setSuccess(`Isolation mode updated to ${mode === 'context' ? 'Context (Fast)' : 'Ephemeral (Isolated)'}`);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : 'Failed to update settings');
+        } finally {
+            setSavingSettings(false);
+        }
+    };
+
     useEffect(() => {
         fetchBrowserSessions();
-        
-        // Refresh every 30 seconds
-        const interval = setInterval(fetchBrowserSessions, 30000);
+        fetchSystemSettings();
+        fetchPoolStats();
+
+        // Refresh browser sessions and pool stats every 30 seconds
+        const interval = setInterval(() => {
+            fetchBrowserSessions();
+            fetchPoolStats();
+        }, 30000);
         return () => clearInterval(interval);
     }, []);
 
@@ -82,6 +158,238 @@ export default function SettingsPage() {
                     {error}
                 </div>
             )}
+
+            {/* Test Runner Settings Section */}
+            <div className="rounded-lg border bg-card shadow-sm">
+                <div className="border-b px-6 py-4">
+                    <div className="flex items-center gap-3">
+                        <Play className="h-5 w-5 text-primary" />
+                        <div>
+                            <h2 className="font-semibold">Test Runner Settings</h2>
+                            <p className="text-sm text-muted-foreground">
+                                Configure how test runs are executed
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-6">
+                    {settingsLoading ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                            Loading settings...
+                        </div>
+                    ) : (
+                        <div className="space-y-6">
+                            <div>
+                                <h3 className="font-medium mb-2">Container Isolation Mode</h3>
+                                <p className="text-sm text-muted-foreground mb-4">
+                                    Choose how browser containers are managed during test runs.
+                                </p>
+
+                                <div className="space-y-3">
+                                    {/* Context Isolation Option */}
+                                    <label
+                                        className={`flex items-start gap-4 p-4 rounded-lg border cursor-pointer transition-colors ${
+                                            systemSettings?.isolation_mode === 'context'
+                                                ? 'border-primary bg-primary/5'
+                                                : 'border-border hover:border-primary/50'
+                                        } ${savingSettings ? 'opacity-50 pointer-events-none' : ''}`}
+                                    >
+                                        <input
+                                            type="radio"
+                                            name="isolation_mode"
+                                            value="context"
+                                            checked={systemSettings?.isolation_mode === 'context'}
+                                            onChange={() => handleIsolationModeChange('context')}
+                                            disabled={savingSettings}
+                                            className="mt-1"
+                                        />
+                                        <div>
+                                            <div className="font-medium flex items-center gap-2">
+                                                Context (Fast)
+                                                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800">
+                                                    Recommended
+                                                </span>
+                                            </div>
+                                            <p className="text-sm text-muted-foreground mt-1">
+                                                Reuses browser containers with a fresh browser context per run.
+                                                Clean cookies, storage, and cache for each run. Fast startup (~1s).
+                                            </p>
+                                        </div>
+                                    </label>
+
+                                    {/* Ephemeral Isolation Option */}
+                                    <label
+                                        className={`flex items-start gap-4 p-4 rounded-lg border cursor-pointer transition-colors ${
+                                            systemSettings?.isolation_mode === 'ephemeral'
+                                                ? 'border-primary bg-primary/5'
+                                                : 'border-border hover:border-primary/50'
+                                        } ${savingSettings ? 'opacity-50 pointer-events-none' : ''}`}
+                                    >
+                                        <input
+                                            type="radio"
+                                            name="isolation_mode"
+                                            value="ephemeral"
+                                            checked={systemSettings?.isolation_mode === 'ephemeral'}
+                                            onChange={() => handleIsolationModeChange('ephemeral')}
+                                            disabled={savingSettings}
+                                            className="mt-1"
+                                        />
+                                        <div>
+                                            <div className="font-medium">Ephemeral (Isolated)</div>
+                                            <p className="text-sm text-muted-foreground mt-1">
+                                                Creates a new container for each run. Complete OS-level isolation.
+                                                Slower startup (~10-15s). Use for sensitive tests requiring full isolation.
+                                            </p>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                {savingSettings && (
+                                    <div className="flex items-center gap-2 mt-3 text-sm text-muted-foreground">
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Saving...
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Container Pool Section */}
+            <div className="rounded-lg border bg-card shadow-sm">
+                <div className="border-b px-6 py-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <Container className="h-5 w-5 text-purple-500" />
+                            <div>
+                                <h2 className="font-semibold">Test Run Container Pool</h2>
+                                <p className="text-sm text-muted-foreground">
+                                    Scalable container pool for async test execution (Celery mode)
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={fetchPoolStats}
+                                disabled={poolLoading}
+                                className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-3"
+                            >
+                                <RefreshCw className={`h-4 w-4 mr-2 ${poolLoading ? 'animate-spin' : ''}`} />
+                                Refresh
+                            </button>
+                            <button
+                                onClick={handleWarmupPool}
+                                disabled={warmingUp}
+                                className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 h-9 px-4"
+                            >
+                                {warmingUp ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                    <Zap className="h-4 w-4 mr-2" />
+                                )}
+                                Warmup Pool
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-6">
+                    {poolLoading && !poolStats ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                            Loading container pool...
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {/* Pool Status */}
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="rounded-lg border p-4 text-center">
+                                    <div className="text-2xl font-bold text-purple-600">
+                                        {poolStats?.in_use_count ?? 0}
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">In Use</div>
+                                </div>
+                                <div className="rounded-lg border p-4 text-center">
+                                    <div className="text-2xl font-bold text-green-600">
+                                        {Object.values(poolStats?.pools ?? {}).reduce((sum, p) => sum + p.size, 0)}
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">Ready in Pool</div>
+                                </div>
+                                <div className="rounded-lg border p-4 text-center">
+                                    <div className={`text-2xl font-bold ${poolStats?.initialized ? 'text-green-600' : 'text-gray-400'}`}>
+                                        {poolStats?.initialized ? 'Yes' : 'No'}
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">Pool Initialized</div>
+                                </div>
+                            </div>
+
+                            {/* Running Containers */}
+                            {poolStats && poolStats.in_use.length > 0 && (
+                                <div>
+                                    <h3 className="font-medium mb-2">Running Test Containers</h3>
+                                    <div className="space-y-2">
+                                        {poolStats.in_use.map((container) => (
+                                            <div
+                                                key={container.id}
+                                                className="flex items-center justify-between p-3 rounded-lg border bg-purple-50"
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-pulse" />
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-mono text-sm">{container.container_name}</span>
+                                                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800">
+                                                                {container.browser_type}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-xs text-muted-foreground mt-1">
+                                                            Run: {container.current_run_id?.substring(0, 8)}... •
+                                                            Uses: {container.use_count}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="text-xs text-muted-foreground">
+                                                    Started: {new Date(container.created_at).toLocaleTimeString()}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Pool Status per Browser */}
+                            {poolStats && Object.entries(poolStats.pools).some(([_, p]) => p.size > 0) && (
+                                <div>
+                                    <h3 className="font-medium mb-2">Pooled Containers (Ready)</h3>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {Object.entries(poolStats.pools).map(([browserType, pool]) => (
+                                            pool.size > 0 && (
+                                                <div key={browserType} className="flex items-center justify-between p-3 rounded-lg border">
+                                                    <span className="capitalize">{browserType}</span>
+                                                    <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-sm font-medium bg-green-100 text-green-800">
+                                                        {pool.size} ready
+                                                    </span>
+                                                </div>
+                                            )
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Empty state */}
+                            {poolStats && poolStats.in_use_count === 0 && Object.values(poolStats.pools).every(p => p.size === 0) && (
+                                <div className="text-center py-4 text-muted-foreground">
+                                    <Container className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                                    <p>No containers in pool. Click "Warmup Pool" to pre-create containers.</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
 
             {/* Browser Management Section */}
             <div className="rounded-lg border bg-card shadow-sm">

@@ -6,22 +6,25 @@ Endpoints:
 - GET /scripts - List all scripts
 - GET /scripts/{script_id} - Get script details
 - DELETE /scripts/{script_id} - Delete a script
-- POST /scripts/{script_id}/run - Start a test run
+- POST /scripts/{script_id}/run - Start a test run (via Celery/container pool)
 - GET /scripts/{script_id}/runs - List runs for a script
 - GET /runs/{run_id} - Get run details
 - GET /runs/{run_id}/steps - Get run steps with screenshots
+- WS /runs/{run_id}/ws - WebSocket for run status polling
 """
 
+import asyncio
 import logging
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from app.services.live_logs import LiveLogsSubscriber
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import PlaywrightScript, TestRun, RunStep, TestSession
+from app.tasks.test_runs import execute_test_run
 from app.schemas import (
 	CreateScriptRequest,
 	PlaywrightScriptResponse,
@@ -32,14 +35,22 @@ from app.schemas import (
 	RunStepResponse,
 	StartRunRequest,
 	StartRunResponse,
-	WSRunStepStarted,
-	WSRunStepCompleted,
-	WSRunCompleted,
+	NetworkRequestResponse,
+	ConsoleLogResponse,
+	Resolution,
 )
-from app.services.script_recorder import PlaywrightStep, ScriptRecorder
-from app.services.base_runner import StepResult
-from app.services.runner_factory import create_runner, RunnerType
-from app.services.browser_orchestrator import get_orchestrator, BrowserPhase
+from app.services.script_recorder import ScriptRecorder
+
+
+def _parse_resolution(resolution: Resolution) -> tuple[int, int]:
+	"""Parse resolution enum to width, height tuple."""
+	if resolution == Resolution.FHD:
+		return (1920, 1080)
+	elif resolution == Resolution.HD:
+		return (1366, 768)
+	elif resolution == Resolution.WXGA:
+		return (1600, 900)
+	return (1920, 1080)  # Default
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +102,10 @@ def _extract_steps_from_session(session: TestSession) -> list[dict[str, Any]]:
 	
 	for test_step in session.steps:
 		for action in test_step.actions:
+			# Skip failed actions (e.g. failed assertions that were later retried)
+			if action.result_success is False:
+				continue
+
 			playwright_step = _convert_action_to_playwright_step(action, step_index, test_step.url)
 			if playwright_step:
 				steps.append(playwright_step)
@@ -331,32 +346,53 @@ async def start_run(
 	request: StartRunRequest = StartRunRequest(),
 	db: Session = Depends(get_db)
 ):
-	"""Start a test run for a script."""
+	"""Start a test run for a script using containerized browser pool.
+
+	All runs are executed asynchronously via Celery using pre-warmed browser containers.
+	This provides consistent, scalable execution across all browser types.
+	"""
 	script = db.query(PlaywrightScript).filter(PlaywrightScript.id == script_id).first()
 	if not script:
 		raise HTTPException(status_code=404, detail="Script not found")
 
-	# Validate runner type
-	runner_type = request.runner.lower()
-	if runner_type not in ["playwright", "cdp"]:
-		raise HTTPException(status_code=400, detail=f"Invalid runner type: {runner_type}. Must be 'playwright' or 'cdp'")
+	# Parse resolution
+	width, height = _parse_resolution(request.resolution)
 
-	# Create run record with runner type and headless setting
+	# Create run record with full configuration
 	run = TestRun(
 		script_id=script_id,
-		status="pending",
-		runner_type=runner_type,
-		headless=request.headless,
+		status="queued",
+		runner_type="playwright",  # Always use Playwright runner with container pool
+		headless=True,  # Container browsers are always headless
 		total_steps=len(script.steps_json),
+		browser_type=request.browser_type.value,
+		resolution_width=width,
+		resolution_height=height,
+		screenshots_enabled=request.screenshots_enabled,
+		recording_enabled=request.recording_enabled,
+		network_recording_enabled=request.network_recording_enabled,
+		performance_metrics_enabled=request.performance_metrics_enabled,
 	)
 	db.add(run)
 	db.commit()
 	db.refresh(run)
 
-	# TODO: Start async task for actual execution
-	# For now, we'll run synchronously (in production, use Celery)
+	# Always dispatch to Celery task queue (container pool execution)
+	task = execute_test_run.delay(run.id)
+	celery_task_id = task.id
+	run.celery_task_id = celery_task_id
+	db.commit()
 
-	return StartRunResponse(run_id=run.id, status="pending")
+	logger.info(f"Created test run {run.id} with config: browser={run.browser_type}, resolution={width}x{height}, "
+				f"screenshots={run.screenshots_enabled}, recording={run.recording_enabled}, "
+				f"network={run.network_recording_enabled}, performance={run.performance_metrics_enabled}")
+	logger.info(f"Dispatched test run {run.id} to Celery task {celery_task_id}")
+
+	return StartRunResponse(
+		run_id=run.id,
+		status="queued",
+		celery_task_id=celery_task_id
+	)
 
 
 @router.get("/{script_id}/runs", response_model=list[TestRunResponse])
@@ -390,152 +426,78 @@ async def get_run_steps(run_id: str, db: Session = Depends(get_db)):
 	return run.run_steps
 
 
-# WebSocket for live run updates
+# WebSocket for run status polling with live logs
 @runs_router.websocket("/{run_id}/ws")
 async def run_websocket(websocket: WebSocket, run_id: str, db: Session = Depends(get_db)):
-	"""WebSocket endpoint for live run updates."""
+	"""WebSocket endpoint for polling run status updates with live network/console logs.
+
+	Runs are executed via Celery using the container pool.
+	This WebSocket provides real-time status updates by polling the database
+	and streaming live network requests and console logs via Redis pub/sub.
+	"""
 	await websocket.accept()
-	
-	remote_session = None
-	
+	live_subscriber = None
+
 	try:
 		run = db.query(TestRun).filter(TestRun.id == run_id).first()
 		if not run:
 			await websocket.close(code=4004, reason="Run not found")
 			return
-		
-		script = run.script
-		if not script:
-			await websocket.close(code=4004, reason="Script not found")
-			return
-		
-		# Update run status
-		run.status = "running"
-		run.started_at = datetime.utcnow()
-		db.commit()
-		
-		# Create remote browser session only for head mode (not headless)
-		cdp_url = None
-		remote_session = None
 
-		if not run.headless:
-			try:
-				orchestrator = get_orchestrator()
-				remote_session = await orchestrator.create_session(
-					phase=BrowserPhase.EXECUTION,
-					test_run_id=run_id,
-				)
-				cdp_url = remote_session.cdp_url
+		last_step_count = 0
+		last_status = run.status
 
-				# Send live view URL to frontend
+		# Send initial status
+		await websocket.send_json({
+			"type": "run_status",
+			"status": run.status,
+			"passed_steps": run.passed_steps or 0,
+			"failed_steps": run.failed_steps or 0,
+			"total_steps": run.total_steps or 0,
+		})
+
+		# Subscribe to live logs
+		live_subscriber = LiveLogsSubscriber(run_id)
+		await live_subscriber.connect()
+
+		# Poll for updates until run completes
+		while run.status in ("queued", "pending", "running"):
+			# Check for live log messages (non-blocking)
+			live_msg = await live_subscriber.get_message(timeout=0.5)
+			if live_msg:
+				await websocket.send_json(live_msg)
+
+			# Refresh run from database
+			db.refresh(run)
+
+			# Check for new steps
+			current_step_count = len(run.run_steps)
+			if current_step_count > last_step_count:
+				# Send new step updates
+				for step in run.run_steps[last_step_count:]:
+					await websocket.send_json({
+						"type": "run_step_completed",
+						"step": RunStepResponse.model_validate(step).model_dump(mode="json"),
+					})
+				last_step_count = current_step_count
+
+			# Check for status change
+			if run.status != last_status:
 				await websocket.send_json({
-					"type": "browser_session_started",
-					"session_id": remote_session.id,
-					"cdp_url": cdp_url,
-					"live_view_url": f"/browser/sessions/{remote_session.id}/view",
-					"headless": False,
+					"type": "run_status",
+					"status": run.status,
+					"passed_steps": run.passed_steps or 0,
+					"failed_steps": run.failed_steps or 0,
+					"total_steps": run.total_steps or 0,
 				})
+				last_status = run.status
 
-				logger.info(f"Created remote browser session for run: {remote_session.id}")
+		# Send final completion message
+		await websocket.send_json({
+			"type": "run_completed",
+			"run": TestRunResponse.model_validate(run).model_dump(mode="json"),
+		})
 
-			except Exception as e:
-				logger.warning(f"Failed to create remote browser, falling back to headless: {e}")
-		else:
-			# Headless mode - notify frontend (no live view)
-			await websocket.send_json({
-				"type": "browser_session_started",
-				"session_id": None,
-				"headless": True,
-			})
-			logger.info("Running in headless mode (no live browser view)")
-		
-		# Define callbacks
-		async def on_step_start(step_index: int, step: PlaywrightStep):
-			msg = WSRunStepStarted(
-				step_index=step_index,
-				action=step.action,
-				description=step.description,
-			)
-			await websocket.send_json(msg.model_dump(mode="json"))
-
-		async def on_step_complete(step_index: int, result: StepResult):
-			# Save to database
-			run_step = RunStep(
-				run_id=run_id,
-				step_index=step_index,
-				action=result.action,
-				status=result.status,
-				selector_used=result.selector_used,
-				screenshot_path=result.screenshot_path,
-				duration_ms=result.duration_ms,
-				error_message=result.error_message,
-				heal_attempts=[ha.__dict__ for ha in result.heal_attempts] if result.heal_attempts else None,
-			)
-			db.add(run_step)
-			db.commit()
-			db.refresh(run_step)
-
-			msg = WSRunStepCompleted(step=RunStepResponse.model_validate(run_step))
-			await websocket.send_json(msg.model_dump(mode="json"))
-
-		# Get runner type from the run record
-		runner_type = RunnerType(run.runner_type or "playwright")
-
-		# Create steps from JSON
-		steps = [PlaywrightStep(**step) for step in script.steps_json]
-		logger.info(f"Created {len(steps)} steps for run {run_id}")
-
-		# Validate steps
-		if not steps:
-			error_msg = "No steps to execute - script has no valid steps"
-			logger.error(error_msg)
-			await websocket.send_json({"type": "error", "message": error_msg})
-			run.status = "failed"
-			run.error_message = error_msg
-			db.commit()
-			return
-
-		# Log step details for debugging
-		for i, step in enumerate(steps):
-			logger.debug(f"Step {i}: action={step.action}, description={step.description}")
-
-		# Run the script using the appropriate runner (with remote CDP if available)
-		logger.info(f"Creating {runner_type.value} runner with CDP URL: {cdp_url}")
-		try:
-			async with create_runner(
-				runner_type=runner_type,
-				headless=True,
-				on_step_start=on_step_start,
-				on_step_complete=on_step_complete,
-				cdp_url=cdp_url,
-			) as runner:
-				logger.info(f"Runner created successfully, starting execution of {len(steps)} steps")
-				result = await runner.run(steps, run_id)
-				logger.info(f"Runner execution completed with status: {result.status}")
-		except Exception as runner_error:
-			error_msg = f"Runner execution failed: {str(runner_error)}"
-			logger.exception(error_msg)
-			await websocket.send_json({"type": "error", "message": error_msg})
-			run.status = "failed"
-			run.error_message = error_msg
-			run.completed_at = datetime.utcnow()
-			db.commit()
-			raise
-		
-		# Update run with final status
-		run.status = result.status
-		run.completed_at = result.completed_at
-		run.passed_steps = result.passed_steps
-		run.failed_steps = result.failed_steps
-		run.healed_steps = result.healed_steps
-		run.error_message = result.error_message
-		db.commit()
-		db.refresh(run)
-		
-		# Send completion message
-		msg = WSRunCompleted(run=TestRunResponse.model_validate(run))
-		await websocket.send_json(msg.model_dump(mode="json"))
-		
 	except WebSocketDisconnect:
 		logger.info(f"WebSocket disconnected for run {run_id}")
 	except Exception as e:
@@ -545,16 +507,62 @@ async def run_websocket(websocket: WebSocket, run_id: str, db: Session = Depends
 		except Exception:
 			pass
 	finally:
-		# Clean up remote browser session
-		if remote_session:
-			try:
-				orchestrator = get_orchestrator()
-				await orchestrator.stop_session(remote_session.id)
-				logger.info(f"Stopped remote browser session: {remote_session.id}")
-			except Exception as e:
-				logger.error(f"Error stopping remote browser session: {e}")
-		
+		if live_subscriber:
+			await live_subscriber.close()
 		try:
 			await websocket.close()
 		except Exception:
 			pass
+
+
+# New endpoints for network requests and console logs
+@runs_router.get("/{run_id}/network", response_model=list[NetworkRequestResponse])
+async def get_run_network_requests(run_id: str, db: Session = Depends(get_db)):
+	"""Get all network requests captured during a test run."""
+	run = db.query(TestRun).filter(TestRun.id == run_id).first()
+	if not run:
+		raise HTTPException(status_code=404, detail="Run not found")
+
+	return run.network_requests
+
+
+@runs_router.get("/{run_id}/console", response_model=list[ConsoleLogResponse])
+async def get_run_console_logs(
+	run_id: str,
+	level: str | None = None,
+	db: Session = Depends(get_db)
+):
+	"""
+	Get browser console logs from a test run.
+
+	Args:
+		run_id: The test run ID
+		level: Optional filter by log level (log, info, warn, error, debug)
+	"""
+	run = db.query(TestRun).filter(TestRun.id == run_id).first()
+	if not run:
+		raise HTTPException(status_code=404, detail="Run not found")
+
+	if level:
+		# Filter by level
+		return [log for log in run.console_logs if log.level == level.lower()]
+
+	return run.console_logs
+
+
+@runs_router.get("/{run_id}/video")
+async def get_run_video(run_id: str, db: Session = Depends(get_db)):
+	"""Get video recording metadata for a test run."""
+	run = db.query(TestRun).filter(TestRun.id == run_id).first()
+	if not run:
+		raise HTTPException(status_code=404, detail="Run not found")
+
+	if not run.video_path:
+		raise HTTPException(status_code=404, detail="No video recording available for this run")
+
+	return {
+		"run_id": run_id,
+		"video_path": run.video_path,
+		"video_url": f"/api/analysis/screenshot?path=videos/{run.video_path.split('/')[-1]}",
+		"recording_enabled": run.recording_enabled,
+	}

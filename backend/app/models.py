@@ -186,6 +186,22 @@ class TestRun(Base):
 		String(20), nullable=False, default="playwright"
 	)  # playwright | cdp
 	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # True = headless (default), False = live browser
+
+	# Run Configuration (NEW)
+	browser_type: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="chromium"
+	)  # chromium | firefox | webkit | edge
+	resolution_width: Mapped[int] = mapped_column(Integer, nullable=False, default=1920)
+	resolution_height: Mapped[int] = mapped_column(Integer, nullable=False, default=1080)
+	screenshots_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	recording_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	network_recording_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+	performance_metrics_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+	# Output paths (NEW)
+	video_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+	duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Total run duration
+
 	started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 	completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 	total_steps: Mapped[int] = mapped_column(Integer, default=0)
@@ -199,6 +215,12 @@ class TestRun(Base):
 	script: Mapped["PlaywrightScript"] = relationship("PlaywrightScript", back_populates="runs")
 	run_steps: Mapped[list["RunStep"]] = relationship(
 		"RunStep", back_populates="run", order_by="RunStep.step_index", cascade="all, delete-orphan"
+	)
+	network_requests: Mapped[list["NetworkRequest"]] = relationship(
+		"NetworkRequest", back_populates="run", order_by="NetworkRequest.started_at", cascade="all, delete-orphan"
+	)
+	console_logs: Mapped[list["ConsoleLog"]] = relationship(
+		"ConsoleLog", back_populates="run", order_by="ConsoleLog.timestamp", cascade="all, delete-orphan"
 	)
 
 
@@ -365,3 +387,79 @@ class BenchmarkModelRun(Base):
 		"BenchmarkSession", back_populates="model_runs"
 	)
 	test_session: Mapped["TestSession | None"] = relationship("TestSession")
+
+
+class NetworkRequest(Base):
+	"""Captured network request/response during test run."""
+
+	__tablename__ = "network_requests"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	run_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_runs.id"), nullable=False
+	)
+	step_index: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Which step triggered this
+
+	# Request details
+	url: Mapped[str] = mapped_column(String(4096), nullable=False)
+	method: Mapped[str] = mapped_column(String(10), nullable=False)  # GET, POST, etc.
+	resource_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # document, xhr, fetch, script, etc.
+	request_headers: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+	request_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+	# Response details
+	status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	response_headers: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+	response_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+	# Timing breakdown (Performance API style)
+	timing_dns_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+	timing_connect_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+	timing_ssl_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+	timing_ttfb_ms: Mapped[float | None] = mapped_column(Float, nullable=True)  # Time to first byte
+	timing_download_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+	timing_total_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+	started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+	completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+	# Relationships
+	run: Mapped["TestRun"] = relationship("TestRun", back_populates="network_requests")
+
+
+class ConsoleLog(Base):
+	"""Browser console log captured during test run."""
+
+	__tablename__ = "console_logs"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	run_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_runs.id"), nullable=False
+	)
+	step_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+	level: Mapped[str] = mapped_column(String(20), nullable=False)  # log, info, warn, error, debug
+	message: Mapped[str] = mapped_column(Text, nullable=False)
+	source: Mapped[str | None] = mapped_column(String(2048), nullable=True)  # URL of source
+	line_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	column_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	stack_trace: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+	timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Relationships
+	run: Mapped["TestRun"] = relationship("TestRun", back_populates="console_logs")
+
+
+class SystemSettings(Base):
+	"""System-wide configuration settings (singleton table)."""
+
+	__tablename__ = "system_settings"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default="default")  # Single row
+	isolation_mode: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="context"
+	)  # context | ephemeral
+	updated_at: Mapped[datetime] = mapped_column(
+		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+	)

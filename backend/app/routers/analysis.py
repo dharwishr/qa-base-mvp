@@ -1052,12 +1052,12 @@ async def start_recording(
 ):
 	"""Start recording user interactions in the live browser.
 
-	This connects to the existing browser session via CDP and injects
+	This connects to the existing browser session and injects
 	event listeners to capture user interactions (clicks, typing, etc.)
 	as test steps.
 
 	Recording modes:
-	- 'playwright' (default): Uses Playwright's connect_over_cdp() with blur-based input capture.
+	- 'playwright' (default): Uses Playwright's browser server with blur-based input capture.
 	  Better handling of backspace/delete - records final input value, not each keystroke.
 	- 'cdp': Legacy mode using browser-use CDP. Records each keystroke including backspace.
 	"""

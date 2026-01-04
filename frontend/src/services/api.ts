@@ -1,6 +1,6 @@
 import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
 import type { PlanStep } from '../types/chat';
-import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse } from '../types/scripts';
+import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse, SystemSettings, NetworkRequest, ConsoleLog, ContainerPoolStats } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
 
@@ -606,6 +606,41 @@ export const runsApi = {
     });
     return handleResponse<RunStep[]>(response);
   },
+
+  /**
+   * Get network requests captured during a run.
+   */
+  async getNetworkRequests(runId: string): Promise<NetworkRequest[]> {
+    const response = await fetch(`${API_BASE}/runs/${runId}/network`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<NetworkRequest[]>(response);
+  },
+
+  /**
+   * Get console logs captured during a run.
+   * @param level Optional filter by log level (log, info, warn, error, debug)
+   */
+  async getConsoleLogs(runId: string, level?: string): Promise<ConsoleLog[]> {
+    const params = new URLSearchParams();
+    if (level) params.set('level', level);
+    const query = params.toString() ? `?${params.toString()}` : '';
+
+    const response = await fetch(`${API_BASE}/runs/${runId}/console${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<ConsoleLog[]>(response);
+  },
+
+  /**
+   * Get video recording metadata for a run.
+   */
+  async getVideo(runId: string): Promise<{ run_id: string; video_path: string; video_url: string; recording_enabled: boolean }> {
+    const response = await fetch(`${API_BASE}/runs/${runId}/video`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
 };
 
 /**
@@ -765,6 +800,54 @@ export const browserApi = {
       headers: getAuthHeaders(),
     });
     return handleResponse(response);
+  },
+};
+
+/**
+ * Settings API - System-wide configuration
+ */
+export const settingsApi = {
+  /**
+   * Get the current system settings.
+   */
+  async getSettings(): Promise<SystemSettings> {
+    const response = await fetch(`${API_BASE}/settings`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<SystemSettings>(response);
+  },
+
+  /**
+   * Update system settings.
+   */
+  async updateSettings(settings: Partial<SystemSettings>): Promise<SystemSettings> {
+    const response = await fetch(`${API_BASE}/settings`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(settings),
+    });
+    return handleResponse<SystemSettings>(response);
+  },
+
+  /**
+   * Get container pool stats.
+   */
+  async getContainerPoolStats(): Promise<ContainerPoolStats> {
+    const response = await fetch(`${API_BASE}/settings/container-pool`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<ContainerPoolStats>(response);
+  },
+
+  /**
+   * Warmup the container pool.
+   */
+  async warmupContainerPool(): Promise<ContainerPoolStats> {
+    const response = await fetch(`${API_BASE}/settings/container-pool/warmup`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<ContainerPoolStats>(response);
   },
 };
 

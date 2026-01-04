@@ -1,0 +1,70 @@
+# Docker Compose for building multi-browser test runner images
+# Usage: docker-compose -f docker-compose.browsers.yaml build
+
+version: '3.8'
+
+services:
+  # Chromium - Default browser, Playwright base
+  chromium:
+    build:
+      context: .
+      dockerfile: browsers/chromium/Dockerfile
+    image: qa-test-browser:chromium
+    container_name: qa-browser-chromium
+    environment:
+      - WS_PORT=9222
+    ports:
+      - "9222:9222"
+    shm_size: '2gb'
+    networks:
+      - qa-browser-network
+
+  # Firefox - Playwright Firefox
+  firefox:
+    build:
+      context: .
+      dockerfile: browsers/firefox/Dockerfile
+    image: qa-test-browser:firefox
+    container_name: qa-browser-firefox
+    environment:
+      - WS_PORT=9222
+    ports:
+      - "9223:9222"
+    shm_size: '2gb'
+    networks:
+      - qa-browser-network
+
+  # WebKit - Playwright WebKit (Safari-like)
+  webkit:
+    build:
+      context: .
+      dockerfile: browsers/webkit/Dockerfile
+    image: qa-test-browser:webkit
+    container_name: qa-browser-webkit
+    environment:
+      - WS_PORT=9222
+    ports:
+      - "9224:9222"
+    shm_size: '2gb'
+    networks:
+      - qa-browser-network
+
+  # Microsoft Edge - Chromium-based
+  edge:
+    build:
+      context: .
+      dockerfile: browsers/edge/Dockerfile
+    image: qa-test-browser:edge
+    container_name: qa-browser-edge
+    environment:
+      - WS_PORT=9222
+    ports:
+      - "9225:9222"
+    shm_size: '2gb'
+    networks:
+      - qa-browser-network
+
+networks:
+  qa-browser-network:
+    driver: bridge
+    name: qa-browser-network

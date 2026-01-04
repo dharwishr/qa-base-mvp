@@ -52,6 +52,9 @@ class RunResult:
     error_message: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    # New fields for video and timing
+    video_path: str | None = None
+    duration_ms: int | None = None
 
 
 class BaseRunner(ABC):

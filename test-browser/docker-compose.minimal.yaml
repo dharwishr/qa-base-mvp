@@ -1,0 +1,17 @@
+services:
+  playwright:
+    build:
+      context: .
+      dockerfile: Dockerfile.minimal
+    container_name: qa-playwright
+    ports:
+      - "9222:9222"  # CDP (optional, for debugging)
+    environment:
+      - PWDEBUG=0
+      - DISPLAY=:99
+    volumes:
+      # Mount test directory for running tests
+      - ../:/workspace
+    shm_size: '2gb'
+    restart: unless-stopped
+    command: sleep infinity

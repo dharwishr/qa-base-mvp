@@ -101,6 +101,10 @@ def build_playwright_steps_for_session(
         # Process each action in this step
         if test_step.actions:
             for action in test_step.actions:
+                # Skip failed actions
+                if action.result_success is False:
+                    continue
+
                 pw_step = step_action_to_playwright_step(action, index=step_index)
                 if pw_step:
                     pw_steps.append(pw_step)

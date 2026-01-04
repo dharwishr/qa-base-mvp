@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Play, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, ShieldCheck, Eye, EyeOff } from "lucide-react"
+import { ArrowLeft, Play, RefreshCw, CheckCircle, XCircle, Zap, Clock, MousePointer, Type, Globe, Scroll, ShieldCheck } from "lucide-react"
 import { scriptsApi } from "@/services/api"
-import type { PlaywrightScript, PlaywrightStep, TestRun, RunStatus, RunnerType } from "@/types/scripts"
+import type { PlaywrightScript, PlaywrightStep, TestRun, RunStatus, StartRunRequest } from "@/types/scripts"
+import RunConfigModal from "@/components/RunConfigModal"
 
 const STATUS_COLORS: Record<RunStatus, string> = {
     'pending': 'bg-gray-100 text-gray-700',
@@ -64,8 +65,7 @@ export default function ScriptDetail() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [runningScript, setRunningScript] = useState(false)
-    const [selectedRunner, setSelectedRunner] = useState<RunnerType>('playwright')
-    const [headlessMode, setHeadlessMode] = useState(true)
+    const [showConfigModal, setShowConfigModal] = useState(false)
 
     const fetchScript = async () => {
         if (!scriptId) return
@@ -81,11 +81,12 @@ export default function ScriptDetail() {
         }
     }
 
-    const handleRunScript = async () => {
+    const handleRunScript = async (config: StartRunRequest) => {
         if (!scriptId) return
         setRunningScript(true)
         try {
-            const response = await scriptsApi.startRun(scriptId, { headless: headlessMode, runner: selectedRunner })
+            const response = await scriptsApi.startRun(scriptId, config)
+            setShowConfigModal(false)
             navigate(`/scripts/${scriptId}/runs/${response.run_id}`)
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to start run')
@@ -139,57 +140,13 @@ export default function ScriptDetail() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    {/* Headless toggle */}
                     <button
-                        onClick={() => setHeadlessMode(!headlessMode)}
-                        disabled={runningScript}
-                        className={`inline-flex items-center gap-2 h-9 px-3 rounded-md border text-sm font-medium transition-colors disabled:opacity-50 ${
-                            headlessMode
-                                ? 'border-input bg-background hover:bg-accent'
-                                : 'border-blue-500 bg-blue-50 text-blue-700 hover:bg-blue-100'
-                        }`}
-                        title={headlessMode ? 'Headless mode (fast, no live view)' : 'Live browser mode (with VNC view)'}
-                    >
-                        {headlessMode ? (
-                            <>
-                                <EyeOff className="h-4 w-4" />
-                                Headless
-                            </>
-                        ) : (
-                            <>
-                                <Eye className="h-4 w-4" />
-                                Live View
-                            </>
-                        )}
-                    </button>
-                    {/* Runner type selector - only show when not headless */}
-                    {!headlessMode && (
-                        <select
-                            value={selectedRunner}
-                            onChange={(e) => setSelectedRunner(e.target.value as RunnerType)}
-                            disabled={runningScript}
-                            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-                        >
-                            <option value="playwright">Playwright</option>
-                            <option value="cdp">CDP</option>
-                        </select>
-                    )}
-                    <button
-                        onClick={handleRunScript}
+                        onClick={() => setShowConfigModal(true)}
                         disabled={runningScript}
                         className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 h-9 px-4 disabled:opacity-50"
                     >
-                        {runningScript ? (
-                            <>
-                                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                                Starting...
-                            </>
-                        ) : (
-                            <>
-                                <Play className="h-4 w-4 mr-2" />
-                                Run Script
-                            </>
-                        )}
+                        <Play className="h-4 w-4 mr-2" />
+                        Run Script
                     </button>
                 </div>
             </div>
@@ -267,8 +224,8 @@ export default function ScriptDetail() {
                                                 {run.status === 'running' && <RefreshCw className="h-3 w-3 animate-spin" />}
                                                 {STATUS_LABELS[run.status]}
                                             </span>
-                                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${run.runner_type === 'cdp' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
-                                                {run.runner_type === 'cdp' ? 'CDP' : 'Playwright'}
+                                            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">
+                                                {run.browser_type?.charAt(0).toUpperCase() + run.browser_type?.slice(1) || 'Chromium'}
                                             </span>
                                             <span className="text-xs text-muted-foreground">
                                                 {formatDate(run.created_at)}
@@ -307,6 +264,14 @@ export default function ScriptDetail() {
                     )}
                 </div>
             </div>
+
+            {/* Run Configuration Modal */}
+            <RunConfigModal
+                isOpen={showConfigModal}
+                onClose={() => setShowConfigModal(false)}
+                onRun={handleRunScript}
+                isRunning={runningScript}
+            />
         </div>
     )
 }

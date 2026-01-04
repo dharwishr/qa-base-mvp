@@ -1,0 +1,16 @@
+# Minimal Playwright Test Browser
+# Only includes what's needed to run Playwright tests
+
+FROM mcr.microsoft.com/playwright:v1.57.0-noble
+
+WORKDIR /app
+
+# Expose CDP port for debugging
+EXPOSE 9222
+
+# Health check
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s \
+    CMD npx playwright --version || exit 1
+
+# Container stays alive for test execution
+CMD ["sleep", "infinity"]

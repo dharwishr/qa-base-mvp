@@ -1,7 +1,33 @@
 from datetime import datetime
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+# ============================================
+# Test Runner Enums
+# ============================================
+
+class BrowserType(str, Enum):
+	"""Supported browser types for test runs."""
+	CHROMIUM = "chromium"
+	FIREFOX = "firefox"
+	WEBKIT = "webkit"
+	EDGE = "edge"
+
+
+class Resolution(str, Enum):
+	"""Standard screen resolutions for test runs."""
+	FHD = "1920x1080"
+	HD = "1366x768"
+	WXGA = "1600x900"
+
+
+class IsolationMode(str, Enum):
+	"""Container isolation modes for test runs."""
+	CONTEXT = "context"      # Reuse container, fresh browser context (default)
+	EPHEMERAL = "ephemeral"  # New container per run, destroyed after
 
 
 # Request schemas
@@ -279,6 +305,21 @@ class TestRunResponse(BaseModel):
 	script_id: str
 	status: str
 	runner_type: str = "playwright"  # playwright | cdp
+	headless: bool = True
+
+	# Run Configuration
+	browser_type: str = "chromium"  # chromium | firefox | webkit | edge
+	resolution_width: int = 1920
+	resolution_height: int = 1080
+	screenshots_enabled: bool = True
+	recording_enabled: bool = True
+	network_recording_enabled: bool = False
+	performance_metrics_enabled: bool = True
+
+	# Output
+	video_path: str | None = None
+	duration_ms: int | None = None  # Total run duration
+
 	started_at: datetime | None = None
 	completed_at: datetime | None = None
 	total_steps: int
@@ -292,9 +333,48 @@ class TestRunResponse(BaseModel):
 		from_attributes = True
 
 
+class NetworkRequestResponse(BaseModel):
+	"""Response for a captured network request."""
+	id: str
+	step_index: int | None = None
+	url: str
+	method: str
+	resource_type: str | None = None
+	status_code: int | None = None
+	response_size_bytes: int | None = None
+	timing_dns_ms: float | None = None
+	timing_connect_ms: float | None = None
+	timing_ssl_ms: float | None = None
+	timing_ttfb_ms: float | None = None
+	timing_download_ms: float | None = None
+	timing_total_ms: float | None = None
+	started_at: datetime
+	completed_at: datetime | None = None
+
+	class Config:
+		from_attributes = True
+
+
+class ConsoleLogResponse(BaseModel):
+	"""Response for a captured browser console log."""
+	id: str
+	step_index: int | None = None
+	level: str  # log, info, warn, error, debug
+	message: str
+	source: str | None = None
+	line_number: int | None = None
+	column_number: int | None = None
+	timestamp: datetime
+
+	class Config:
+		from_attributes = True
+
+
 class TestRunDetailResponse(TestRunResponse):
-	"""Detailed response for a test run with steps."""
+	"""Detailed response for a test run with steps, network requests, and console logs."""
 	run_steps: list[RunStepResponse] = []
+	network_requests: list[NetworkRequestResponse] = []
+	console_logs: list[ConsoleLogResponse] = []
 
 
 class PlaywrightScriptResponse(BaseModel):
@@ -333,15 +413,47 @@ class PlaywrightScriptDetailResponse(PlaywrightScriptResponse):
 
 
 class StartRunRequest(BaseModel):
-	"""Request to start a test run."""
-	headless: bool = Field(default=True, description="Run browser in headless mode")
-	runner: str = Field(default="playwright", description="Runner type: 'playwright' or 'cdp'")
+	"""Request to start a test run with configuration options.
+
+	All runs execute on pre-warmed browser containers from the container pool.
+	"""
+	# Browser & Display Configuration
+	browser_type: BrowserType = Field(
+		default=BrowserType.CHROMIUM,
+		description="Browser to use: chromium | firefox | webkit | edge"
+	)
+	resolution: Resolution = Field(
+		default=Resolution.FHD,
+		description="Screen resolution: 1920x1080 | 1366x768 | 1600x900"
+	)
+
+	# Recording & Monitoring Options
+	screenshots_enabled: bool = Field(
+		default=True,
+		description="Take screenshot after each step"
+	)
+	recording_enabled: bool = Field(
+		default=True,
+		description="Record video of test run (WebM format)"
+	)
+	network_recording_enabled: bool = Field(
+		default=False,
+		description="Record network requests and responses"
+	)
+	performance_metrics_enabled: bool = Field(
+		default=True,
+		description="Measure asset loading times and performance metrics"
+	)
 
 
 class StartRunResponse(BaseModel):
 	"""Response after starting a test run."""
 	run_id: str
 	status: str
+	celery_task_id: str | None = Field(
+		default=None,
+		description="Celery task ID for tracking execution"
+	)
 
 
 # WebSocket messages for test runs
@@ -554,7 +666,7 @@ class ReplaySessionResponse(BaseModel):
 # User Recording Schemas
 # ============================================
 
-# Recording mode type: 'cdp' (browser-use CDP) or 'playwright' (Playwright connect_over_cdp)
+# Recording mode type: 'cdp' (browser-use CDP) or 'playwright' (Playwright browser server)
 RecordingMode = Literal['cdp', 'playwright']
 
 
@@ -592,3 +704,24 @@ class SpeechToTextResponse(BaseModel):
 	transcript: str
 	confidence: float
 	is_final: bool = True
+
+
+# ============================================
+# System Settings Schemas
+# ============================================
+
+class SystemSettingsRequest(BaseModel):
+	"""Request to update system settings."""
+	isolation_mode: IsolationMode = Field(
+		default=IsolationMode.CONTEXT,
+		description="Container isolation mode: 'context' (reuse container) or 'ephemeral' (new container per run)"
+	)
+
+
+class SystemSettingsResponse(BaseModel):
+	"""Response for system settings."""
+	isolation_mode: IsolationMode = IsolationMode.CONTEXT
+	updated_at: datetime | None = None
+
+	class Config:
+		from_attributes = True

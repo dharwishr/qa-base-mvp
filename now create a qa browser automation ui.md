@@ -202,3 +202,37 @@ it should show a color icon + text of the status of the test case analysis.
 pause button in test case analysis page needs a spinner as well as verification that the test case analysis is paused.
 current implement is that user clicks on pause button and nothing happens and after some time the test case analysis is paused.
 so it should indicate that the test case analysis is paused and show a spinner as well till the test case analysis is paused.
+
+
+initially test case run / test case runner / playwright runner desinged to use cdp to communicate with browser
+but different browser are not supported by cdp
+so now i want to use playwright server to communicate with browser in test runner
+this is not related to test case analysis and its cdp setup
+user starts a test run and it should spawn a contianer specific for that browser which includes the browser and playwright server
+then it should connect to playwright server and start running the test case
+
+check test-browser/borwsers folder to see docker file for each browser and check chnages done so far is wokring properly
+
+Test Runner Module (we already have this in scripts page this is to enhance it)
+
+things users can select before starting test run
+- user can select which borwser (firefox, chrome, edge, safari if playwright supports)
+- pick which resolution (from standerd resolutions list maybe common 3 items)
+- toggle should screenshots for each step or not (enable by default)
+- toggle screen recording whole test run or not (enable by default)
+- toggle record api/network calls or not (enable or disable by user) disabled by default
+- toggle messuare network/api/asset loading time (enable by default)
+
+things must follow for test run
+
+- strictly use playwright for test run and create a test run orchestrator that will spin up unique playwright docker container for each test run. 
+- logs for each test run (console logs)
+- each step duration and whole test case duration need to be calculated
+
+implement e2e backend for test run and update the current ui to accomadate this things
+
+in future:
+global proxy geo location support
+maybe add feature to add server speicify how many parrallel test runs to be done
+
+use current docker contianer with vnc support so that user can pause test run debug and maybe continue

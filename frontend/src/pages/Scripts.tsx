@@ -84,7 +84,7 @@ export default function Scripts() {
         e.stopPropagation()
         setRunningScript(scriptId)
         try {
-            const response = await scriptsApi.startRun(scriptId, { headless: true })
+            const response = await scriptsApi.startRun(scriptId, {})
             // Navigate to run detail page
             navigate(`/scripts/${scriptId}/runs/${response.run_id}`)
         } catch (e) {

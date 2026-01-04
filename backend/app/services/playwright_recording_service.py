@@ -1,8 +1,8 @@
 """
-Playwright Recording Service - Alternative recording mode using Playwright's CDP connection.
+Playwright Recording Service - Alternative recording mode using Playwright's browser server connection.
 
 Key improvements over CDP/browser-use approach:
-- Uses Playwright's connect_over_cdp() which attaches cleanly without session conflicts
+- Uses Playwright's connect() to browser server for consistent cross-browser support
 - Blur-based input capture - records final value when user leaves input field (not each keystroke)
 - Backspace/delete are part of final value, not separate steps
 - Generates CSS selectors alongside XPath for better replay reliability
@@ -36,9 +36,9 @@ from app.services.browser_orchestrator import BrowserSession as OrchestratorSess
 logger = logging.getLogger(__name__)
 
 
-async def _get_cdp_endpoint(browser_session: OrchestratorSession) -> str | None:
+async def _get_browser_ws_endpoint(browser_session: OrchestratorSession) -> str | None:
     """
-    Get CDP WebSocket endpoint for Playwright's connect_over_cdp().
+    Get WebSocket endpoint for Playwright's connect() to browser server.
     """
     running_in_docker = os.path.exists("/.dockerenv")
 
@@ -367,10 +367,10 @@ RECORDING_SCRIPT = '''
 
 class PlaywrightRecordingService:
     """
-    Captures user interactions using Playwright's CDP connection.
+    Captures user interactions using Playwright's browser server connection.
 
     Key differences from CDP-based UserRecordingService:
-    - Uses Playwright's connect_over_cdp() for cleaner browser attachment
+    - Uses Playwright's connect() to browser server for cross-browser support
     - Blur-based input capture (final value on blur, not each keystroke)
     - Generates CSS selectors alongside XPath
     - No session conflicts with existing browser-use sessions
@@ -420,16 +420,16 @@ class PlaywrightRecordingService:
         logger.info(f"Starting Playwright recording for session {self.test_session.id}")
 
         try:
-            # Get CDP endpoint
-            cdp_url = await _get_cdp_endpoint(self.browser_session)
-            if not cdp_url:
-                raise RuntimeError(f"Browser session {self.browser_session.id} has no CDP URL")
+            # Get WebSocket endpoint for browser server
+            ws_url = await _get_browser_ws_endpoint(self.browser_session)
+            if not ws_url:
+                raise RuntimeError(f"Browser session {self.browser_session.id} has no WebSocket URL")
 
-            logger.info(f"Connecting Playwright to CDP: {cdp_url}")
+            logger.info(f"Connecting Playwright to browser server: {ws_url}")
 
-            # Connect via Playwright
+            # Connect via Playwright browser server
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.connect_over_cdp(cdp_url)
+            self._browser = await self._playwright.chromium.connect(ws_url)
 
             # Get the default context and page
             contexts = self._browser.contexts
@@ -780,7 +780,7 @@ class PlaywrightRecordingService:
         # Disconnect from browser (don't close it, just disconnect)
         if self._browser:
             try:
-                # Note: We're using connect_over_cdp, so close() just disconnects
+                # Note: We're using connect() to browser server, so close() just disconnects
                 await self._browser.close()
             except Exception as e:
                 logger.warning(f"Error closing Playwright browser connection: {e}")

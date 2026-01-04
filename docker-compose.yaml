@@ -147,4 +147,3 @@ networks:
   qa-browser-network:
     driver: bridge
     name: qa-browser-network
-
