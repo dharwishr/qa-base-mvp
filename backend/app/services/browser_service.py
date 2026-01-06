@@ -3,7 +3,7 @@ import logging
 import shutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 # Add browser_use to Python path BEFORE any browser_use imports
 _browser_use_path = str(Path(__file__).resolve().parent.parent.parent.parent)
@@ -591,6 +591,10 @@ class BrowserServiceSync:
 		).scalar()
 		self.current_step_number = max_step or 0
 		self.browser_session_id: str | None = None  # Remote browser session ID
+		# Callback for step events (used by Celery task for event publishing)
+		self._step_callback: Callable[[dict], None] | None = None
+		# Stop request flag (checked between steps)
+		self._stop_requested: bool = False
 
 	def _create_chat_message(self, content: str, msg_type: str = "system") -> None:
 		"""Helper to create a chat message for the session."""
@@ -623,6 +627,12 @@ class BrowserServiceSync:
 
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
+		# Check if stop was requested
+		if self._stop_requested:
+			logger.info(f"Stop requested before step {self.current_step_number + 1}, stopping agent")
+			agent.stop()
+			return
+
 		self.current_step_number += 1
 		logger.info(f"Step {self.current_step_number} started")
 
@@ -719,6 +729,41 @@ class BrowserServiceSync:
 
 			self.db.commit()
 			logger.info(f"Step {self.current_step_number} completed and saved")
+
+			# Call step callback if set (used by Celery task for event publishing)
+			if self._step_callback:
+				try:
+					# Query actions from DB since relationship might not be loaded
+					actions = self.db.query(StepAction).filter(StepAction.step_id == test_step.id).all()
+
+					self._step_callback({
+						"step_number": self.current_step_number,
+						"step_id": test_step.id,
+						"thinking": test_step.thinking,
+						"evaluation": test_step.evaluation,
+						"memory": test_step.memory,
+						"next_goal": test_step.next_goal,
+						"screenshot_path": test_step.screenshot_path,
+						"url": test_step.url,
+						"page_title": test_step.page_title,
+						"created_at": test_step.created_at.isoformat() if test_step.created_at else None,
+						"actions": [
+							{
+								"id": a.id,
+								"action_index": a.action_index,
+								"action_name": a.action_name,
+								"action_params": a.action_params,
+								"result_success": a.result_success,
+								"result_error": a.result_error,
+								"extracted_content": a.extracted_content,
+								"element_xpath": a.element_xpath,
+								"element_name": a.element_name,
+							}
+							for a in actions
+						],
+					})
+				except Exception as cb_error:
+					logger.warning(f"Step callback error: {cb_error}")
 
 		except Exception as e:
 			logger.error(f"Error in on_step_end: {e}")

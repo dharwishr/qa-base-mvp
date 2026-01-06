@@ -6,7 +6,16 @@ celery_app = Celery(
 	"qa_base",
 	broker=settings.CELERY_BROKER_URL,
 	backend=settings.CELERY_RESULT_BACKEND,
-	include=["app.tasks.analysis", "app.tasks.discovery", "app.tasks.benchmark", "app.tasks.test_runs"],
+	include=[
+		"app.tasks.analysis",
+		"app.tasks.discovery",
+		"app.tasks.benchmark",
+		"app.tasks.test_runs",
+		"app.tasks.plan_generation",
+		"app.tasks.plan_execution",
+		"app.tasks.act_mode",
+		"app.tasks.run_till_end",
+	],
 )
 
 celery_app.conf.update(

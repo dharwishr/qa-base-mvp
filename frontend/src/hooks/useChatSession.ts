@@ -839,6 +839,77 @@ export function useChatSession(): UseChatSessionReturn {
               console.log('[WS] Pre-connecting WebSocket during plan review');
               connectWebSocket(session.id);
             }
+          } else if (session.status === 'generating_plan') {
+            // Plan is being generated asynchronously by Celery - poll for completion
+            console.log('[CHAT] Plan generating asynchronously, polling for completion...');
+            const pollForPlan = async () => {
+              const maxAttempts = 60; // 2 minutes max
+              for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
+                try {
+                  const updatedSession = await analysisApi.getSession(session.id);
+                  console.log(`[CHAT] Poll attempt ${attempt + 1}: status=${updatedSession.status}`);
+
+                  if (updatedSession.status === 'plan_ready' && updatedSession.plan) {
+                    // Plan is ready!
+                    const planSteps: PlanStep[] = updatedSession.plan.steps_json?.steps || [];
+                    const planMessage = createTimelineMessage('plan', {
+                      planId: updatedSession.id,
+                      planText: updatedSession.plan.plan_text,
+                      planSteps,
+                      status: 'pending' as const,
+                    });
+
+                    const loadingText = shouldContinue ? 'Generating continuation plan...' : 'Generating test plan...';
+                    setMessages((prev) => [
+                      ...prev.filter((m) => m.type !== 'assistant' || m.content !== loadingText),
+                      planMessage,
+                    ]);
+                    setCurrentSession(updatedSession);
+                    setSessionStatus(updatedSession.status);
+                    setIsPlanPending(true);
+                    setPendingPlanId(updatedSession.id);
+                    setIsGeneratingPlan(false);
+
+                    // Pre-connect WebSocket
+                    if (!headless) {
+                      console.log('[WS] Pre-connecting WebSocket during plan review');
+                      connectWebSocket(updatedSession.id);
+                    }
+                    return;
+                  } else if (updatedSession.status === 'failed' || updatedSession.status === 'cancelled') {
+                    // Plan generation failed
+                    throw new Error(`Plan generation ${updatedSession.status}`);
+                  }
+                } catch (pollError) {
+                  console.error('Error polling for plan:', pollError);
+                  throw pollError;
+                }
+              }
+              // Timeout
+              throw new Error('Plan generation timed out');
+            };
+
+            // Start polling in background
+            pollForPlan().catch((pollError) => {
+              console.error('Plan polling failed:', pollError);
+              const loadingText = shouldContinue ? 'Generating continuation plan...' : 'Generating test plan...';
+              setMessages((prev) => [
+                ...prev.filter((m) => m.type !== 'assistant' || m.content !== loadingText),
+                createTimelineMessage('error', {
+                  content: pollError instanceof Error ? pollError.message : 'Failed to generate plan',
+                }),
+              ]);
+              setIsGeneratingPlan(false);
+              if (messageQueue.length > 0) {
+                setQueueFailure({
+                  error: pollError instanceof Error ? pollError.message : 'Failed to generate plan',
+                  pendingMessages: [...messageQueue],
+                });
+              }
+            });
+            // Keep isGeneratingPlan true while polling
+            return;
           } else {
             setMessages((prev) => [
               ...prev,

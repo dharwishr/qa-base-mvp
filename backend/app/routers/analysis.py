@@ -7,12 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+
 from app.database import get_db
 from app.deps import AuthenticatedUser, get_current_user
-from app.models import TestPlan, TestSession, TestStep
+from app.models import AnalysisEvent, TestPlan, TestSession, TestStep
 from app.schemas import (
 	ActModeRequest,
 	ActModeResponse,
+	AnalysisEventResponse,
+	CancelTaskResponse,
 	ChatMessageCreate,
 	ChatMessageResponse,
 	ContinueSessionRequest,
@@ -27,6 +31,7 @@ from app.schemas import (
 	StartRecordingRequest,
 	StepActionResponse,
 	StopResponse,
+	TaskStatusResponse,
 	TestPlanResponse,
 	TestSessionDetailResponse,
 	TestSessionListResponse,
@@ -40,6 +45,13 @@ from app.schemas import (
 	UpdateStepActionTextRequest,
 	WSError,
 	WSInitialState,
+)
+from app.services.event_publisher import (
+	set_cancelled,
+	clear_cancelled,
+	check_stop_requested,
+	set_stop_requested,
+	clear_stop_requested,
 )
 from app.services.plan_service import generate_plan, update_plan_steps, regenerate_plan_with_context
 from app.services.browser_orchestrator import get_orchestrator, BrowserPhase
@@ -218,8 +230,15 @@ async def create_session(
 	db: Session = Depends(get_db),
 	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-	"""Create a new test session and generate a plan."""
-	# Generate simple fallback title initially (LLM title will be updated async)
+	"""Create a new test session and queue plan generation via Celery.
+
+	The plan is generated asynchronously in a Celery worker. The session is returned
+	immediately with status="generating_plan". Frontend should subscribe to WebSocket
+	events or poll for plan completion.
+	"""
+	from app.tasks.plan_generation import generate_test_plan
+
+	# Generate simple fallback title initially (LLM title will be updated in Celery task)
 	title = generate_title_fallback(request.prompt)
 
 	# Create session with selected LLM model and headless option
@@ -228,7 +247,7 @@ async def create_session(
 		title=title,
 		llm_model=request.llm_model,
 		headless=request.headless,
-		status="pending_plan",
+		status="generating_plan",  # Changed from pending_plan
 		organization_id=current_user.organization_id,
 		user_id=current_user.id,
 	)
@@ -236,35 +255,28 @@ async def create_session(
 	db.commit()
 	db.refresh(session)
 
-	# Spawn async task to generate better title using LLM (non-blocking)
-	logger.info(f"[TITLE_SPAWN] Spawning async title generation task for session: {session.id}")
-	asyncio.create_task(update_session_title_async(
+	# Queue plan generation via Celery (includes title generation)
+	logger.info(f"[CELERY] Queueing plan generation task for session: {session.id}")
+	task = generate_test_plan.delay(
 		session_id=session.id,
-		prompt=request.prompt,
-		llm_model=request.llm_model
-	))
+		llm_model=request.llm_model,
+		generate_title=True,
+	)
 
-	# Generate plan asynchronously
-	try:
-		plan = await generate_plan(db, session)
-		db.refresh(session)
+	# Store task ID for tracking
+	session.plan_task_id = task.id
+	db.commit()
+	db.refresh(session)
 
-		# Persist the plan as a chat message so it shows when reopening the session
-		create_plan_message(db, session.id, plan.plan_text, plan.id)
-		db.commit()
+	logger.info(f"[CELERY] Plan generation task queued: task_id={task.id}, session_id={session.id}")
 
-		# Pre-warm browser session in background if not headless (saves 2-5s on approval)
-		if not request.headless:
-			logger.info(f"[PREWARM] Spawning browser pre-warm task for session: {session.id}")
-			asyncio.create_task(prewarm_browser_session_async(
-				session_id=session.id,
-				headless=request.headless
-			))
-	except Exception as e:
-		logger.error(f"Error generating plan: {e}")
-		session.status = "failed"
-		db.commit()
-		raise HTTPException(status_code=500, detail=f"Failed to generate plan: {str(e)}")
+	# Pre-warm browser session in background if not headless (saves 2-5s on approval)
+	if not request.headless:
+		logger.info(f"[PREWARM] Spawning browser pre-warm task for session: {session.id}")
+		asyncio.create_task(prewarm_browser_session_async(
+			session_id=session.id,
+			headless=request.headless
+		))
 
 	return session
 
@@ -337,8 +349,9 @@ async def continue_session(
 	# so we don't need a redundant "Continuing with:" system message here
 
 	if request.mode == "plan":
-		# Generate a new plan for the continuation
+		# Generate a new plan for the continuation via Celery
 		# Pass only the NEW request, not the original prompt
+		from app.tasks.plan_generation import generate_test_plan
 
 		# Delete old plan AND its chat message first to avoid duplicates
 		if session.plan:
@@ -352,24 +365,24 @@ async def continue_session(
 			db.delete(session.plan)
 			db.flush()  # Ensure delete is processed before creating new plan
 
-		session.status = "pending_plan"
+		session.status = "generating_plan"
 		db.commit()
 
-		try:
-			# Use task_prompt parameter to pass only the new request
-			logger.info(f"Generating continuation plan for session {session_id} with prompt: {new_task_prompt[:100]}...")
-			plan = await generate_plan(db, session, task_prompt=new_task_prompt)
-			logger.info(f"Generated plan with {len(plan.steps_json.get('steps', []))} steps")
-			db.refresh(session)
+		# Queue plan generation via Celery
+		logger.info(f"[CELERY] Queueing continuation plan generation for session {session_id} with prompt: {new_task_prompt[:100]}...")
+		task = generate_test_plan.delay(
+			session_id=session.id,
+			task_prompt=new_task_prompt,
+			is_continuation=True,
+			llm_model=request.llm_model,
+			generate_title=False,  # Don't regenerate title for continuations
+		)
 
-			# Persist the plan as a chat message so it shows when reopening the session
-			create_plan_message(db, session.id, plan.plan_text, plan.id)
-			db.commit()
-		except Exception as e:
-			logger.error(f"Error generating continuation plan: {e}")
-			session.status = "failed"
-			db.commit()
-			raise HTTPException(status_code=500, detail=f"Failed to generate plan: {str(e)}")
+		# Store task ID for tracking
+		session.plan_task_id = task.id
+		db.commit()
+
+		logger.info(f"[CELERY] Continuation plan generation task queued: task_id={task.id}")
 	else:
 		# Act mode - set status to approved for direct execution
 		# Create an implicit plan from the prompt
@@ -1594,6 +1607,192 @@ async def end_browser_session(
 		return {"status": "error", "message": str(e)}
 
 
+# ============================================
+# Celery Task Monitoring Endpoints
+# ============================================
+
+@router.get("/sessions/{session_id}/events", response_model=list[AnalysisEventResponse])
+async def get_session_events(
+	session_id: str,
+	since: datetime | None = None,
+	event_type: str | None = None,
+	limit: int = 100,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Get analysis events for a session.
+
+	This endpoint returns events persisted to the database for reconnection/replay.
+	Use the WebSocket 'subscribe_events' command for real-time streaming.
+
+	Args:
+		session_id: The test session ID
+		since: Optional timestamp to get events after (for reconnection)
+		event_type: Optional filter by event type
+		limit: Maximum number of events to return (default 100)
+	"""
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	query = db.query(AnalysisEvent).filter(AnalysisEvent.session_id == session_id)
+
+	if since:
+		query = query.filter(AnalysisEvent.created_at > since)
+
+	if event_type:
+		query = query.filter(AnalysisEvent.event_type == event_type)
+
+	events = query.order_by(AnalysisEvent.created_at).limit(limit).all()
+	return [AnalysisEventResponse.model_validate(e) for e in events]
+
+
+@router.get("/sessions/{session_id}/task/status", response_model=TaskStatusResponse)
+async def get_task_status(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Get current Celery task status for a session.
+
+	Returns the status of any running task (plan generation, execution, etc.).
+	This is useful for polling when WebSocket is not available.
+	"""
+	from app.celery_app import celery_app
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Check for plan generation task
+	if session.plan_task_id:
+		result = celery_app.AsyncResult(session.plan_task_id)
+		task_status = result.status
+
+		# Map Celery status to our status
+		status_map = {
+			"PENDING": "pending",
+			"STARTED": "running",
+			"SUCCESS": "completed",
+			"FAILURE": "failed",
+			"REVOKED": "cancelled",
+		}
+
+		return TaskStatusResponse(
+			task_id=session.plan_task_id,
+			task_type="plan_generation",
+			status=status_map.get(task_status, "running"),
+			progress=50 if task_status == "STARTED" else (100 if task_status == "SUCCESS" else 0),
+			error=str(result.result) if task_status == "FAILURE" else None,
+		)
+
+	# Check for execution task
+	if session.execution_task_id:
+		result = celery_app.AsyncResult(session.execution_task_id)
+		task_status = result.status
+
+		status_map = {
+			"PENDING": "pending",
+			"STARTED": "running",
+			"SUCCESS": "completed",
+			"FAILURE": "failed",
+			"REVOKED": "cancelled",
+		}
+
+		# Check if paused via Redis flag
+		if check_stop_requested(session_id) and task_status == "STARTED":
+			return TaskStatusResponse(
+				task_id=session.execution_task_id,
+				task_type="execution",
+				status="paused",
+				message="Execution paused by user",
+			)
+
+		return TaskStatusResponse(
+			task_id=session.execution_task_id,
+			task_type="execution",
+			status=status_map.get(task_status, "running"),
+			error=str(result.result) if task_status == "FAILURE" else None,
+		)
+
+	# No active task - return based on session status
+	return TaskStatusResponse(
+		task_id=None,
+		task_type=None,
+		status=session.status or "idle",
+	)
+
+
+@router.post("/sessions/{session_id}/task/cancel", response_model=CancelTaskResponse)
+async def cancel_task(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Cancel any running Celery task for this session.
+
+	This sets a cancellation flag that the Celery task checks periodically.
+	The task will complete its current operation and then stop gracefully.
+	"""
+	from app.celery_app import celery_app
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	task_id = session.plan_task_id or session.execution_task_id
+	if not task_id:
+		return CancelTaskResponse(
+			success=False,
+			message="No active task to cancel",
+		)
+
+	# Set cancellation flag in Redis
+	set_cancelled(session_id)
+
+	# Optionally revoke the Celery task (for plan generation which can be interrupted)
+	if session.plan_task_id:
+		celery_app.control.revoke(session.plan_task_id, terminate=True)
+		session.plan_task_id = None
+		session.status = "cancelled"
+		db.commit()
+
+	logger.info(f"Cancelled task {task_id} for session {session_id}")
+
+	return CancelTaskResponse(
+		success=True,
+		message="Task cancellation requested",
+		task_id=task_id,
+	)
+
+
+@router.post("/sessions/{session_id}/execution/stop")
+async def stop_execution(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Stop test execution gracefully (pause).
+
+	This sets a stop flag that the execution task checks after each step.
+	The browser session remains alive for continuation.
+	This does NOT cancel the Celery task - it signals graceful stop.
+	"""
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	if not session.execution_task_id:
+		return {"success": False, "message": "No active execution to stop"}
+
+	# Set stop flag in Redis (task will check this after each step)
+	set_stop_requested(session_id)
+
+	logger.info(f"Stop requested for execution in session {session_id}")
+
+	return {"success": True, "message": "Stop requested - execution will pause after current step"}
+
+
 # WebSocket connection manager
 class ConnectionManager:
 	def __init__(self):
@@ -1676,24 +1875,117 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 						await websocket.send_json(WSError(message="No plan found for session").model_dump())
 						continue
 
-					# Start execution in background task so WebSocket can continue receiving commands
-					logger.info(f"Starting test execution for session {session_id}")
-					from app.services.browser_service import execute_test
+					# Import dependencies
+					import redis.asyncio as aioredis
+					import json
+					from app.config import settings
+					from app.tasks.plan_execution import execute_test_plan
 
-					async def run_execution():
+					# FIRST: Set up Redis subscription BEFORE queueing Celery task
+					# This prevents race condition where events are published before subscription is ready
+					logger.info(f"Setting up Redis subscription for session {session_id}")
+					try:
+						redis_client = aioredis.from_url(settings.CELERY_BROKER_URL)
+						pubsub = redis_client.pubsub()
+						await pubsub.subscribe(f"analysis_events:{session_id}")
+						logger.info(f"Redis subscription ready for session {session_id}")
+					except Exception as e:
+						logger.error(f"Failed to set up Redis subscription: {e}")
+						await websocket.send_json(WSError(message=f"Failed to set up event streaming: {e}").model_dump())
+						continue
+
+					# SECOND: Queue execution as Celery task
+					logger.info(f"Queueing test execution for session {session_id}")
+					task = execute_test_plan.delay(session_id)
+
+					# Update session with task ID
+					session.execution_task_id = task.id
+					session.status = "running"
+					db.commit()
+
+					# Notify client that execution has been queued
+					await websocket.send_json({
+						"type": "execution_queued",
+						"task_id": task.id,
+						"message": "Test execution queued",
+					})
+
+					# THIRD: Stream events in background (subscription is already active)
+					async def stream_execution_events():
+						"""Stream execution events from Redis pub/sub to WebSocket."""
 						try:
-							await execute_test(db, session, session.plan, websocket)
+							async for message in pubsub.listen():
+								if message["type"] == "message":
+									try:
+										event_data = json.loads(message["data"])
+										logger.debug(f"Forwarding event to WebSocket: {event_data.get('type')}")
+										await websocket.send_json(event_data)
+
+										# Check if execution completed
+										event_type = event_data.get("type", "")
+										if event_type in ["completed", "execution_failed", "execution_cancelled", "error"]:
+											logger.info(f"Execution finished for session {session_id}: {event_type}")
+											break
+									except json.JSONDecodeError:
+										logger.warning(f"Invalid JSON in event: {message['data']}")
+									except Exception as e:
+										logger.error(f"Error sending event to WebSocket: {e}")
+										break
 						except Exception as e:
-							logger.error(f"Execution error for session {session_id}: {e}")
+							logger.error(f"Error in execution event subscription for session {session_id}: {e}")
+						finally:
 							try:
-								await websocket.send_json(WSError(message=str(e)).model_dump())
+								await pubsub.unsubscribe(f"analysis_events:{session_id}")
+								await redis_client.close()
 							except Exception:
 								pass
 
-					execution_task = asyncio.create_task(run_execution())
+					# Start streaming events in background
+					asyncio.create_task(stream_execution_events())
 
 				elif command == "ping":
 					await websocket.send_json({"type": "pong"})
+
+				elif command == "subscribe_events":
+					# Subscribe to Redis pub/sub for real-time Celery task events
+					import redis.asyncio as aioredis
+					import json
+					from app.config import settings
+
+					logger.info(f"Starting event subscription for session {session_id}")
+
+					async def stream_events():
+						"""Stream events from Redis pub/sub to WebSocket."""
+						try:
+							r = aioredis.from_url(settings.CELERY_BROKER_URL)
+							pubsub = r.pubsub()
+							await pubsub.subscribe(f"analysis_events:{session_id}")
+
+							async for message in pubsub.listen():
+								if message["type"] == "message":
+									try:
+										event_data = json.loads(message["data"])
+										await websocket.send_json(event_data)
+									except json.JSONDecodeError:
+										logger.warning(f"Invalid JSON in event: {message['data']}")
+									except Exception as e:
+										logger.error(f"Error sending event to WebSocket: {e}")
+										break
+						except Exception as e:
+							logger.error(f"Error in event subscription for session {session_id}: {e}")
+						finally:
+							try:
+								await pubsub.unsubscribe(f"analysis_events:{session_id}")
+								await r.close()
+							except Exception:
+								pass
+
+					# Start streaming in background
+					asyncio.create_task(stream_events())
+					await websocket.send_json({
+						"type": "events_subscribed",
+						"message": f"Subscribed to events for session {session_id}",
+					})
 
 				elif command == "inject_command":
 					# Handle command injection during execution

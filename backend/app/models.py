@@ -115,8 +115,13 @@ class TestSession(Base):
 	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # True = headless (default), False = live browser
 	status: Mapped[str] = mapped_column(
 		String(20), nullable=False, default="pending_plan"
-	)  # pending_plan | plan_ready | approved | queued | running | completed | failed
+	)  # pending_plan | generating_plan | plan_ready | approved | queued | running | completed | failed | paused | cancelled
 	celery_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+	# Celery task IDs for different task types
+	plan_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Plan generation task
+	execution_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Plan execution task
+
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 	updated_at: Mapped[datetime] = mapped_column(
 		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -137,6 +142,10 @@ class TestSession(Base):
 	messages: Mapped[list["ChatMessage"]] = relationship(
 		"ChatMessage", back_populates="session", cascade="all, delete-orphan",
 		order_by="ChatMessage.sequence_number"
+	)
+	events: Mapped[list["AnalysisEvent"]] = relationship(
+		"AnalysisEvent", back_populates="session", cascade="all, delete-orphan",
+		order_by="AnalysisEvent.created_at"
 	)
 
 
@@ -235,6 +244,32 @@ class ExecutionLog(Base):
 
 	# Relationships
 	session: Mapped["TestSession"] = relationship("TestSession", back_populates="logs")
+
+
+class AnalysisEvent(Base):
+	"""Persistent log of all analysis events for replay and live display.
+
+	Events are logged to DB for persistence AND published to Redis for real-time streaming.
+	This enables:
+	- Reconnection: Client can fetch past events from DB
+	- Live display: New events streamed via WebSocket
+	- Debugging: Full audit trail of analysis execution
+	"""
+
+	__tablename__ = "analysis_events"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	session_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_sessions.id"), nullable=False, index=True
+	)
+	event_type: Mapped[str] = mapped_column(
+		String(50), nullable=False
+	)  # plan_started | plan_progress | plan_completed | step_started | step_completed | etc.
+	event_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=True)  # Full event payload
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+	# Relationships
+	session: Mapped["TestSession"] = relationship("TestSession", back_populates="events")
 
 
 class PlaywrightScript(Base):

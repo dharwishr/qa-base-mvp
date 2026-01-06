@@ -889,3 +889,34 @@ class SystemSettingsResponse(BaseModel):
 
 	class Config:
 		from_attributes = True
+
+
+# Analysis Events (Celery task monitoring)
+
+class AnalysisEventResponse(BaseModel):
+	"""Response for an analysis event."""
+	id: str
+	session_id: str
+	event_type: str
+	event_data: dict | None = None
+	created_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class TaskStatusResponse(BaseModel):
+	"""Response for Celery task status."""
+	task_id: str | None = None
+	task_type: str | None = None  # plan_generation | execution | act_mode | run_till_end
+	status: str  # pending | running | completed | failed | cancelled | paused
+	progress: int = 0  # 0-100
+	message: str | None = None
+	error: str | None = None
+
+
+class CancelTaskResponse(BaseModel):
+	"""Response for task cancellation."""
+	success: bool
+	message: str
+	task_id: str | None = None

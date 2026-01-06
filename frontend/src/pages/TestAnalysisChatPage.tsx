@@ -5,7 +5,7 @@ import { toast, Toaster } from 'sonner';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
-import LiveBrowserView from '@/components/LiveBrowserView';
+import BrowserPanel from '@/components/analysis/BrowserPanel';
 import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
 import DeleteStepDialog from '@/components/analysis/DeleteStepDialog';
 import PlanEditModal from '@/components/plan/PlanEditModal';
@@ -751,79 +751,26 @@ export default function TestAnalysisChatPage() {
         onMouseDown={startResizing}
       />
 
-      {/* Right Panel - Browser View */}
+      {/* Right Panel - Browser View with Tabs */}
       <div className="flex-1 flex flex-col bg-muted/10">
-        {/* Browser View */}
-        {!headless && browserSession ? (
-          <LiveBrowserView
-            sessionId={browserSession.id}
-            liveViewUrl={browserSession.liveViewUrl}
-            novncUrl={browserSession.novncUrl}
-            onClose={endBrowserSession}
-            onStopBrowser={endBrowserSession}
-            className="flex-1 m-4"
-            isRecording={isRecording}
-            onStartRecording={startRecording}
-            onStopRecording={stopRecording}
-            canRecord={!!sessionId && !!browserSession?.id && !isExecuting}
-            isAIExecuting={isExecuting}
-            currentRecordingMode={currentRecordingMode}
-            isInteractionEnabled={isInteractionEnabled}
-            onToggleInteraction={() => setIsInteractionEnabled(!isInteractionEnabled)}
-          />
-        ) : !headless && isExecuting ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">
-                Starting live browser...
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col">
-            {/* Browser mockup frame */}
-            <div className="flex-1 flex items-center justify-center p-4">
-              <div className="w-full max-w-4xl mx-auto">
-                {/* Browser chrome */}
-                <div className="bg-muted/50 rounded-t-lg border border-b-0 p-2 flex items-center gap-2">
-                  <div className="flex gap-1.5">
-                    <div className="w-3 h-3 rounded-full bg-red-400" />
-                    <div className="w-3 h-3 rounded-full bg-yellow-400" />
-                    <div className="w-3 h-3 rounded-full bg-green-400" />
-                  </div>
-                  <div className="flex-1 bg-background rounded px-3 py-1 text-xs text-muted-foreground truncate">
-                    {selectedStep?.url || 'https://example.com'}
-                  </div>
-                </div>
-
-                {/* Content area */}
-                <div className="border rounded-b-lg bg-background min-h-[400px] flex items-center justify-center relative overflow-hidden">
-                  {screenshotUrl ? (
-                    <img
-                      src={screenshotUrl}
-                      alt="Screenshot"
-                      className="max-w-full max-h-[500px] object-contain"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <div className="text-center text-muted-foreground">
-                      <Monitor className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                      <p className="font-medium">Browser Preview</p>
-                      <p className="text-sm mt-1">
-                        {messages.length === 0
-                          ? 'Start a test to see browser activity'
-                          : 'Select a step to view its screenshot'}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <BrowserPanel
+          sessionId={sessionId}
+          browserSession={browserSession}
+          headless={headless}
+          isExecuting={isExecuting}
+          screenshotUrl={screenshotUrl}
+          selectedStepUrl={selectedStep?.url ?? undefined}
+          messagesCount={messages.length}
+          isRecording={isRecording}
+          currentRecordingMode={currentRecordingMode}
+          onStartRecording={startRecording}
+          onStopRecording={stopRecording}
+          canRecord={!!sessionId && !!browserSession?.id && !isExecuting}
+          isInteractionEnabled={isInteractionEnabled}
+          onToggleInteraction={() => setIsInteractionEnabled(!isInteractionEnabled)}
+          onEndBrowserSession={endBrowserSession}
+          className="flex-1"
+        />
       </div>
 
       {/* Queue Failure Dialog */}
