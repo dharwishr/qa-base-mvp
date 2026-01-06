@@ -147,7 +147,8 @@ export type RunStatus = 'pending' | 'running' | 'passed' | 'failed' | 'healed';
 
 export interface TestRun {
   id: string;
-  script_id: string;
+  script_id: string | null;  // Optional: run can be from script or session
+  session_id: string | null;  // Optional: run can be from session directly
   status: RunStatus;
   started_at: string | null;
   completed_at: string | null;
@@ -158,7 +159,7 @@ export interface TestRun {
   error_message: string | null;
   created_at: string;
   run_steps?: RunStep[];
-  // New configuration fields
+  // Configuration fields
   browser_type: BrowserType;
   resolution_width: number;
   resolution_height: number;
@@ -166,9 +167,10 @@ export interface TestRun {
   recording_enabled: boolean;
   network_recording_enabled: boolean;
   performance_metrics_enabled: boolean;
-  // New output fields
+  // Output fields
   video_path: string | null;
   duration_ms: number | null;
+  celery_task_id: string | null;  // Task ID for tracking async execution
 }
 
 export interface PlaywrightScript {

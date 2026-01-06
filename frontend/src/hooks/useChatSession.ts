@@ -30,6 +30,7 @@ import type {
   WaitingMessage,
   RunTillEndPausedState,
 } from '../types/chat';
+import type { TestRun, StartRunRequest } from '../types/scripts';
 
 // Generate UUID with fallback for non-secure contexts (HTTP)
 function generateUUID(): string {
@@ -146,6 +147,14 @@ interface UseChatSessionReturn {
   closePlanEditor: () => void;
   savePlanEdits: (steps: PlanStep[], userPrompt?: string) => Promise<void>;
   regeneratePlan: (steps: PlanStep[], userPrompt: string) => Promise<void>;
+  // Session runs state and actions (Execute tab)
+  sessionRuns: TestRun[];
+  selectedRunId: string | null;
+  isStartingRun: boolean;
+  toggleActionEnabled: (actionId: string, enabled: boolean) => Promise<void>;
+  startSessionRun: (config: StartRunRequest) => Promise<void>;
+  refreshSessionRuns: () => Promise<void>;
+  selectRun: (runId: string | null) => void;
 }
 
 const POLL_INTERVAL = 2000;
@@ -203,6 +212,11 @@ export function useChatSession(): UseChatSessionReturn {
     planText: string;
     planSteps: PlanStep[];
   } | null>(null);
+
+  // Session runs state (Execute tab)
+  const [sessionRuns, setSessionRuns] = useState<TestRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [isStartingRun, setIsStartingRun] = useState(false);
 
   // Keep recording ref in sync
   useEffect(() => {
@@ -1420,6 +1434,10 @@ export function useChatSession(): UseChatSessionReturn {
     setSkippedSteps([]);
     setCurrentExecutingStepNumber(null);
     lastStepCountRef.current = 0;
+    // Reset session runs state
+    setSessionRuns([]);
+    setSelectedRunId(null);
+    setIsStartingRun(false);
 
     return originalPrompt;
   }, [sessionId, stopPolling, stopBrowserPolling, clearInactivityTimeout, disconnectWebSocket]);
@@ -2094,6 +2112,76 @@ export function useChatSession(): UseChatSessionReturn {
     setReplayFailure(null);
   }, []);
 
+  // Toggle action enabled state
+  const toggleActionEnabled = useCallback(async (actionId: string, enabled: boolean) => {
+    try {
+      const updatedAction = await analysisApi.toggleActionEnabled(actionId, enabled);
+      // Update the action in local state (messages)
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.type !== 'step') return msg;
+          const updatedActions = msg.step.actions?.map((action) =>
+            action.id === actionId ? { ...action, is_enabled: updatedAction.is_enabled } : action
+          );
+          return {
+            ...msg,
+            step: {
+              ...msg.step,
+              actions: updatedActions,
+            },
+          };
+        })
+      );
+    } catch (e) {
+      console.error('Error toggling action enabled:', e);
+      throw e;
+    }
+  }, []);
+
+  // Refresh session runs list
+  const refreshSessionRuns = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const runs = await analysisApi.listSessionRuns(sessionId);
+      setSessionRuns(runs);
+    } catch (e) {
+      console.error('Error fetching session runs:', e);
+    }
+  }, [sessionId]);
+
+  // Start a new session run
+  const startSessionRun = useCallback(async (runConfig: StartRunRequest) => {
+    if (!sessionId) return;
+    setIsStartingRun(true);
+    try {
+      const response = await analysisApi.startSessionRun(sessionId, runConfig);
+      // Refresh the runs list to include the new run
+      await refreshSessionRuns();
+      // Select the new run
+      setSelectedRunId(response.run_id);
+    } catch (e) {
+      console.error('Error starting session run:', e);
+      throw e;
+    } finally {
+      setIsStartingRun(false);
+    }
+  }, [sessionId, refreshSessionRuns]);
+
+  // Select a run
+  const selectRun = useCallback((runId: string | null) => {
+    setSelectedRunId(runId);
+  }, []);
+
+  // Fetch session runs when session changes
+  useEffect(() => {
+    if (sessionId) {
+      refreshSessionRuns();
+    } else {
+      setSessionRuns([]);
+      setSelectedRunId(null);
+    }
+  }, [sessionId, refreshSessionRuns]);
+
   return {
     // State
     messages,
@@ -2170,5 +2258,13 @@ export function useChatSession(): UseChatSessionReturn {
     closePlanEditor,
     savePlanEdits,
     regeneratePlan,
+    // Session runs state and actions (Execute tab)
+    sessionRuns,
+    selectedRunId,
+    isStartingRun,
+    toggleActionEnabled,
+    startSessionRun,
+    refreshSessionRuns,
+    selectRun,
   };
 }

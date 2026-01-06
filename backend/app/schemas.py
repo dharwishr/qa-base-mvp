@@ -224,6 +224,11 @@ class UpdateStepActionRequest(BaseModel):
 	text: str | None = Field(None, description="Input text (for type_text actions only)")
 
 
+class ToggleActionEnabledRequest(BaseModel):
+	"""Request to toggle action enabled state."""
+	enabled: bool = Field(..., description="Whether the action should be enabled for execution")
+
+
 # Response schemas
 class StepActionResponse(BaseModel):
 	id: str
@@ -235,6 +240,7 @@ class StepActionResponse(BaseModel):
 	extracted_content: str | None = None
 	element_xpath: str | None = None
 	element_name: str | None = None
+	is_enabled: bool = True  # Whether action should be included in script execution
 
 	class Config:
 		from_attributes = True
@@ -460,10 +466,12 @@ class RunStepResponse(BaseModel):
 class TestRunResponse(BaseModel):
 	"""Response for a test run."""
 	id: str
-	script_id: str
+	script_id: str | None = None  # Optional: run can be from script or session
+	session_id: str | None = None  # Optional: run can be from session directly
 	status: str
 	runner_type: str = "playwright"  # playwright | cdp
 	headless: bool = True
+	celery_task_id: str | None = None  # Celery task ID for tracking
 
 	# Run Configuration
 	browser_type: str = "chromium"  # chromium | firefox | webkit | edge

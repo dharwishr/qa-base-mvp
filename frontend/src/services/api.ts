@@ -509,6 +509,51 @@ export const analysisApi = {
     );
     return handleResponse<StepAction>(response);
   },
+
+  /**
+   * Toggle whether an action is enabled for script execution.
+   * When is_enabled is false, the action will be skipped during session-based test runs.
+   */
+  async toggleActionEnabled(actionId: string, enabled: boolean): Promise<StepAction> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/actions/${actionId}/enabled`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ enabled }),
+      }
+    );
+    return handleResponse<StepAction>(response);
+  },
+
+  /**
+   * Start a test run using enabled actions directly from the session.
+   * This creates a TestRun without generating a PlaywrightScript.
+   */
+  async startSessionRun(sessionId: string, request: StartRunRequest = {}): Promise<StartRunResponse> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/run`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(request),
+      }
+    );
+    return handleResponse<StartRunResponse>(response);
+  },
+
+  /**
+   * List all test runs for a session.
+   */
+  async listSessionRuns(sessionId: string): Promise<TestRun[]> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/runs`,
+      {
+        headers: getAuthHeaders(),
+      }
+    );
+    return handleResponse<TestRun[]>(response);
+  },
 };
 
 /**

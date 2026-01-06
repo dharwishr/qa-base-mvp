@@ -23,6 +23,7 @@ import ActionEditDialog from '@/components/analysis/ActionEditDialog';
 import StepFailureOptions from '@/components/analysis/StepFailureOptions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import type {
   TimelineMessage,
   UserMessage,
@@ -62,6 +63,8 @@ interface ChatMessageProps {
   // Edit action props
   sessionStatus?: string;
   onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
+  // Toggle action enabled props
+  onToggleActionEnabled?: (actionId: string, enabled: boolean) => Promise<void>;
 }
 
 function formatTime(timestamp: string): string {
@@ -283,6 +286,7 @@ function StepMessageCard({
   canDelete = false,
   sessionStatus,
   onActionUpdate,
+  onToggleActionEnabled,
 }: {
   message: StepMessage;
   onStepSelect?: (stepId: string) => void;
@@ -301,6 +305,7 @@ function StepMessageCard({
   canDelete?: boolean;
   sessionStatus?: string;
   onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
+  onToggleActionEnabled?: (actionId: string, enabled: boolean) => Promise<void>;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showUndoHint, setShowUndoHint] = useState(false);
@@ -382,10 +387,13 @@ function StepMessageCard({
         <div className="space-y-1.5 w-full">
           {filteredActions.map((action, idx) => {
             const actionNumber = startingActionNumber + idx + 1;
+            const isActionEnabled = action.is_enabled !== false; // Default to true if undefined
             return (
               <div
                 key={action.id || idx}
                 className={`flex items-start gap-2 cursor-pointer rounded-lg transition-all ${
+                  !isActionEnabled ? 'opacity-50' : ''
+                } ${
                   isCurrentlyExecuting
                     ? 'bg-blue-50'
                     : isSelected
@@ -394,6 +402,16 @@ function StepMessageCard({
                 }`}
                 onClick={() => onStepSelect?.(step.id)}
               >
+                {/* Checkbox for enabling/disabling action in Execute tab */}
+                <Checkbox
+                  checked={isActionEnabled}
+                  onCheckedChange={(checked: boolean | 'indeterminate') => {
+                    onToggleActionEnabled?.(action.id, !!checked);
+                  }}
+                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  className="mt-2.5 flex-shrink-0"
+                  title={isActionEnabled ? 'Click to disable this action in Execute' : 'Click to enable this action in Execute'}
+                />
                 <span className="font-mono text-muted-foreground text-sm w-6 pt-2 flex-shrink-0 text-right">
                   {actionNumber}
                 </span>
@@ -550,30 +568,44 @@ function StepMessageCard({
                         Actions ({step.actions.length})
                       </div>
                       <div className="space-y-1">
-                        {step.actions.map((action, idx) => (
-                          <div
-                            key={action.id || idx}
-                            className={`text-xs p-2 rounded flex items-center gap-2 ${action.result_success
-                              ? 'bg-green-50'
-                              : action.result_error
-                                ? 'bg-red-50'
-                                : 'bg-muted/50'
-                              }`}
-                          >
-                            {action.result_success !== null &&
-                              (action.result_success ? (
-                                <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
-                              ) : (
-                                <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
-                              ))}
-                            <span className="font-mono">{action.action_name}</span>
-                            {action.element_name && (
-                              <span className="text-muted-foreground">
-                                → {action.element_name}
-                              </span>
-                            )}
-                          </div>
-                        ))}
+                        {step.actions.map((action, idx) => {
+                          const isActionEnabled = action.is_enabled !== false;
+                          return (
+                            <div
+                              key={action.id || idx}
+                              className={`text-xs p-2 rounded flex items-center gap-2 ${
+                                !isActionEnabled ? 'opacity-50' : ''
+                              } ${action.result_success
+                                ? 'bg-green-50'
+                                : action.result_error
+                                  ? 'bg-red-50'
+                                  : 'bg-muted/50'
+                                }`}
+                            >
+                              {/* Checkbox for enabling/disabling action */}
+                              <Checkbox
+                                checked={isActionEnabled}
+                                onCheckedChange={(checked: boolean | 'indeterminate') => {
+                                  onToggleActionEnabled?.(action.id, !!checked);
+                                }}
+                                onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                                className="h-3.5 w-3.5 flex-shrink-0"
+                              />
+                              {action.result_success !== null &&
+                                (action.result_success ? (
+                                  <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
+                                ) : (
+                                  <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                                ))}
+                              <span className="font-mono">{action.action_name}</span>
+                              {action.element_name && (
+                                <span className="text-muted-foreground">
+                                  → {action.element_name}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -705,6 +737,7 @@ export default function ChatMessage({
   canDeleteSteps,
   sessionStatus,
   onActionUpdate,
+  onToggleActionEnabled,
 }: ChatMessageProps) {
   switch (message.type) {
     case 'user':
@@ -740,6 +773,7 @@ export default function ChatMessage({
           canDelete={canDeleteSteps}
           sessionStatus={sessionStatus}
           onActionUpdate={onActionUpdate}
+          onToggleActionEnabled={onToggleActionEnabled}
         />
       );
     case 'error':

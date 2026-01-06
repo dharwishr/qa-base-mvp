@@ -15,6 +15,7 @@ celery_app = Celery(
 		"app.tasks.plan_execution",
 		"app.tasks.act_mode",
 		"app.tasks.run_till_end",
+		"app.tasks.session_runs",
 	],
 )
 

@@ -10,6 +10,7 @@ export interface StepAction {
   extracted_content: string | null;
   element_xpath: string | null;
   element_name: string | null;
+  is_enabled: boolean;  // Whether action should be included in script execution
 }
 
 export interface TestStep {

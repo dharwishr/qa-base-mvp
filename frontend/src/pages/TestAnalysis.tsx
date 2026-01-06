@@ -10,6 +10,9 @@ import { analysisApi, scriptsApi, getScreenshotUrl } from "@/services/api"
 import { getAuthToken } from "@/contexts/AuthContext"
 import { useSessionSubscription } from "@/hooks/useSessionSubscription"
 import type { TestSession, LlmModel } from "@/types/analysis"
+import { Textarea } from "@/components/ui/textarea" // Added import
+import { Button } from "@/components/ui/button" // Added import
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card" // Added import
 import type { PlaywrightScript } from "@/types/scripts"
 
 interface BrowserSessionInfo {
@@ -326,196 +329,221 @@ export default function TestAnalysis() {
                     className="border-r flex flex-col overflow-hidden hidden md:flex"
                     style={{ width: `${leftWidth}px` }}
                 >
-                    {/* Input Section */}
-                    <div className="p-4 border-b space-y-2 bg-muted/10">
-                        <textarea
-                            className="w-full min-h-[60px] rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
-                            placeholder="Describe your test case to generate steps..."
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            disabled={analysisState !== 'idle'}
-                        />
-                        {analysisState === 'idle' && (
-                            <button
-                                onClick={handleGenerate}
-                                disabled={!prompt.trim()}
-                                className="w-full inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 py-2"
-                            >
-                                Generate Plan
-                            </button>
-                        )}
-                        {analysisState === 'generating_plan' && (
-                            <div className="w-full h-9 flex items-center justify-center text-sm text-muted-foreground">
-                                Generating plan...
-                            </div>
-                        )}
-                    </div>
+                    {/* Input Section - Initial State */}
+                    {analysisState === 'idle' && (
+                        <div className="p-4 space-y-4">
+                            <Card>
+                                <CardHeader className="pb-3">
+                                    <CardTitle>New Test Analysis</CardTitle>
+                                    <CardDescription>
+                                        Describe what you want to test.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    <Textarea
+                                        placeholder="E.g., Go to example.com and verify the login flow..."
+                                        value={prompt}
+                                        onChange={(e) => setPrompt(e.target.value)}
+                                        className="min-h-[100px]"
+                                    />
+                                </CardContent>
+                                <CardFooter>
+                                    <Button
+                                        onClick={handleGenerate}
+                                        disabled={!prompt.trim()}
+                                        className="w-full"
+                                    >
+                                        Generate Plan
+                                    </Button>
+                                </CardFooter>
+                            </Card>
+                        </div>
+                    )}
 
-                    {/* Plan Display Section */}
+                    {/* Generating State */}
+                    {analysisState === 'generating_plan' && (
+                        <div className="p-4 flex items-center justify-center h-full">
+                            <div className="text-center space-y-3">
+                                <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
+                                <p className="text-sm text-muted-foreground">Generating test plan...</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Plan Display & Approval */}
                     {analysisState === 'plan_ready' && session?.plan && (
-                        <div className="p-4 border-b space-y-3 bg-blue-50/50">
-                            <div className="text-sm font-medium">Generated Plan</div>
-                            <div className="text-sm text-muted-foreground whitespace-pre-wrap max-h-[200px] overflow-y-auto">
-                                {session.plan.plan_text}
-                            </div>
-                            {planSteps.length > 0 && (
-                                <div className="space-y-1">
-                                    <div className="text-xs font-medium text-muted-foreground">Steps:</div>
-                                    {planSteps.map((step, idx) => (
-                                        <div key={idx} className="text-xs pl-2 border-l-2 border-blue-300">
-                                            {step.step_number}. {step.description}
+                        <div className="p-4 h-full overflow-hidden flex flex-col">
+                            <Card className="flex flex-col h-full border-blue-200 bg-blue-50/10">
+                                <CardHeader className="pb-2 bg-blue-50/20 border-b border-blue-100">
+                                    <CardTitle className="text-lg text-blue-900">Review Plan</CardTitle>
+                                </CardHeader>
+                                <CardContent className="flex-1 overflow-y-auto pt-4 space-y-4">
+                                    <div className="text-sm text-foreground/80 whitespace-pre-wrap">
+                                        {session.plan.plan_text}
+                                    </div>
+                                    {planSteps.length > 0 && (
+                                        <div className="space-y-2 pt-2">
+                                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Proposed Steps</div>
+                                            <div className="space-y-2">
+                                                {planSteps.map((step, idx) => (
+                                                    <div key={idx} className="text-sm p-3 bg-background rounded-md border shadow-sm">
+                                                        <span className="font-medium text-blue-600 mr-2">{step.step_number}.</span>
+                                                        {step.description}
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={handleApprove}
-                                    className="flex-1 inline-flex items-center justify-center rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 h-9 px-4 py-2"
-                                >
-                                    Approve & Execute
-                                </button>
-                                <button
-                                    onClick={handleReset}
-                                    className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-4 py-2"
-                                >
-                                    Cancel
-                                </button>
-                            </div>
+                                    )}
+                                </CardContent>
+                                <CardFooter className="pt-4 border-t gap-2 bg-background/50">
+                                    <Button
+                                        onClick={handleReset}
+                                        variant="outline"
+                                        className="flex-1"
+                                    >
+                                        Edit
+                                    </Button>
+                                    <Button
+                                        onClick={handleApprove}
+                                        className="flex-1 bg-blue-600 hover:bg-blue-700"
+                                    >
+                                        Approve & Execute
+                                    </Button>
+                                </CardFooter>
+                            </Card>
                         </div>
                     )}
 
-                    {/* Error Display */}
-                    {error && (
-                        <div className="p-4 bg-red-50 border-b border-red-200">
-                            <div className="text-sm text-red-600">{error}</div>
-                            <button
-                                onClick={handleReset}
-                                className="mt-2 text-sm text-red-600 underline"
-                            >
-                                Try again
-                            </button>
-                        </div>
-                    )}
-
-                    {/* Execution Status */}
+                    {/* Executing State */}
                     {analysisState === 'executing' && (
-                        <div className="p-4 border-b bg-yellow-50/50">
-                            <div className="flex items-center justify-between">
-                                <div className="text-sm font-medium text-yellow-700">
-                                    Executing test... ({displaySteps.length} steps completed)
-                                </div>
-                                <button
-                                    onClick={stopExecution}
-                                    className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-red-600 text-white hover:bg-red-700 h-8 px-3 py-1"
-                                >
-                                    Stop
-                                </button>
-                            </div>
+                        <div className="p-4 border-b bg-yellow-50/10">
+                            <Card className="border-yellow-200 bg-yellow-50/20 shadow-none">
+                                <CardContent className="p-4 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <Loader2 className="h-4 w-4 animate-spin text-yellow-600" />
+                                        <div className="text-sm font-medium text-yellow-900">
+                                            Executing Step {displaySteps.length + 1}...
+                                        </div>
+                                    </div>
+                                    <Button
+                                        onClick={stopExecution}
+                                        variant="destructive"
+                                        size="sm"
+                                        className="h-8"
+                                    >
+                                        Stop
+                                    </Button>
+                                </CardContent>
+                            </Card>
                         </div>
                     )}
 
-                    {/* Stopped Status */}
+                    {/* Stopped State */}
                     {analysisState === 'stopped' && (
-                        <div className="p-4 border-b bg-orange-50/50 space-y-3">
-                            <div className="text-sm font-medium text-orange-700">
-                                Test execution stopped ({displaySteps.length} steps completed)
-                            </div>
-                            <div className="flex gap-2">
-                                {displaySteps.length > 0 && (
-                                    linkedScript ? (
-                                        <button
-                                            onClick={handleOpenScript}
-                                            className="flex-1 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2"
-                                        >
-                                            <ExternalLink className="h-4 w-4" />
-                                            Open Script
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={handleGenerateScript}
-                                            disabled={generatingScript}
-                                            className="flex-1 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2 disabled:opacity-50"
-                                        >
-                                            {generatingScript ? (
-                                                <>
-                                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                                    Generating...
-                                                </>
+                        <div className="p-4 border-b space-y-3 bg-orange-50/10">
+                            <Card className="border-orange-200 bg-orange-50/20 shadow-none">
+                                <CardHeader className="p-4 pb-2">
+                                    <CardTitle className="text-base text-orange-900">Execution Stopped</CardTitle>
+                                    <CardDescription className="text-orange-700/80">
+                                        Test execution was stopped manually.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="p-4 pt-2">
+                                    <div className="flex gap-2">
+                                        {displaySteps.length > 0 && (
+                                            linkedScript ? (
+                                                <Button
+                                                    onClick={handleOpenScript}
+                                                    className="flex-1 gap-2 bg-orange-600 hover:bg-orange-700 text-white"
+                                                >
+                                                    <ExternalLink className="h-4 w-4" />
+                                                    View Script
+                                                </Button>
                                             ) : (
-                                                <>
-                                                    <FileCode className="h-4 w-4" />
-                                                    Generate Script
-                                                </>
-                                            )}
-                                        </button>
-                                    )
-                                )}
-                                <button
-                                    onClick={handleReset}
-                                    className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-4 py-2"
-                                >
-                                    New Test
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Completion Status */}
-                    {analysisState === 'completed' && (
-                        <div className="p-4 border-b bg-green-50/50 space-y-3">
-                            <div className="text-sm font-medium text-green-700">
-                                Test completed successfully! ({displaySteps.length} steps)
-                            </div>
-                            <div className="flex gap-2">
-                                {linkedScript ? (
-                                    <button
-                                        onClick={handleOpenScript}
-                                        className="flex-1 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2"
-                                    >
-                                        <ExternalLink className="h-4 w-4" />
-                                        Open Script
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={handleGenerateScript}
-                                        disabled={generatingScript}
-                                        className="flex-1 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2 disabled:opacity-50"
-                                    >
-                                        {generatingScript ? (
-                                            <>
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                                Generating...
-                                            </>
-                                        ) : (
-                                            <>
-                                                <FileCode className="h-4 w-4" />
-                                                Generate Script
-                                            </>
+                                                <Button
+                                                    onClick={handleGenerateScript}
+                                                    disabled={generatingScript}
+                                                    className="flex-1 gap-2 bg-orange-600 hover:bg-orange-700 text-white"
+                                                >
+                                                    {generatingScript ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCode className="h-4 w-4" />}
+                                                    Save as Script
+                                                </Button>
+                                            )
                                         )}
-                                    </button>
-                                )}
-                                <button
-                                    onClick={handleReset}
-                                    className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-4 py-2"
-                                >
-                                    New Test
-                                </button>
-                            </div>
+                                        <Button
+                                            onClick={handleReset}
+                                            variant="outline"
+                                            className="flex-1 border-orange-200 hover:bg-orange-100"
+                                        >
+                                            New Test
+                                        </Button>
+                                    </div>
+                                </CardContent>
+                            </Card>
                         </div>
                     )}
 
-                    {analysisState === 'failed' && !error && (
-                        <div className="p-4 border-b bg-red-50/50">
-                            <div className="text-sm font-medium text-red-700">
-                                Test failed
-                            </div>
-                            <button
-                                onClick={handleReset}
-                                className="mt-2 text-sm text-red-600 underline"
-                            >
-                                Try again
-                            </button>
+                    {/* Completed State */}
+                    {analysisState === 'completed' && (
+                        <div className="p-4 border-b space-y-3 bg-green-50/10">
+                            <Card className="border-green-200 bg-green-50/20 shadow-none">
+                                <CardHeader className="p-4 pb-2">
+                                    <CardTitle className="text-base text-green-900">Test Completed</CardTitle>
+                                    <CardDescription className="text-green-700/80">
+                                        All steps executed successfully.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="p-4 pt-2">
+                                    <div className="flex gap-2">
+                                        {linkedScript ? (
+                                            <Button
+                                                onClick={handleOpenScript}
+                                                className="flex-1 gap-2 bg-green-600 hover:bg-green-700 text-white"
+                                            >
+                                                <ExternalLink className="h-4 w-4" />
+                                                View Script
+                                            </Button>
+                                        ) : (
+                                            <Button
+                                                onClick={handleGenerateScript}
+                                                disabled={generatingScript}
+                                                className="flex-1 gap-2 bg-green-600 hover:bg-green-700 text-white"
+                                            >
+                                                {generatingScript ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCode className="h-4 w-4" />}
+                                                Save as Script
+                                            </Button>
+                                        )}
+                                        <Button
+                                            onClick={handleReset}
+                                            variant="outline"
+                                            className="flex-1 border-green-200 hover:bg-green-100"
+                                        >
+                                            New Test
+                                        </Button>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+
+                    {/* Failed State */}
+                    {(analysisState === 'failed' || error) && (
+                        <div className="p-4 border-b bg-red-50/10">
+                            <Card className="border-red-200 bg-red-50/20 shadow-none">
+                                <CardHeader className="p-4 pb-2">
+                                    <CardTitle className="text-base text-red-900">Test Failed</CardTitle>
+                                </CardHeader>
+                                <CardContent className="p-4 pt-0">
+                                    {error && <p className="text-sm text-red-700 mb-3">{error}</p>}
+                                    <Button
+                                        onClick={handleReset}
+                                        variant="outline"
+                                        className="w-full border-red-200 hover:bg-red-100 text-red-900"
+                                    >
+                                        Try Again
+                                    </Button>
+                                </CardContent>
+                            </Card>
                         </div>
                     )}
 

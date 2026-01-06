@@ -29,14 +29,18 @@ from app.schemas import (
 	ReplaySessionRequest,
 	ReplaySessionResponse,
 	StartRecordingRequest,
+	StartRunRequest,
+	StartRunResponse,
 	StepActionResponse,
 	StopResponse,
 	TaskStatusResponse,
 	TestPlanResponse,
+	TestRunResponse,
 	TestSessionDetailResponse,
 	TestSessionListResponse,
 	TestSessionResponse,
 	TestStepResponse,
+	ToggleActionEnabledRequest,
 	UndoRequest,
 	UndoResponse,
 	UpdatePlanRequest,
@@ -989,6 +993,144 @@ async def update_action(
 		f"css_selector={request.css_selector}, text={request.text[:20] if request.text else None}..."
 	)
 	return action
+
+
+@router.patch("/actions/{action_id}/enabled", response_model=StepActionResponse)
+async def toggle_action_enabled(
+	action_id: str,
+	request: ToggleActionEnabledRequest,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Toggle whether an action is enabled for script execution.
+
+	When is_enabled is False, the action will be skipped during
+	session-based test runs (Execute tab).
+	"""
+	from app.models import StepAction
+
+	action = db.query(StepAction).filter(StepAction.id == action_id).first()
+	if not action:
+		raise HTTPException(status_code=404, detail="Action not found")
+
+	action.is_enabled = request.enabled
+	db.commit()
+	db.refresh(action)
+
+	logger.info(f"Toggled action {action_id} enabled={request.enabled}")
+	return action
+
+
+# ============================================
+# Session-Based Test Runs (Execute Tab)
+# ============================================
+
+@router.post("/sessions/{session_id}/run", response_model=StartRunResponse)
+async def start_session_run(
+	session_id: str,
+	request: StartRunRequest = StartRunRequest(),
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Start a test run using enabled actions directly from the session.
+
+	This creates a TestRun without generating a PlaywrightScript, using
+	the session's StepActions directly. Only actions where is_enabled=True
+	are included in the run.
+
+	The run executes on containerized browsers from the pool, just like
+	script-based runs.
+	"""
+	from app.models import StepAction, TestRun
+	from app.tasks.session_runs import execute_session_run
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Check session has steps with enabled actions
+	# Include actions where is_enabled is True or NULL (for backward compatibility)
+	from sqlalchemy import or_
+	enabled_actions_count = db.query(StepAction).join(TestStep).filter(
+		TestStep.session_id == session_id,
+		or_(StepAction.is_enabled == True, StepAction.is_enabled.is_(None))
+	).count()
+
+	if enabled_actions_count == 0:
+		raise HTTPException(
+			status_code=400,
+			detail="No enabled actions found in session. Enable some actions to run."
+		)
+
+	# Parse resolution
+	resolution_parts = request.resolution.value.split("x")
+	width = int(resolution_parts[0])
+	height = int(resolution_parts[1])
+
+	# Create TestRun record (linked to session, not script)
+	run = TestRun(
+		session_id=session_id,
+		script_id=None,  # Session-based run, no script
+		user_id=current_user.id,
+		status="pending",
+		browser_type=request.browser_type.value,
+		resolution_width=width,
+		resolution_height=height,
+		screenshots_enabled=request.screenshots_enabled,
+		recording_enabled=request.recording_enabled,
+		network_recording_enabled=request.network_recording_enabled,
+		performance_metrics_enabled=request.performance_metrics_enabled,
+	)
+	db.add(run)
+	db.commit()
+	db.refresh(run)
+
+	# Queue execution via Celery
+	logger.info(f"Queueing session run {run.id} for session {session_id}")
+	task = execute_session_run.delay(run.id)
+
+	# Store task ID
+	run.celery_task_id = task.id
+	run.status = "queued"
+	db.commit()
+
+	return StartRunResponse(
+		run_id=run.id,
+		status="queued",
+		celery_task_id=task.id,
+	)
+
+
+@router.get("/sessions/{session_id}/runs", response_model=list[TestRunResponse])
+async def list_session_runs(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""List all test runs for a session.
+
+	Returns runs ordered by creation date (newest first).
+	"""
+	from app.models import TestRun, User
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	runs = db.query(TestRun, User.name, User.email).outerjoin(
+		User, TestRun.user_id == User.id
+	).filter(
+		TestRun.session_id == session_id
+	).order_by(TestRun.created_at.desc()).all()
+
+	result = []
+	for run, user_name, user_email in runs:
+		run_dict = TestRunResponse.model_validate(run).model_dump()
+		run_dict["user_name"] = user_name
+		run_dict["user_email"] = user_email
+		result.append(TestRunResponse(**run_dict))
+
+	return result
 
 
 # ============================================

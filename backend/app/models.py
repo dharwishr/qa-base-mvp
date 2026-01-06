@@ -222,6 +222,7 @@ class StepAction(Base):
 	extracted_content: Mapped[str | None] = mapped_column(Text, nullable=True)
 	element_xpath: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 	element_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+	is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # Whether action should be included in script execution
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 	# Relationships
@@ -303,17 +304,21 @@ class PlaywrightScript(Base):
 
 
 class TestRun(Base):
-	"""A single execution of a PlaywrightScript (no AI involved)."""
+	"""A single execution of a PlaywrightScript or TestSession (no AI involved)."""
 
 	__tablename__ = "test_runs"
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
-	script_id: Mapped[str] = mapped_column(
-		String(36), ForeignKey("playwright_scripts.id"), nullable=False
+	script_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("playwright_scripts.id"), nullable=True
+	)
+	session_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("test_sessions.id"), nullable=True, index=True
 	)
 	user_id: Mapped[str | None] = mapped_column(
 		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
 	)
+	celery_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Track async execution task
 	status: Mapped[str] = mapped_column(
 		String(20), nullable=False, default="pending"
 	)  # pending | running | passed | failed | healed
@@ -347,7 +352,8 @@ class TestRun(Base):
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 	# Relationships
-	script: Mapped["PlaywrightScript"] = relationship("PlaywrightScript", back_populates="runs")
+	script: Mapped["PlaywrightScript | None"] = relationship("PlaywrightScript", back_populates="runs")
+	session: Mapped["TestSession | None"] = relationship("TestSession", backref="test_runs")
 	user: Mapped["User | None"] = relationship("User")
 	run_steps: Mapped[list["RunStep"]] = relationship(
 		"RunStep", back_populates="run", order_by="RunStep.step_index", cascade="all, delete-orphan"

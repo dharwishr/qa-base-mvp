@@ -261,6 +261,14 @@ export default function TestAnalysisChatPage() {
     closePlanEditor,
     savePlanEdits,
     regeneratePlan,
+    // Session runs (Execute tab)
+    sessionRuns,
+    selectedRunId,
+    isStartingRun,
+    toggleActionEnabled,
+    startSessionRun,
+    refreshSessionRuns,
+    selectRun,
   } = useChatSession();
 
   // Load existing session from URL parameter
@@ -721,6 +729,7 @@ export default function TestAnalysisChatPage() {
           canDeleteSteps={canDeleteSteps}
           sessionStatus={sessionStatus ?? undefined}
           onActionUpdate={handleActionUpdate}
+          onToggleActionEnabled={toggleActionEnabled}
         />
 
         {/* Chat Input */}
@@ -769,6 +778,12 @@ export default function TestAnalysisChatPage() {
           isInteractionEnabled={isInteractionEnabled}
           onToggleInteraction={() => setIsInteractionEnabled(!isInteractionEnabled)}
           onEndBrowserSession={endBrowserSession}
+          sessionRuns={sessionRuns}
+          selectedRunId={selectedRunId}
+          onSelectRun={selectRun}
+          onStartSessionRun={startSessionRun}
+          onRefreshRuns={refreshSessionRuns}
+          isStartingRun={isStartingRun}
           className="flex-1"
         />
       </div>
