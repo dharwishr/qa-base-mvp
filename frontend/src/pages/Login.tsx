@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import {
     Card,
@@ -17,8 +17,8 @@ import { useAuth } from "@/contexts/AuthContext"
 export default function Login() {
     const navigate = useNavigate()
     const { login } = useAuth()
-    const [email, setEmail] = useState("tester@email.com")
-    const [password, setPassword] = useState("12345678")
+    const [email, setEmail] = useState("")
+    const [password, setPassword] = useState("")
     const [error, setError] = useState<string | null>(null)
     const [isLoading, setIsLoading] = useState(false)
 
@@ -88,16 +88,17 @@ export default function Login() {
                                 />
                             </div>
                         </div>
-                        <div className="rounded-md bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                            <p className="font-semibold">Demo Credentials:</p>
-                            <p>Email: tester@email.com</p>
-                            <p>Password: 12345678</p>
-                        </div>
                     </CardContent>
-                    <CardFooter>
+                    <CardFooter className="flex flex-col gap-4">
                         <Button type="submit" className="w-full" disabled={isLoading}>
                             {isLoading ? "Signing in..." : "Sign in"}
                         </Button>
+                        <p className="text-sm text-muted-foreground text-center">
+                            Don't have an account?{" "}
+                            <Link to="/signup" className="text-primary hover:underline">
+                                Sign up
+                            </Link>
+                        </p>
                     </CardFooter>
                 </form>
             </Card>

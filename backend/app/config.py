@@ -38,9 +38,14 @@ class Settings(BaseSettings):
 	JWT_ALGORITHM: str = "HS256"
 	JWT_EXPIRY_HOURS: int = 24
 
-	# Single test account credentials
-	AUTH_EMAIL: str = "tester@email.com"
-	AUTH_PASSWORD: str = "12345678"  # Plain password - will be hashed at runtime
+	# Default admin user credentials (created on first run)
+	ADMIN_EMAIL: str = "admin@xitester.com"
+	ADMIN_PASSWORD: str = "admin12345"  # Override in ENV for production
+	ADMIN_NAME: str = "Admin User"
+
+	# Default organization settings
+	DEFAULT_ORG_NAME: str = "XiTester"
+	DEFAULT_ORG_DESCRIPTION: str = "Default organization"
 
 	@property
 	def database_path(self) -> Path:

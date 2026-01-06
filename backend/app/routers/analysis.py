@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import User, get_current_user
+from app.deps import AuthenticatedUser, get_current_user
 from app.models import TestPlan, TestSession, TestStep
 from app.schemas import (
 	ActModeRequest,
@@ -165,15 +165,17 @@ async def prewarm_browser_session_async(session_id: str, headless: bool) -> None
 @router.get("/sessions", response_model=list[TestSessionListResponse])
 async def list_sessions(
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get all test sessions ordered by creation date (newest first)."""
 	from sqlalchemy import func
 
-	# Query sessions with step count
+	# Query sessions with step count, filtered by organization
 	sessions = db.query(
 		TestSession,
 		func.count(TestStep.id).label('step_count')
+	).filter(
+		TestSession.organization_id == current_user.organization_id
 	).outerjoin(TestStep).group_by(TestSession.id).order_by(TestSession.created_at.desc()).all()
 
 	# Convert to response format
@@ -196,7 +198,7 @@ async def list_sessions(
 async def create_session(
 	request: CreateSessionRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Create a new test session and generate a plan."""
 	# Generate simple fallback title initially (LLM title will be updated async)
@@ -208,7 +210,9 @@ async def create_session(
 		title=title,
 		llm_model=request.llm_model,
 		headless=request.headless,
-		status="pending_plan"
+		status="pending_plan",
+		organization_id=current_user.organization_id,
+		user_id=current_user.id,
 	)
 	db.add(session)
 	db.commit()
@@ -251,7 +255,7 @@ async def create_session(
 async def get_session(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get a test session by ID with all details."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
@@ -265,7 +269,7 @@ async def update_session_title(
 	session_id: str,
 	request: UpdateSessionTitleRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Update the title of a test session."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
@@ -283,7 +287,7 @@ async def continue_session(
 	session_id: str,
 	request: ContinueSessionRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Continue an existing session with a new task.
 
@@ -380,7 +384,7 @@ async def execute_act_mode(
 	session_id: str,
 	request: ActModeRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Execute a single action in act mode.
 
@@ -439,7 +443,7 @@ async def execute_act_mode(
 async def delete_session(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Delete a test session and all related data."""
 	from app.models import ExecutionLog, StepAction
@@ -477,7 +481,7 @@ async def delete_session(
 async def get_session_plan(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get the plan for a test session."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
@@ -495,7 +499,7 @@ async def update_session_plan(
 	session_id: str,
 	request: UpdatePlanRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Update a plan with manually edited steps.
 
@@ -538,7 +542,7 @@ async def regenerate_session_plan(
 	session_id: str,
 	request: RegeneratePlanRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Regenerate a plan using AI with user's edits as context.
 
@@ -573,7 +577,7 @@ async def regenerate_session_plan(
 async def approve_plan(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Approve a plan and mark session as ready for execution."""
 	from datetime import datetime
@@ -604,7 +608,7 @@ async def approve_plan(
 async def start_execution(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Start test execution via Celery task."""
 	from app.tasks.analysis import run_test_analysis
@@ -633,7 +637,7 @@ async def start_execution(
 async def stop_execution(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Stop a running test execution by revoking the Celery task."""
 	from app.celery_app import celery_app
@@ -676,7 +680,7 @@ async def get_session_logs(
 	session_id: str,
 	level: str | None = None,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get execution logs for a session."""
 	from app.models import ExecutionLog
@@ -696,7 +700,7 @@ async def get_session_logs(
 async def get_session_steps(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get all steps for a test session."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
@@ -714,7 +718,7 @@ async def get_session_steps(
 async def clear_session_steps(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Clear all steps for a test session."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
@@ -741,7 +745,7 @@ async def clear_session_steps(
 async def reset_session(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Reset a test session to its initial state while keeping the same ID.
 
@@ -793,7 +797,7 @@ async def reset_session(
 async def delete_step(
 	step_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Delete a single step and renumber remaining steps.
 
@@ -838,7 +842,7 @@ async def update_action_text(
 	action_id: str,
 	request: UpdateStepActionTextRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Update the text value for a type_text action.
 
@@ -881,7 +885,7 @@ async def update_action(
 	action_id: str,
 	request: UpdateStepActionRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Update editable fields for a step action.
 
@@ -965,7 +969,7 @@ async def undo_to_step(
 	session_id: str,
 	request: UndoRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Undo a test session to a specific step number.
 	
@@ -1029,7 +1033,7 @@ async def replay_session(
 	session_id: str,
 	request: ReplaySessionRequest = None,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Replay all steps in a test session.
 	
@@ -1111,7 +1115,7 @@ async def start_recording(
 	session_id: str,
 	request: StartRecordingRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Start recording user interactions in the live browser.
 
@@ -1204,7 +1208,7 @@ async def start_recording(
 async def stop_recording(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Stop recording user interactions (Playwright, BrowserUse, or CDP mode)."""
 	from app.services.user_recording_service import get_active_recording
@@ -1260,7 +1264,7 @@ async def stop_recording(
 async def get_recording_status(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get current recording status for a session (checks all recording modes)."""
 	from app.services.user_recording_service import get_active_recording
@@ -1311,7 +1315,7 @@ async def get_recording_status(
 async def get_session_messages(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get all chat messages for a test session."""
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
@@ -1326,7 +1330,7 @@ async def create_message(
 	session_id: str,
 	message: ChatMessageCreate,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Create a new chat message for a test session."""
 	from sqlalchemy import func
@@ -1360,7 +1364,7 @@ async def reject_plan(
 	session_id: str,
 	request: RejectPlanRequest = None,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Reject a plan and allow re-planning."""
 	from app.models import ChatMessage
@@ -1437,7 +1441,7 @@ def create_plan_message(db: Session, session_id: str, plan_text: str, plan_id: s
 	db.add(msg)
 
 
-async def verify_token_from_query(token: str) -> User:
+async def verify_token_from_query(token: str) -> AuthenticatedUser:
 	"""Verify JWT token passed as query parameter (for img src URLs)."""
 	from jose import JWTError, jwt
 	from app.config import settings
@@ -1448,16 +1452,23 @@ async def verify_token_from_query(token: str) -> User:
 	)
 	try:
 		payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-		email: str = payload.get("sub")
-		if email is None:
+		user_id: str = payload.get("sub")
+		email: str = payload.get("email")
+		org_id: str = payload.get("org_id")
+		role: str = payload.get("role")
+		if not all([user_id, email, org_id, role]):
 			raise credentials_exception
 	except JWTError:
 		raise credentials_exception
 	
-	if email != settings.AUTH_EMAIL:
-		raise credentials_exception
-	
-	return User(email=email)
+	return AuthenticatedUser(
+		id=user_id,
+		email=email,
+		name="",
+		organization_id=org_id,
+		organization_slug="",
+		role=role
+	)
 
 
 @router.get("/screenshot")
@@ -1535,7 +1546,7 @@ async def get_screenshot(
 async def end_browser_session(
 	session_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""End the browser session for a test session without ending the test session itself.
 

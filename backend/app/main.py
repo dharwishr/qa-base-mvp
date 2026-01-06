@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.routers import analysis, auth
+from app.routers.organizations import router as organizations_router
 from app.routers.scripts import router as scripts_router, runs_router
 from app.routers.browser import router as browser_router
 from app.routers.discovery import router as discovery_router
@@ -21,6 +22,7 @@ from app.routers.benchmark import router as benchmark_router
 from app.routers.speech import router as speech_router
 from app.routers.settings import router as settings_router
 from app.services.browser_orchestrator import init_orchestrator, shutdown_orchestrator
+from app.services.db_init import init_database
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,13 @@ async def lifespan(app: FastAPI):
 	data_dir.mkdir(exist_ok=True)
 	screenshots_dir = Path(settings.SCREENSHOTS_DIR)
 	screenshots_dir.mkdir(parents=True, exist_ok=True)
+	
+	# Initialize database with default org and admin user
+	try:
+		init_database()
+		logger.info("Database initialized")
+	except Exception as e:
+		logger.error(f"Failed to initialize database: {e}")
 	
 	# Initialize browser orchestrator
 	try:
@@ -80,6 +89,7 @@ async def root():
 
 # Include routers
 app.include_router(auth.router)
+app.include_router(organizations_router)
 app.include_router(analysis.router)
 app.include_router(scripts_router)
 app.include_router(runs_router)

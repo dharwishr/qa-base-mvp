@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom"
 import { AuthProvider } from "./contexts/AuthContext"
 import ProtectedRoute from "./components/ProtectedRoute"
 import Login from "./pages/Login"
+import Signup from "./pages/Signup"
 import Dashboard from "./pages/Dashboard"
 import MethodSelection from "./pages/test-generation/MethodSelection"
 import TypeSelection from "./pages/test-generation/TypeSelection"
@@ -19,6 +20,7 @@ import BenchmarkPage from "./pages/BenchmarkPage"
 import BenchmarkHistoryPage from "./pages/BenchmarkHistoryPage"
 import BenchmarkDetailPage from "./pages/BenchmarkDetailPage"
 import SettingsPage from "./pages/SettingsPage"
+import OrganizationSettings from "./pages/OrganizationSettings"
 
 import DashboardLayout from "./components/layout/DashboardLayout"
 
@@ -28,6 +30,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/" element={<Login />} />
+          <Route path="/signup" element={<Signup />} />
 
           {/* Protected Dashboard Routes */}
           <Route element={
@@ -51,6 +54,7 @@ function App() {
             <Route path="/benchmarks" element={<BenchmarkHistoryPage />} />
             <Route path="/benchmarks/:benchmarkId" element={<BenchmarkDetailPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/organization" element={<OrganizationSettings />} />
           </Route>
         </Routes>
       </AuthProvider>

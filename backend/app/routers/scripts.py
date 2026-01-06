@@ -23,6 +23,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.deps import AuthenticatedUser, get_current_user
 from app.models import PlaywrightScript, TestRun, RunStep, TestSession
 from app.tasks.test_runs import execute_test_run
 from app.schemas import (
@@ -59,7 +60,11 @@ runs_router = APIRouter(prefix="/runs", tags=["runs"])
 
 
 @router.post("", response_model=PlaywrightScriptResponse)
-async def create_script(request: CreateScriptRequest, db: Session = Depends(get_db)):
+async def create_script(
+	request: CreateScriptRequest,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
 	"""Create a Playwright script from a completed test session."""
 	session = db.query(TestSession).filter(TestSession.id == request.session_id).first()
 	if not session:
@@ -87,6 +92,8 @@ async def create_script(request: CreateScriptRequest, db: Session = Depends(get_
 		name=request.name,
 		description=request.description,
 		steps_json=steps_json,
+		organization_id=current_user.organization_id,
+		user_id=current_user.id,
 	)
 	db.add(script)
 	db.commit()
@@ -292,9 +299,14 @@ def _build_element_context(action) -> dict[str, Any] | None:
 
 
 @router.get("", response_model=list[PlaywrightScriptListResponse])
-async def list_scripts(db: Session = Depends(get_db)):
+async def list_scripts(
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
 	"""List all Playwright scripts."""
-	scripts = db.query(PlaywrightScript).order_by(PlaywrightScript.created_at.desc()).all()
+	scripts = db.query(PlaywrightScript).filter(
+		PlaywrightScript.organization_id == current_user.organization_id
+	).order_by(PlaywrightScript.created_at.desc()).all()
 	
 	result = []
 	for script in scripts:
@@ -318,7 +330,11 @@ async def list_scripts(db: Session = Depends(get_db)):
 
 
 @router.get("/{script_id}", response_model=PlaywrightScriptDetailResponse)
-async def get_script(script_id: str, db: Session = Depends(get_db)):
+async def get_script(
+	script_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
 	"""Get a script with its run history."""
 	script = db.query(PlaywrightScript).filter(PlaywrightScript.id == script_id).first()
 	if not script:
@@ -328,7 +344,11 @@ async def get_script(script_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/{script_id}")
-async def delete_script(script_id: str, db: Session = Depends(get_db)):
+async def delete_script(
+	script_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
 	"""Delete a script and its runs."""
 	script = db.query(PlaywrightScript).filter(PlaywrightScript.id == script_id).first()
 	if not script:
@@ -344,7 +364,8 @@ async def delete_script(script_id: str, db: Session = Depends(get_db)):
 async def start_run(
 	script_id: str,
 	request: StartRunRequest = StartRunRequest(),
-	db: Session = Depends(get_db)
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Start a test run for a script using containerized browser pool.
 
@@ -396,7 +417,11 @@ async def start_run(
 
 
 @router.get("/{script_id}/runs", response_model=list[TestRunResponse])
-async def list_script_runs(script_id: str, db: Session = Depends(get_db)):
+async def list_script_runs(
+	script_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
 	"""List all runs for a script."""
 	script = db.query(PlaywrightScript).filter(PlaywrightScript.id == script_id).first()
 	if not script:

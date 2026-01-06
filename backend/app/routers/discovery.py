@@ -6,7 +6,7 @@ from pydantic import BaseModel, HttpUrl
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import require_auth
+from app.deps import AuthenticatedUser, get_current_user, require_auth
 from app.models import DiscoverySession, DiscoveredModule
 from app.tasks.discovery import run_module_discovery
 
@@ -76,6 +76,7 @@ class CreateDiscoveryResponse(BaseModel):
 async def create_discovery_session(
 	request: CreateDiscoveryRequest,
 	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Create a new discovery session and queue the Celery task."""
 	# Create session
@@ -85,6 +86,8 @@ async def create_discovery_session(
 		password=request.password,
 		max_steps=request.max_steps,
 		status="queued",
+		organization_id=current_user.organization_id,
+		user_id=current_user.id,
 	)
 	db.add(session)
 	db.commit()
@@ -105,10 +108,12 @@ async def create_discovery_session(
 @router.get("/sessions", response_model=list[DiscoverySessionListItem])
 async def list_discovery_sessions(
 	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""List all discovery sessions ordered by creation date (newest first)."""
 	sessions = (
 		db.query(DiscoverySession)
+		.filter(DiscoverySession.organization_id == current_user.organization_id)
 		.order_by(DiscoverySession.created_at.desc())
 		.all()
 	)
@@ -131,6 +136,7 @@ async def list_discovery_sessions(
 async def get_discovery_session(
 	session_id: str,
 	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get a discovery session with its discovered modules."""
 	session = db.query(DiscoverySession).filter(DiscoverySession.id == session_id).first()
@@ -165,6 +171,7 @@ async def get_discovery_session(
 async def delete_discovery_session(
 	session_id: str,
 	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Delete a discovery session and its modules."""
 	session = db.query(DiscoverySession).filter(DiscoverySession.id == session_id).first()
@@ -180,6 +187,7 @@ async def delete_discovery_session(
 async def get_session_modules(
 	session_id: str,
 	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get all discovered modules for a session."""
 	session = db.query(DiscoverySession).filter(DiscoverySession.id == session_id).first()

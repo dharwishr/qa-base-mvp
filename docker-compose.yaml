@@ -47,6 +47,17 @@ services:
       - APP_NAME=${APP_NAME:-QA Base API}
       # Database Settings
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      # Authentication Settings
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - JWT_EXPIRY_HOURS=${JWT_EXPIRY_HOURS:-24}
+      # Default Admin User (created on first run)
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xitester.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
+      - ADMIN_NAME=${ADMIN_NAME:-Admin User}
+      # Default Organization
+      - DEFAULT_ORG_NAME=${DEFAULT_ORG_NAME:-XiTester}
+      - DEFAULT_ORG_DESCRIPTION=${DEFAULT_ORG_DESCRIPTION:-Default organization}
       # LLM API Keys (set in Coolify UI)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_API_SECRET=${GEMINI_API_SECRET}
@@ -85,6 +96,14 @@ services:
     environment:
       # Database Settings
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      # Authentication Settings (needed for user context in tasks)
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xitester.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
+      - ADMIN_NAME=${ADMIN_NAME:-Admin User}
+      - DEFAULT_ORG_NAME=${DEFAULT_ORG_NAME:-XiTester}
+      - DEFAULT_ORG_DESCRIPTION=${DEFAULT_ORG_DESCRIPTION:-Default organization}
       # LLM API Keys (set in Coolify UI)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}

@@ -1,15 +1,19 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { config } from '../config';
-
-const API_BASE = config.API_URL;
+import { authApi, type User, type Organization, type UserRole, type LoginResponse } from '../services/authApi';
 
 interface AuthContextType {
     token: string | null;
+    user: User | null;
+    organization: Organization | null;
+    role: UserRole | null;
     isAuthenticated: boolean;
     isLoading: boolean;
-    login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    isOwner: boolean;
+    login: (email: string, password: string, organizationId?: string) => Promise<{ success: boolean; error?: string; needsOrgSelection?: boolean }>;
     logout: () => void;
+    switchOrganization: (organizationId: string) => Promise<{ success: boolean; error?: string }>;
+    refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -18,63 +22,120 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [token, setToken] = useState<string | null>(() => {
         return localStorage.getItem('auth_token');
     });
+    const [user, setUser] = useState<User | null>(null);
+    const [organization, setOrganization] = useState<Organization | null>(null);
+    const [role, setRole] = useState<UserRole | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const navigate = useNavigate();
 
-    useEffect(() => {
-        // Validate token on mount
-        const storedToken = localStorage.getItem('auth_token');
-        if (storedToken) {
-            setToken(storedToken);
-        }
-        setIsLoading(false);
+    const clearAuth = useCallback(() => {
+        localStorage.removeItem('auth_token');
+        setToken(null);
+        setUser(null);
+        setOrganization(null);
+        setRole(null);
     }, []);
 
-    const login = useCallback(async (email: string, password: string) => {
+    const refreshUser = useCallback(async () => {
+        const storedToken = localStorage.getItem('auth_token');
+        if (!storedToken) {
+            clearAuth();
+            return;
+        }
+
         try {
-            const response = await fetch(`${API_BASE}/api/auth/login`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ email, password }),
-            });
+            const response = await authApi.getCurrentUser();
+            setUser(response.user);
+            setOrganization(response.organization);
+            setRole(response.role);
+        } catch {
+            clearAuth();
+        }
+    }, [clearAuth]);
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                return {
-                    success: false,
-                    error: errorData.detail || 'Invalid credentials'
-                };
+    useEffect(() => {
+        const initAuth = async () => {
+            const storedToken = localStorage.getItem('auth_token');
+            if (storedToken) {
+                setToken(storedToken);
+                try {
+                    const response = await authApi.getCurrentUser();
+                    setUser(response.user);
+                    setOrganization(response.organization);
+                    setRole(response.role);
+                } catch {
+                    clearAuth();
+                }
             }
+            setIsLoading(false);
+        };
 
-            const data = await response.json();
-            const newToken = data.access_token;
+        initAuth();
+    }, [clearAuth]);
 
-            localStorage.setItem('auth_token', newToken);
-            setToken(newToken);
+    const login = useCallback(async (email: string, password: string, organizationId?: string) => {
+        try {
+            const response: LoginResponse = await authApi.login(email, password, organizationId);
+            
+            localStorage.setItem('auth_token', response.access_token);
+            setToken(response.access_token);
+            setUser(response.user);
+            setOrganization(response.organization);
+            setRole(response.role);
 
             return { success: true };
-        } catch (error) {
+        } catch (error: unknown) {
+            const err = error as { status?: number; message?: string };
+            if (err.status === 403 && err.message?.includes('not a member')) {
+                return {
+                    success: false,
+                    error: 'You are not a member of any organization. Please contact an admin to add you.'
+                };
+            }
             return {
                 success: false,
-                error: 'Network error. Please try again.'
+                error: err.message || 'Login failed'
             };
         }
     }, []);
 
     const logout = useCallback(() => {
-        localStorage.removeItem('auth_token');
-        setToken(null);
+        clearAuth();
         navigate('/');
-    }, [navigate]);
+    }, [navigate, clearAuth]);
+
+    const switchOrganization = useCallback(async (organizationId: string) => {
+        try {
+            const response = await authApi.switchOrganization(organizationId);
+            
+            localStorage.setItem('auth_token', response.access_token);
+            setToken(response.access_token);
+            setUser(response.user);
+            setOrganization(response.organization);
+            setRole(response.role);
+
+            return { success: true };
+        } catch (error: unknown) {
+            const err = error as { message?: string };
+            return {
+                success: false,
+                error: err.message || 'Failed to switch organization'
+            };
+        }
+    }, []);
 
     const value: AuthContextType = {
         token,
-        isAuthenticated: !!token,
+        user,
+        organization,
+        role,
+        isAuthenticated: !!token && !!user,
         isLoading,
+        isOwner: role === 'owner',
         login,
         logout,
+        switchOrganization,
+        refreshUser,
     };
 
     return (
@@ -92,17 +153,10 @@ export function useAuth() {
     return context;
 }
 
-/**
- * Get the current auth token for API calls.
- * Returns null if not authenticated.
- */
 export function getAuthToken(): string | null {
     return localStorage.getItem('auth_token');
 }
 
-/**
- * Handle 401 responses by clearing token and redirecting to login.
- */
 export function handleUnauthorized(): void {
     localStorage.removeItem('auth_token');
     window.location.href = '/';

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.deps import User, get_current_user
+from app.deps import AuthenticatedUser, get_current_user
 from app.models import BenchmarkModelRun, BenchmarkSession, TestSession, TestStep
 from app.schemas import (
 	BenchmarkModelRunResponse,
@@ -40,12 +40,14 @@ def generate_title_from_prompt(prompt: str) -> str:
 @router.get("/sessions", response_model=list[BenchmarkSessionListResponse])
 async def list_benchmark_sessions(
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""List all benchmark sessions ordered by creation date (newest first)."""
 	from sqlalchemy import func
 
-	sessions = db.query(BenchmarkSession).order_by(
+	sessions = db.query(BenchmarkSession).filter(
+		BenchmarkSession.organization_id == current_user.organization_id
+	).order_by(
 		BenchmarkSession.created_at.desc()
 	).all()
 
@@ -75,7 +77,7 @@ async def list_benchmark_sessions(
 async def create_benchmark_session(
 	request: CreateBenchmarkRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Create a new benchmark session with selected models."""
 	if len(request.models) > 3:
@@ -98,7 +100,9 @@ async def create_benchmark_session(
 		selected_models=request.models,
 		headless=request.headless,
 		mode=request.mode,
-		status="pending"
+		status="pending",
+		organization_id=current_user.organization_id,
+		user_id=current_user.id,
 	)
 	db.add(benchmark_session)
 	db.commit()
@@ -122,7 +126,7 @@ async def create_benchmark_session(
 async def get_benchmark_session(
 	benchmark_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get a benchmark session by ID with all model runs."""
 	# Expire all to ensure we get fresh data from DB
@@ -143,7 +147,7 @@ async def get_benchmark_session(
 async def delete_benchmark_session(
 	benchmark_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Delete a benchmark session and all related data."""
 	from app.models import ExecutionLog, StepAction
@@ -203,7 +207,7 @@ async def delete_benchmark_session(
 async def start_benchmark(
 	benchmark_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Start all model runs for a benchmark session in parallel via Celery."""
 	from app.tasks.benchmark import run_benchmark_model
@@ -260,7 +264,7 @@ async def start_benchmark(
 async def stop_benchmark(
 	benchmark_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Stop all running model runs for a benchmark session."""
 	from app.celery_app import celery_app
@@ -306,7 +310,7 @@ async def get_model_run(
 	benchmark_id: str,
 	model_run_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get a specific model run by ID."""
 	model_run = db.query(BenchmarkModelRun).filter(
@@ -324,7 +328,7 @@ async def get_model_run_steps(
 	benchmark_id: str,
 	model_run_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get all steps for a specific model run."""
 	model_run = db.query(BenchmarkModelRun).filter(
@@ -354,7 +358,7 @@ async def get_model_run_steps(
 async def start_benchmark_plan(
 	benchmark_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Start plan generation for all models (Plan mode only)."""
 	from app.tasks.benchmark import benchmark_generate_plan
@@ -409,7 +413,7 @@ async def approve_model_plan(
 	benchmark_id: str,
 	model_run_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Approve the generated plan for a model run."""
 	model_run = db.query(BenchmarkModelRun).filter(
@@ -445,7 +449,7 @@ async def reject_model_plan(
 	benchmark_id: str,
 	model_run_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Reject the generated plan for a model run."""
 	model_run = db.query(BenchmarkModelRun).filter(
@@ -477,7 +481,7 @@ async def reject_model_plan(
 async def execute_approved_plans(
 	benchmark_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Execute all approved model runs."""
 	from app.tasks.benchmark import benchmark_execute_model
@@ -529,7 +533,7 @@ class ActRequest(BaseModel):
 async def start_benchmark_act(
 	benchmark_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Initialize act mode for a benchmark session - creates test sessions for each model."""
 	benchmark_session = db.query(BenchmarkSession).filter(
@@ -571,7 +575,7 @@ async def act_on_model_run(
 	model_run_id: str,
 	request: ActRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Execute a single action on a specific model run (Act mode)."""
 	model_run = db.query(BenchmarkModelRun).filter(
@@ -610,7 +614,7 @@ async def get_model_run_plan(
 	benchmark_id: str,
 	model_run_id: str,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get the generated plan for a model run."""
 	from app.schemas import TestPlanResponse
@@ -650,7 +654,7 @@ async def continue_model_run(
 	model_run_id: str,
 	request: ContinueModelRunRequest,
 	db: Session = Depends(get_db),
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Continue a model run with a new prompt (for per-model chat interaction)."""
 	from app.services.plan_service import generate_plan

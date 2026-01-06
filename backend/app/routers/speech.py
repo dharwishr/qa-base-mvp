@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.deps import User, get_current_user
+from app.deps import AuthenticatedUser, get_current_user
 from app.schemas import SpeechToTextRequest, SpeechToTextResponse
 from app.services import speech_service
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/speech", tags=["speech"])
 @router.post("/transcribe", response_model=SpeechToTextResponse)
 async def transcribe_audio(
 	request: SpeechToTextRequest,
-	current_user: User = Depends(get_current_user),
+	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Transcribe audio to text using Google Cloud Speech-to-Text.
 

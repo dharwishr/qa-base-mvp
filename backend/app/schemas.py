@@ -2,7 +2,163 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
+
+
+# ============================================
+# User Role Enum
+# ============================================
+
+class UserRole(str, Enum):
+	"""User roles in an organization."""
+	OWNER = "owner"
+	MEMBER = "member"
+
+
+# ============================================
+# Organization Schemas
+# ============================================
+
+class OrganizationBase(BaseModel):
+	"""Base organization schema."""
+	name: str = Field(..., min_length=1, max_length=256, description="Organization name")
+	description: str | None = Field(None, description="Organization description")
+
+
+class OrganizationCreate(OrganizationBase):
+	"""Schema for creating organization (backend only)."""
+	owner_email: str = Field(..., description="Email of the owner user")
+
+
+class OrganizationUpdate(BaseModel):
+	"""Schema for updating organization."""
+	name: str | None = Field(None, min_length=1, max_length=256, description="Organization name")
+	description: str | None = Field(None, description="Organization description")
+
+
+class OrganizationResponse(OrganizationBase):
+	"""Response schema for organization."""
+	id: str
+	slug: str
+	created_at: datetime
+	updated_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class OrganizationWithRoleResponse(OrganizationResponse):
+	"""Organization response including user's role."""
+	role: UserRole
+
+
+# ============================================
+# User Schemas
+# ============================================
+
+class UserBase(BaseModel):
+	"""Base user schema."""
+	name: str = Field(..., min_length=1, max_length=256, description="User name")
+	email: str = Field(..., description="User email")
+
+
+class UserCreate(UserBase):
+	"""Schema for creating a user (signup)."""
+	password: str = Field(..., min_length=8, description="User password (min 8 characters)")
+
+
+class UserUpdate(BaseModel):
+	"""Schema for updating user."""
+	name: str | None = Field(None, min_length=1, max_length=256)
+
+
+class UserResponse(BaseModel):
+	"""Response schema for user."""
+	id: str
+	name: str
+	email: str
+	created_at: datetime
+	updated_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class UserWithRoleResponse(UserResponse):
+	"""User response including role in organization."""
+	role: UserRole
+
+
+class UserInOrganizationResponse(BaseModel):
+	"""User info as seen in an organization."""
+	id: str
+	name: str
+	email: str
+	role: UserRole
+	joined_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+# ============================================
+# User Organization Association Schemas
+# ============================================
+
+class AddUserToOrganizationRequest(BaseModel):
+	"""Request to add a user to an organization."""
+	email: str = Field(..., description="Email of the user to add")
+	role: UserRole = Field(default=UserRole.MEMBER, description="Role for the user")
+
+
+class UpdateUserRoleRequest(BaseModel):
+	"""Request to update a user's role in an organization."""
+	role: UserRole = Field(..., description="New role for the user")
+
+
+# ============================================
+# Auth Schemas (Login/Signup)
+# ============================================
+
+class SignupRequest(BaseModel):
+	"""Request for user signup."""
+	name: str = Field(..., min_length=1, max_length=256, description="User name")
+	email: str = Field(..., description="User email")
+	password: str = Field(..., min_length=8, description="User password")
+
+
+class SignupResponse(BaseModel):
+	"""Response after successful signup."""
+	user: UserResponse
+	message: str = "User created successfully. Please wait for an admin to add you to an organization."
+
+
+class LoginRequest(BaseModel):
+	"""Request for user login."""
+	email: str
+	password: str
+	organization_id: str | None = Field(None, description="Organization to log into (required if user is in multiple orgs)")
+
+
+class LoginResponse(BaseModel):
+	"""Response after successful login."""
+	access_token: str
+	token_type: str = "bearer"
+	user: UserResponse
+	organization: OrganizationResponse
+	role: UserRole
+
+
+class SelectOrganizationRequest(BaseModel):
+	"""Request to select an organization after login."""
+	organization_id: str
+
+
+class CurrentUserResponse(BaseModel):
+	"""Response for current authenticated user."""
+	user: UserResponse
+	organization: OrganizationResponse
+	role: UserRole
 
 
 # ============================================

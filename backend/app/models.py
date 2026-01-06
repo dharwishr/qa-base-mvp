@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
+import re
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, Boolean
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, Boolean, Enum as SQLEnum, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -12,12 +13,100 @@ def generate_uuid() -> str:
 	return str(uuid4())
 
 
+def generate_slug(name: str) -> str:
+	"""Generate a URL-friendly slug from a name."""
+	slug = name.lower().strip()
+	slug = re.sub(r'[^\w\s-]', '', slug)
+	slug = re.sub(r'[-\s]+', '-', slug)
+	return slug[:50]
+
+
+# ============================================
+# Organization & User Models
+# ============================================
+
+class Organization(Base):
+	"""Organization/tenant model for multi-tenancy."""
+
+	__tablename__ = "organizations"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	name: Mapped[str] = mapped_column(String(256), nullable=False)
+	slug: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+	description: Mapped[str | None] = mapped_column(Text, nullable=True)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	updated_at: Mapped[datetime] = mapped_column(
+		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+	)
+
+	# Relationships
+	user_associations: Mapped[list["UserOrganization"]] = relationship(
+		"UserOrganization", back_populates="organization", cascade="all, delete-orphan"
+	)
+
+
+class User(Base):
+	"""User model for authentication."""
+
+	__tablename__ = "users"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	name: Mapped[str] = mapped_column(String(256), nullable=False)
+	email: Mapped[str] = mapped_column(String(256), nullable=False, unique=True, index=True)
+	password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	updated_at: Mapped[datetime] = mapped_column(
+		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+	)
+
+	# Relationships
+	organization_associations: Mapped[list["UserOrganization"]] = relationship(
+		"UserOrganization", back_populates="user", cascade="all, delete-orphan"
+	)
+
+
+class UserOrganization(Base):
+	"""Association table for User-Organization many-to-many with role."""
+
+	__tablename__ = "user_organizations"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	user_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+	)
+	organization_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+	)
+	role: Mapped[str] = mapped_column(
+		String(20), nullable=False, default="member"
+	)  # owner | member
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	updated_at: Mapped[datetime] = mapped_column(
+		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+	)
+
+	# Unique constraint: user can only be in an org once
+	__table_args__ = (
+		UniqueConstraint('user_id', 'organization_id', name='uq_user_organization'),
+	)
+
+	# Relationships
+	user: Mapped["User"] = relationship("User", back_populates="organization_associations")
+	organization: Mapped["Organization"] = relationship("Organization", back_populates="user_associations")
+
+
 class TestSession(Base):
 	"""Main session for a test case analysis."""
 
 	__tablename__ = "test_sessions"
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	organization_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+	)
+	user_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+	)
 	prompt: Mapped[str] = mapped_column(Text, nullable=False)
 	title: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Auto-generated from first prompt
 	llm_model: Mapped[str] = mapped_column(
@@ -34,6 +123,8 @@ class TestSession(Base):
 	)
 
 	# Relationships
+	organization: Mapped["Organization | None"] = relationship("Organization")
+	user: Mapped["User | None"] = relationship("User")
 	plan: Mapped["TestPlan | None"] = relationship(
 		"TestPlan", back_populates="session", uselist=False
 	)
@@ -152,6 +243,12 @@ class PlaywrightScript(Base):
 	__tablename__ = "playwright_scripts"
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	organization_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+	)
+	user_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+	)
 	session_id: Mapped[str] = mapped_column(
 		String(36), ForeignKey("test_sessions.id"), nullable=False
 	)
@@ -291,6 +388,12 @@ class DiscoverySession(Base):
 	__tablename__ = "discovery_sessions"
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	organization_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+	)
+	user_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+	)
 	url: Mapped[str] = mapped_column(String(2048), nullable=False)  # Target URL to crawl
 	username: Mapped[str | None] = mapped_column(String(256), nullable=True)  # Optional login
 	password: Mapped[str | None] = mapped_column(String(256), nullable=True)
@@ -337,6 +440,12 @@ class BenchmarkSession(Base):
 	__tablename__ = "benchmark_sessions"
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	organization_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True
+	)
+	user_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+	)
 	prompt: Mapped[str] = mapped_column(Text, nullable=False)
 	title: Mapped[str | None] = mapped_column(String(200), nullable=True)
 	selected_models: Mapped[list[str]] = mapped_column(JSON, nullable=False)
