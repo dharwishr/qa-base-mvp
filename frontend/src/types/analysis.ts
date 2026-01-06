@@ -74,7 +74,18 @@ export interface TestSessionListItem {
   created_at: string;
   updated_at: string;
   step_count: number;
+  user_name: string | null;
 }
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export type PaginatedTestSessions = PaginatedResponse<TestSessionListItem>;
 
 export interface ExecuteResponse {
   task_id: string;

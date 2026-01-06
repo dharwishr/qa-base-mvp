@@ -465,6 +465,11 @@ export default function ExecuteTab({
                       <span className="text-xs text-muted-foreground">
                         {formatDate(run.created_at)}
                       </span>
+                      {run.user_name && (
+                        <span className="text-xs text-muted-foreground">
+                          by {run.user_name}
+                        </span>
+                      )}
                     </div>
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>

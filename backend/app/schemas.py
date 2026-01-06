@@ -312,6 +312,15 @@ class TestSessionListResponse(BaseModel):
 		from_attributes = True
 
 
+class PaginatedTestSessionsResponse(BaseModel):
+	"""Paginated response for test sessions list."""
+	items: list[TestSessionListResponse]
+	total: int = Field(..., description="Total number of items matching the query")
+	page: int = Field(..., description="Current page number (1-indexed)")
+	page_size: int = Field(..., description="Number of items per page")
+	total_pages: int = Field(..., description="Total number of pages")
+
+
 class UpdateSessionTitleRequest(BaseModel):
 	"""Request to update a session's title."""
 	title: str = Field(..., min_length=1, max_length=100, description="The new title for the session")
@@ -570,6 +579,7 @@ class PlaywrightScriptListResponse(BaseModel):
 	last_run_status: str | None = None
 	created_at: datetime
 	updated_at: datetime
+	user_name: str | None = None
 
 	class Config:
 		from_attributes = True

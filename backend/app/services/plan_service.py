@@ -12,6 +12,29 @@ logger = logging.getLogger(__name__)
 # Create Gemini client
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
+
+def should_include_verification(prompt: str) -> bool:
+	"""Check if the user's prompt indicates they want verification steps."""
+	verification_keywords = [
+		'verify', 'assert', 'check', 'validate', 'confirm', 'ensure',
+		'verification', 'assertion', 'validation', 'confirmation'
+	]
+	prompt_lower = prompt.lower()
+	return any(keyword in prompt_lower for keyword in verification_keywords)
+
+VERIFICATION_INSTRUCTIONS = """
+VERIFICATION STEPS (action_type="verify"):
+Include verification steps after key actions to validate expected outcomes. This is essential for proper QA test cases.
+
+Examples of verify steps:
+- Verify text is visible: {{"action_type": "verify", "description": "Verify login success message", "details": "Assert text 'Welcome back' is visible on the page"}}
+- Verify element appears: {{"action_type": "verify", "description": "Verify dashboard loaded", "details": "Assert the dashboard container element is visible"}}
+- Verify URL changed: {{"action_type": "verify", "description": "Verify redirected to dashboard", "details": "Assert URL contains '/dashboard'"}}
+- Verify form value: {{"action_type": "verify", "description": "Verify search input populated", "details": "Assert the search field contains 'test query'"}}
+
+QA BEST PRACTICE: Always include at least one verification step after completing a key action (e.g., after login verify success message appears, after form submit verify confirmation).
+"""
+
 PLAN_GENERATION_PROMPT = """You are a QA automation expert. Given a user's test case description, create a detailed step-by-step plan for browser automation testing.
 
 {execution_context}
@@ -31,19 +54,8 @@ AVAILABLE ACTION TYPES:
 - wait: Wait for a specified time
 - hover: Hover over an element
 - select: Select option from dropdown
-- verify: Assert/verify expected results (CRITICAL for QA testing)
-
-VERIFICATION STEPS (action_type="verify"):
-Include verification steps after key actions to validate expected outcomes. This is essential for proper QA test cases.
-
-Examples of verify steps:
-- Verify text is visible: {{"action_type": "verify", "description": "Verify login success message", "details": "Assert text 'Welcome back' is visible on the page"}}
-- Verify element appears: {{"action_type": "verify", "description": "Verify dashboard loaded", "details": "Assert the dashboard container element is visible"}}
-- Verify URL changed: {{"action_type": "verify", "description": "Verify redirected to dashboard", "details": "Assert URL contains '/dashboard'"}}
-- Verify form value: {{"action_type": "verify", "description": "Verify search input populated", "details": "Assert the search field contains 'test query'"}}
-
-QA BEST PRACTICE: Always include at least one verification step after completing a key action (e.g., after login verify success message appears, after form submit verify confirmation).
-
+- verify: Assert/verify expected results (only if user requests verification)
+{verification_section}
 Return the response in the following JSON format:
 {{
     "plan_text": "A human-readable summary of the test plan",
@@ -59,17 +71,11 @@ Return the response in the following JSON format:
             "description": "Click login button",
             "action_type": "click",
             "details": "Find and click the login button"
-        }},
-        {{
-            "step_number": 3,
-            "description": "Verify login form appears",
-            "action_type": "verify",
-            "details": "Assert the login form with username and password fields is visible"
         }}
     ]
 }}
 
-Be specific and practical. Include verification steps after every key action to ensure proper test coverage.
+Be specific and practical.{verification_reminder}
 {navigation_warning}
 """
 
@@ -147,11 +153,18 @@ The browser is already positioned on the correct page. Start directly with the u
 			navigation_warning = ""
 			logger.info(f"Generating NEW session plan for: {plan_prompt[:100]}...")
 
+		# Only include verification instructions if user explicitly requests verification
+		include_verification = should_include_verification(plan_prompt)
+		verification_section = VERIFICATION_INSTRUCTIONS if include_verification else ""
+		verification_reminder = " Include verification steps after every key action to ensure proper test coverage." if include_verification else ""
+
 		prompt = PLAN_GENERATION_PROMPT.format(
 			execution_context=execution_context,
 			prompt=plan_prompt,
 			continuation_instruction=continuation_instruction,
-			navigation_warning=navigation_warning
+			navigation_warning=navigation_warning,
+			verification_section=verification_section,
+			verification_reminder=verification_reminder
 		)
 		logger.debug(f"Full prompt to LLM:\n{prompt}")
 
@@ -231,11 +244,18 @@ The browser is already positioned on the correct page. Start directly with the u
 			navigation_warning = ""
 			logger.info(f"Generating NEW session plan for: {plan_prompt[:100]}...")
 
+		# Only include verification instructions if user explicitly requests verification
+		include_verification = should_include_verification(plan_prompt)
+		verification_section = VERIFICATION_INSTRUCTIONS if include_verification else ""
+		verification_reminder = " Include verification steps after every key action to ensure proper test coverage." if include_verification else ""
+
 		prompt = PLAN_GENERATION_PROMPT.format(
 			execution_context=execution_context,
 			prompt=plan_prompt,
 			continuation_instruction=continuation_instruction,
-			navigation_warning=navigation_warning
+			navigation_warning=navigation_warning,
+			verification_section=verification_section,
+			verification_reminder=verification_reminder
 		)
 		logger.debug(f"Full prompt to LLM:\n{prompt}")
 

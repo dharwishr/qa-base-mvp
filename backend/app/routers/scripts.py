@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import AuthenticatedUser, get_current_user
-from app.models import PlaywrightScript, TestRun, RunStep, TestSession
+from app.models import PlaywrightScript, TestRun, RunStep, TestSession, User
 from app.tasks.test_runs import execute_test_run
 from app.schemas import (
 	CreateScriptRequest,
@@ -304,16 +304,21 @@ async def list_scripts(
 	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""List all Playwright scripts."""
-	scripts = db.query(PlaywrightScript).filter(
+	scripts = db.query(
+		PlaywrightScript,
+		User.name.label('user_name')
+	).outerjoin(
+		User, PlaywrightScript.user_id == User.id
+	).filter(
 		PlaywrightScript.organization_id == current_user.organization_id
 	).order_by(PlaywrightScript.created_at.desc()).all()
-	
+
 	result = []
-	for script in scripts:
+	for script, user_name in scripts:
 		step_count = len(script.steps_json) if script.steps_json else 0
 		run_count = len(script.runs) if script.runs else 0
 		last_run_status = script.runs[0].status if script.runs else None
-		
+
 		result.append(PlaywrightScriptListResponse(
 			id=script.id,
 			session_id=script.session_id,
@@ -324,8 +329,9 @@ async def list_scripts(
 			last_run_status=last_run_status,
 			created_at=script.created_at,
 			updated_at=script.updated_at,
+			user_name=user_name,
 		))
-	
+
 	return result
 
 

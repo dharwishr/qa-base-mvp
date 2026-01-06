@@ -171,6 +171,8 @@ export interface TestRun {
   video_path: string | null;
   duration_ms: number | null;
   celery_task_id: string | null;  // Task ID for tracking async execution
+  // User info
+  user_name: string | null;
 }
 
 export interface PlaywrightScript {
@@ -194,6 +196,7 @@ export interface PlaywrightScriptListItem {
   last_run_status: RunStatus | null;
   created_at: string;
   updated_at: string;
+  user_name: string | null;
 }
 
 export interface CreateScriptRequest {

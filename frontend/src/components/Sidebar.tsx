@@ -7,7 +7,8 @@ import {
     PlayCircle,
     FileText,
     Boxes,
-    FlaskConical
+    FlaskConical,
+    Building2
 } from "lucide-react"
 
 interface SidebarItemProps {
@@ -80,7 +81,18 @@ export const Sidebar = ({ activePath }: { activePath?: string }) => {
                     active={activePath?.startsWith('/benchmark')}
                     onClick={() => navigate('/benchmark')}
                 />
-                <SidebarItem icon={Settings} label="Settings" />
+                <SidebarItem
+                    icon={Building2}
+                    label="Organization"
+                    active={activePath === '/organization'}
+                    onClick={() => navigate('/organization')}
+                />
+                <SidebarItem
+                    icon={Settings}
+                    label="Settings"
+                    active={activePath === '/settings'}
+                    onClick={() => navigate('/settings')}
+                />
             </nav>
 
             <div className="mt-auto p-2">

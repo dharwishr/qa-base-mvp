@@ -225,6 +225,16 @@ class BrowserService:
 			state = history_item.state
 			results = history_item.result
 
+			# Skip registration for "done" step - it signals completion but shouldn't be stored
+			if model_output and model_output.action:
+				action_names = [
+					next(iter(action.model_dump(exclude_unset=True).keys()), "unknown")
+					for action in model_output.action
+				]
+				if all(name == "done" for name in action_names):
+					logger.info("Skipping 'done' step registration - test case completed")
+					return
+
 			# Copy screenshot to persistent storage
 			screenshot_filename = None
 			if state and state.screenshot_path:
@@ -654,6 +664,16 @@ class BrowserServiceSync:
 			model_output = history_item.model_output
 			state = history_item.state
 			results = history_item.result
+
+			# Skip registration for "done" step - it signals completion but shouldn't be stored
+			if model_output and model_output.action:
+				action_names = [
+					next(iter(action.model_dump(exclude_unset=True).keys()), "unknown")
+					for action in model_output.action
+				]
+				if all(name == "done" for name in action_names):
+					logger.info("Skipping 'done' step registration - test case completed")
+					return
 
 			# Copy screenshot to persistent storage
 			screenshot_filename = None

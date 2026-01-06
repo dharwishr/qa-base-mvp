@@ -1,4 +1,4 @@
-import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestSessionListItem, TestStep, UndoResponse } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestStep, UndoResponse, PaginatedTestSessions } from '../types/analysis';
 import type { PlanStep } from '../types/chat';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse, SystemSettings, NetworkRequest, ConsoleLog, ContainerPoolStats } from '../types/scripts';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
@@ -43,13 +43,24 @@ async function handleResponse<T>(response: Response): Promise<T> {
 
 export const analysisApi = {
   /**
-   * List all test sessions ordered by creation date (newest first).
+   * List test sessions with optional search, status filter, and pagination.
    */
-  async listSessions(): Promise<TestSessionListItem[]> {
-    const response = await fetch(`${API_BASE}/api/analysis/sessions`, {
+  async listSessions(params?: {
+    search?: string;
+    status?: string;
+    page?: number;
+    page_size?: number;
+  }): Promise<PaginatedTestSessions> {
+    const urlParams = new URLSearchParams();
+    if (params?.search) urlParams.set('search', params.search);
+    if (params?.status) urlParams.set('status', params.status);
+    if (params?.page) urlParams.set('page', String(params.page));
+    if (params?.page_size) urlParams.set('page_size', String(params.page_size));
+    const query = urlParams.toString() ? `?${urlParams.toString()}` : '';
+    const response = await fetch(`${API_BASE}/api/analysis/sessions${query}`, {
       headers: getAuthHeaders(),
     });
-    return handleResponse<TestSessionListItem[]>(response);
+    return handleResponse<PaginatedTestSessions>(response);
   },
 
   /**

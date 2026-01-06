@@ -69,12 +69,10 @@ class BrowserSessionResponse(BaseModel):
         if request and session.is_active:
             base_url = str(request.base_url).rstrip("/")
             live_view_url = f"{base_url}/browser/sessions/{session.id}/view"
-            
-            # Build browser-accessible noVNC URL using the request host
+
+            # Use the live_view_url as novnc_url - it handles SSL properly via WebSocket proxy
             if session.novnc_port:
-                # Use the same host as the API request, but with the noVNC port
-                request_host = request.headers.get("host", "localhost").split(":")[0]
-                novnc_url = f"http://{request_host}:{session.novnc_port}/?autoconnect=true&resize=scale"
+                novnc_url = live_view_url
         
         return cls(
             id=session.id,
@@ -329,10 +327,16 @@ async def vnc_websocket_proxy(websocket: WebSocket, session_id: str):
     if not session.novnc_port:
         await websocket.close(code=4004, reason="VNC not available")
         return
-    
+
+    # Determine the correct port for VNC connection
+    # When connecting to container IP (Docker-to-Docker), use internal port 7900
+    # When connecting to localhost, use the mapped host port
+    INTERNAL_NOVNC_PORT = 7900
+    vnc_port = INTERNAL_NOVNC_PORT if session.novnc_host != "127.0.0.1" else session.novnc_port
+
     # noVNC uses websockify on the same port as HTTP
-    vnc_ws_url = f"ws://{session.novnc_host}:{session.novnc_port}/websockify"
-    
+    vnc_ws_url = f"ws://{session.novnc_host}:{vnc_port}/websockify"
+
     logger.info(f"VNC proxy connecting to {vnc_ws_url}")
     
     try:
@@ -460,7 +464,7 @@ async def browser_view(session_id: str, request: Request):
     # Build URL to container's noVNC interface using the request host for browser access
     request_host = request.headers.get("host", "localhost").split(":")[0]
     novnc_url = f"http://{request_host}:{session.novnc_port}/?autoconnect=true&resize=scale"
-    
+
     # Serve a page that embeds the noVNC interface in an iframe
     html_content = f"""
     <!DOCTYPE html>
@@ -471,7 +475,7 @@ async def browser_view(session_id: str, request: Request):
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ 
+            body {{
                 font-family: system-ui, -apple-system, sans-serif;
                 background: #1a1a2e;
                 color: white;
@@ -539,7 +543,7 @@ async def browser_view(session_id: str, request: Request):
             </div>
         </div>
         <iframe id="vnc-frame" src="{novnc_url}" allow="fullscreen"></iframe>
-        
+
         <script>
             function toggleFullscreen() {{
                 const frame = document.getElementById('vnc-frame');
@@ -549,7 +553,7 @@ async def browser_view(session_id: str, request: Request):
                     frame.requestFullscreen();
                 }}
             }}
-            
+
             function reload() {{
                 const frame = document.getElementById('vnc-frame');
                 frame.src = frame.src;
@@ -558,5 +562,5 @@ async def browser_view(session_id: str, request: Request):
     </body>
     </html>
     """
-    
+
     return HTMLResponse(content=html_content)

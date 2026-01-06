@@ -230,6 +230,11 @@ export default function ScriptDetail() {
                                             <span className="text-xs text-muted-foreground">
                                                 {formatDate(run.created_at)}
                                             </span>
+                                            {run.user_name && (
+                                                <span className="text-xs text-muted-foreground">
+                                                    by {run.user_name}
+                                                </span>
+                                            )}
                                         </div>
                                         {calculateRunDuration(run.started_at, run.completed_at) && (
                                             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">

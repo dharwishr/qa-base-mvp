@@ -164,6 +164,7 @@ export default function Scripts() {
                                     <th className="text-left py-3 px-4 font-medium text-sm">Steps</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Runs</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Last Run</th>
+                                    <th className="text-left py-3 px-4 font-medium text-sm">Created By</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Created</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Actions</th>
                                 </tr>
@@ -200,6 +201,9 @@ export default function Scripts() {
                                                     {STATUS_ICONS[status]}
                                                     {STATUS_LABELS[status]}
                                                 </span>
+                                            </td>
+                                            <td className="py-3 px-4 text-sm text-muted-foreground">
+                                                {script.user_name || '-'}
                                             </td>
                                             <td className="py-3 px-4 text-sm text-muted-foreground">
                                                 {formatDate(script.created_at)}

@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import { Plus, RefreshCw, Trash2, Pencil, Check, X } from "lucide-react"
+import { Plus, RefreshCw, Trash2, Pencil, Check, X, Search, ChevronLeft, ChevronRight } from "lucide-react"
 import { analysisApi } from "@/services/api"
 import type { TestSessionListItem, LlmModel } from "@/types/analysis"
 
@@ -48,6 +48,23 @@ function truncatePrompt(prompt: string, maxLength: number = 60): string {
     return prompt.substring(0, maxLength) + '...'
 }
 
+// Custom debounce hook
+function useDebounce<T>(value: T, delay: number): T {
+    const [debouncedValue, setDebouncedValue] = useState<T>(value)
+
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            setDebouncedValue(value)
+        }, delay)
+
+        return () => {
+            clearTimeout(handler)
+        }
+    }, [value, delay])
+
+    return debouncedValue
+}
+
 export default function TestCases() {
     const navigate = useNavigate()
     const [sessions, setSessions] = useState<TestSessionListItem[]>([])
@@ -56,18 +73,44 @@ export default function TestCases() {
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editingTitle, setEditingTitle] = useState<string>("")
 
-    const fetchSessions = async () => {
+    // Search and pagination state
+    const [searchQuery, setSearchQuery] = useState("")
+    const [page, setPage] = useState(1)
+    const [pageSize] = useState(20)
+    const [total, setTotal] = useState(0)
+    const [totalPages, setTotalPages] = useState(1)
+
+    // Debounce search query
+    const debouncedSearch = useDebounce(searchQuery, 300)
+
+    const fetchSessions = useCallback(async (search?: string, pageNum?: number) => {
         setLoading(true)
         setError(null)
         try {
-            const data = await analysisApi.listSessions()
-            setSessions(data)
+            const data = await analysisApi.listSessions({
+                search: search || undefined,
+                page: pageNum ?? page,
+                page_size: pageSize,
+            })
+            setSessions(data.items)
+            setTotal(data.total)
+            setTotalPages(data.total_pages)
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to load sessions')
         } finally {
             setLoading(false)
         }
-    }
+    }, [page, pageSize])
+
+    // Fetch on mount and when search/page changes
+    useEffect(() => {
+        fetchSessions(debouncedSearch, page)
+    }, [debouncedSearch, page, fetchSessions])
+
+    // Reset to page 1 when search changes
+    useEffect(() => {
+        setPage(1)
+    }, [debouncedSearch])
 
     const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
         e.stopPropagation() // Prevent row click navigation
@@ -76,7 +119,8 @@ export default function TestCases() {
         }
         try {
             await analysisApi.deleteSession(sessionId)
-            setSessions(prev => prev.filter(s => s.id !== sessionId))
+            // Refresh the list after deletion
+            fetchSessions(debouncedSearch, page)
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to delete session')
         }
@@ -111,9 +155,17 @@ export default function TestCases() {
         setEditingTitle("")
     }
 
-    useEffect(() => {
-        fetchSessions()
-    }, [])
+    const handlePrevPage = () => {
+        if (page > 1) setPage(page - 1)
+    }
+
+    const handleNextPage = () => {
+        if (page < totalPages) setPage(page + 1)
+    }
+
+    const handleRefresh = () => {
+        fetchSessions(debouncedSearch, page)
+    }
 
     return (
         <div className="space-y-6 p-6">
@@ -127,7 +179,7 @@ export default function TestCases() {
                 </div>
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={fetchSessions}
+                        onClick={handleRefresh}
                         disabled={loading}
                         className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-3"
                     >
@@ -142,6 +194,18 @@ export default function TestCases() {
                         New Test Case
                     </button>
                 </div>
+            </div>
+
+            {/* Search Bar */}
+            <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                    type="text"
+                    placeholder="Search test cases by title or prompt..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-primary bg-background"
+                />
             </div>
 
             {/* Error State */}
@@ -159,14 +223,18 @@ export default function TestCases() {
                     </div>
                 ) : sessions.length === 0 ? (
                     <div className="p-8 text-center">
-                        <p className="text-muted-foreground mb-4">No test cases yet</p>
-                        <button
-                            onClick={() => navigate('/test-analysis')}
-                            className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
-                        >
-                            <Plus className="h-4 w-4 mr-2" />
-                            Create your first test case
-                        </button>
+                        <p className="text-muted-foreground mb-4">
+                            {searchQuery ? 'No test cases match your search' : 'No test cases yet'}
+                        </p>
+                        {!searchQuery && (
+                            <button
+                                onClick={() => navigate('/test-analysis')}
+                                className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
+                            >
+                                <Plus className="h-4 w-4 mr-2" />
+                                Create your first test case
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
@@ -177,6 +245,7 @@ export default function TestCases() {
                                     <th className="text-left py-3 px-4 font-medium text-sm">Status</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">LLM</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Steps</th>
+                                    <th className="text-left py-3 px-4 font-medium text-sm">Created By</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Created</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Actions</th>
                                 </tr>
@@ -251,6 +320,9 @@ export default function TestCases() {
                                             {session.step_count}
                                         </td>
                                         <td className="py-3 px-4 text-sm text-muted-foreground">
+                                            {session.user_name || '-'}
+                                        </td>
+                                        <td className="py-3 px-4 text-sm text-muted-foreground">
                                             {formatDate(session.created_at)}
                                         </td>
                                         <td className="py-3 px-4">
@@ -266,6 +338,36 @@ export default function TestCases() {
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                )}
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-between border-t px-4 py-3">
+                        <div className="text-sm text-muted-foreground">
+                            Showing {((page - 1) * pageSize) + 1} - {Math.min(page * pageSize, total)} of {total} test cases
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={handlePrevPage}
+                                disabled={page === 1}
+                                className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-8 px-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <ChevronLeft className="h-4 w-4 mr-1" />
+                                Previous
+                            </button>
+                            <span className="text-sm text-muted-foreground px-2">
+                                Page {page} of {totalPages}
+                            </span>
+                            <button
+                                onClick={handleNextPage}
+                                disabled={page === totalPages}
+                                className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-8 px-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Next
+                                <ChevronRight className="h-4 w-4 ml-1" />
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>

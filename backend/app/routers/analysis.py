@@ -38,6 +38,7 @@ from app.schemas import (
 	TestRunResponse,
 	TestSessionDetailResponse,
 	TestSessionListResponse,
+	PaginatedTestSessionsResponse,
 	TestSessionResponse,
 	TestStepResponse,
 	ToggleActionEnabledRequest,
@@ -189,31 +190,85 @@ async def prewarm_browser_session_async(session_id: str, headless: bool) -> None
 		# Don't raise - pre-warming is best-effort
 
 
-@router.get("/sessions", response_model=list[TestSessionListResponse])
+@router.get("/sessions", response_model=PaginatedTestSessionsResponse)
 async def list_sessions(
+	search: str | None = None,
+	status: str | None = None,
+	page: int = 1,
+	page_size: int = 20,
 	db: Session = Depends(get_db),
 	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-	"""Get all test sessions ordered by creation date (newest first)."""
-	from sqlalchemy import func
+	"""Get paginated test sessions with optional search and status filter.
+	
+	Args:
+		search: Optional search string to filter by title or prompt (case-insensitive)
+		status: Optional status filter
+		page: Page number (1-indexed, default 1)
+		page_size: Items per page (default 20, max 100)
+	"""
+	from sqlalchemy import func, or_
 	from app.models import User
+	import math
 
-	# Query sessions with step count and user info, filtered by organization
-	sessions = db.query(
+	# Validate pagination params
+	page = max(1, page)
+	page_size = min(max(1, page_size), 100)
+
+	# Base query with join for step count and user info
+	base_query = db.query(
 		TestSession,
 		func.count(TestStep.id).label('step_count'),
 		User.name.label('user_name'),
 		User.email.label('user_email')
 	).filter(
 		TestSession.organization_id == current_user.organization_id
-	).outerjoin(TestStep).outerjoin(User, TestSession.user_id == User.id).group_by(
+	).outerjoin(TestStep).outerjoin(User, TestSession.user_id == User.id)
+
+	# Apply search filter if provided
+	if search:
+		search_pattern = f"%{search}%"
+		base_query = base_query.filter(
+			or_(
+				TestSession.title.ilike(search_pattern),
+				TestSession.prompt.ilike(search_pattern)
+			)
+		)
+
+	# Apply status filter if provided
+	if status:
+		base_query = base_query.filter(TestSession.status == status)
+
+	# Get total count (before pagination) - need separate count query
+	count_query = db.query(func.count(TestSession.id)).filter(
+		TestSession.organization_id == current_user.organization_id
+	)
+	if search:
+		search_pattern = f"%{search}%"
+		count_query = count_query.filter(
+			or_(
+				TestSession.title.ilike(search_pattern),
+				TestSession.prompt.ilike(search_pattern)
+			)
+		)
+	if status:
+		count_query = count_query.filter(TestSession.status == status)
+	total = count_query.scalar()
+
+	# Apply grouping, ordering, and pagination
+	sessions = base_query.group_by(
 		TestSession.id, User.name, User.email
-	).order_by(TestSession.created_at.desc()).all()
+	).order_by(
+		TestSession.created_at.desc()
+	).offset((page - 1) * page_size).limit(page_size).all()
+
+	# Calculate total pages
+	total_pages = math.ceil(total / page_size) if total > 0 else 1
 
 	# Convert to response format
-	result = []
+	items = []
 	for session, step_count, user_name, user_email in sessions:
-		result.append(TestSessionListResponse(
+		items.append(TestSessionListResponse(
 			id=session.id,
 			prompt=session.prompt,
 			title=session.title,
@@ -225,7 +280,14 @@ async def list_sessions(
 			user_name=user_name,
 			user_email=user_email
 		))
-	return result
+
+	return PaginatedTestSessionsResponse(
+		items=items,
+		total=total,
+		page=page,
+		page_size=page_size,
+		total_pages=total_pages
+	)
 
 
 @router.post("/sessions", response_model=TestSessionResponse)

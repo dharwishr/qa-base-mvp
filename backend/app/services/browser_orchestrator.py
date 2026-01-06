@@ -349,10 +349,13 @@ class BrowserOrchestrator:
                     networks = network_settings.get("Networks", {})
                     if self.network_name in networks:
                         session.container_ip = networks[self.network_name].get("IPAddress")
-                    
+                        # Set novnc_host to container IP for Docker-to-Docker VNC proxy
+                        if self._running_in_docker and session.container_ip:
+                            session.novnc_host = session.container_ip
+
                     logger.debug(
                         f"Container ports mapped: CDP={session.cdp_port}, noVNC={session.novnc_port}, "
-                        f"Container IP={session.container_ip}"
+                        f"Container IP={session.container_ip}, noVNC host={session.novnc_host}"
                     )
                     return
             
@@ -577,6 +580,7 @@ class BrowserOrchestrator:
                         cdp_port=cdp_port,
                         novnc_port=novnc_port,
                         vnc_port=novnc_port,
+                        novnc_host=container_ip if self._running_in_docker and container_ip else "127.0.0.1",
                         test_session_id=test_session_id,
                         test_run_id=test_run_id,
                     )
