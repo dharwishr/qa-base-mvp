@@ -512,3 +512,109 @@ dokku git:from-image qa-frontend dokku/qa-frontend:latest
 fail2ban-client status sshd
 fail2ban-client get sshd ignoreip
 ```
+
+---
+
+## WebSocket Support for VNC/noVNC
+
+### Overview
+The application uses noVNC to provide live browser viewing. In HTTPS/SSL deployments, direct port access to browser containers doesn't work due to:
+- Mixed content restrictions (HTTPS page can't load HTTP iframe)
+- Container ports not exposed through nginx reverse proxy
+
+### Solution Architecture
+```
+Browser (User)
+    |
+    | wss://api.mvp-blr.x.qola.top/browser/sessions/{session_id}/vnc
+    |
+Dokku/nginx (SSL termination)
+    |
+    | ws://backend-container:8000/browser/sessions/{session_id}/vnc
+    |
+FastAPI Backend (VNC WebSocket Proxy)
+    |
+    | ws://browser-container:7900/websockify
+    |
+Browser Container (noVNC/websockify)
+```
+
+### Configuration Files
+
+1. **`backend/nginx.conf.sigil`** - Custom nginx configuration for Dokku
+   - Enables WebSocket upgrade headers (`Upgrade`, `Connection`)
+   - Properly forwards WebSocket connections to FastAPI
+
+2. **`backend/app/routers/browser.py`** - VNC proxy endpoint
+   - `/browser/sessions/{session_id}/vnc` - WebSocket proxy to container's noVNC
+   - `/browser/sessions/{session_id}/view` - HTML page with noVNC client
+
+### How It Works
+
+1. Frontend requests `/browser/sessions/{session_id}/view`
+2. Backend serves an HTML page with noVNC client (loaded from CDN)
+3. noVNC client connects via WebSocket to `wss://api.../browser/sessions/{session_id}/vnc`
+4. Nginx upgrades the HTTP connection to WebSocket
+5. FastAPI proxies WebSocket messages between client and container's websockify
+
+### Deployment Steps (After Code Update)
+
+```bash
+# SSH to server
+ssh root@143.110.181.55
+
+# Rebuild and redeploy backend
+cd /tmp/qa-base
+git pull  # or copy updated code
+
+# Rebuild backend image
+docker build -t dokku/qa-backend:latest -f backend/Dockerfile .
+dokku git:from-image qa-backend dokku/qa-backend:latest
+
+# The nginx.conf.sigil is automatically applied during deployment
+# Verify nginx config was applied
+dokku nginx:show-config qa-backend
+```
+
+### Troubleshooting
+
+#### Check if WebSocket headers are configured
+```bash
+dokku nginx:show-config qa-backend | grep -A2 "proxy_set_header Upgrade"
+```
+
+Should show:
+```
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;
+```
+
+#### Test WebSocket connection manually
+```bash
+# Install wscat if needed
+npm install -g wscat
+
+# Test VNC WebSocket (replace with actual session ID)
+wscat -c "wss://api.mvp-blr.x.qola.top/browser/sessions/SESSION_ID/vnc"
+```
+
+#### Check backend logs for VNC proxy
+```bash
+dokku logs qa-backend --tail 50 | grep -i vnc
+```
+
+#### Verify browser container is running
+```bash
+docker ps | grep browser-session
+docker logs browser-session-XXXXX
+```
+
+### Known Issues
+
+1. **WebSocket timeout**: Long VNC sessions may disconnect after proxy_read_timeout. Increase if needed:
+   ```bash
+   dokku nginx:set qa-backend proxy-read-timeout 3600s
+   dokku ps:rebuild qa-backend
+   ```
+
+2. **Multiple browser sessions**: Each browser session needs a unique session ID. The orchestrator handles this automatically.

@@ -427,15 +427,16 @@ VNC_PASSWORD = "qabase"
 async def browser_view(session_id: str, request: Request):
     """
     Serve an HTML page with embedded noVNC client for live browser viewing.
-    
-    This page embeds the container's built-in noVNC interface via iframe.
+
+    This page uses noVNC library to connect via the WebSocket proxy endpoint,
+    which works through SSL/nginx reverse proxy setups (Dokku, etc.).
     """
     orchestrator = get_orchestrator()
     session = await orchestrator.get_session(session_id)
-    
+
     if not session:
         raise HTTPException(status_code=404, detail="Browser session not found")
-    
+
     if not session.is_active:
         return HTMLResponse(
             content=f"""
@@ -460,12 +461,22 @@ async def browser_view(session_id: str, request: Request):
             """,
             status_code=200,
         )
-    
-    # Build URL to container's noVNC interface using the request host for browser access
-    request_host = request.headers.get("host", "localhost").split(":")[0]
-    novnc_url = f"http://{request_host}:{session.novnc_port}/?autoconnect=true&resize=scale"
 
-    # Serve a page that embeds the noVNC interface in an iframe
+    # Build WebSocket URL for the VNC proxy endpoint
+    # This works through nginx/Dokku SSL termination
+    base_url = str(request.base_url).rstrip("/")
+    ws_protocol = "wss" if request.url.scheme == "https" else "ws"
+    # Handle X-Forwarded-Proto header for reverse proxy setups
+    forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    if forwarded_proto == "https":
+        ws_protocol = "wss"
+
+    # WebSocket URL for VNC proxy
+    host = request.headers.get("host", "localhost")
+    vnc_ws_url = f"{ws_protocol}://{host}/browser/sessions/{session_id}/vnc"
+
+    # Serve a standalone noVNC client that connects via WebSocket proxy
+    # Using noVNC from CDN (jsDelivr)
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -475,11 +486,16 @@ async def browser_view(session_id: str, request: Request):
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            html, body {{
+                height: 100%;
+                overflow: hidden;
+            }}
             body {{
                 font-family: system-ui, -apple-system, sans-serif;
                 background: #1a1a2e;
                 color: white;
-                overflow: hidden;
+                display: flex;
+                flex-direction: column;
             }}
             .header {{
                 background: #16213e;
@@ -489,6 +505,7 @@ async def browser_view(session_id: str, request: Request):
                 justify-content: space-between;
                 border-bottom: 1px solid #0f3460;
                 height: 48px;
+                flex-shrink: 0;
             }}
             .header h1 {{
                 font-size: 1rem;
@@ -503,7 +520,22 @@ async def browser_view(session_id: str, request: Request):
                 width: 8px;
                 height: 8px;
                 border-radius: 50%;
+                background: #666;
+                transition: background 0.3s;
+            }}
+            .status-dot.connected {{
                 background: #4caf50;
+            }}
+            .status-dot.connecting {{
+                background: #ff9800;
+                animation: pulse 1s infinite;
+            }}
+            .status-dot.error {{
+                background: #f44336;
+            }}
+            @keyframes pulse {{
+                0%, 100% {{ opacity: 1; }}
+                50% {{ opacity: 0.5; }}
             }}
             .controls {{
                 display: flex;
@@ -522,43 +554,177 @@ async def browser_view(session_id: str, request: Request):
             .btn:hover {{
                 background: #1a3a5c;
             }}
-            #vnc-frame {{
+            .btn:disabled {{
+                opacity: 0.5;
+                cursor: not-allowed;
+            }}
+            #vnc-container {{
+                flex: 1;
+                position: relative;
+                background: #000;
+            }}
+            #vnc-screen {{
                 width: 100%;
-                height: calc(100vh - 48px);
-                border: none;
+                height: 100%;
+            }}
+            .loading {{
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                text-align: center;
+            }}
+            .spinner {{
+                width: 40px;
+                height: 40px;
+                border: 3px solid #333;
+                border-top-color: #4caf50;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 1rem;
+            }}
+            @keyframes spin {{
+                to {{ transform: rotate(360deg); }}
+            }}
+            .error-message {{
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                text-align: center;
+                background: rgba(244, 67, 54, 0.9);
+                padding: 2rem;
+                border-radius: 8px;
+                max-width: 400px;
             }}
         </style>
+        <!-- noVNC core library from CDN -->
+        <script type="module">
+            import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js';
+
+            const wsUrl = "{vnc_ws_url}";
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            const vncContainer = document.getElementById('vnc-container');
+            const loading = document.getElementById('loading');
+            const reconnectBtn = document.getElementById('reconnect-btn');
+
+            let rfb = null;
+            let reconnectAttempts = 0;
+            const maxReconnectAttempts = 5;
+
+            function updateStatus(state, message) {{
+                statusDot.className = 'status-dot ' + state;
+                statusText.textContent = message;
+            }}
+
+            function showError(message) {{
+                loading.innerHTML = `
+                    <div class="error-message">
+                        <h3>Connection Error</h3>
+                        <p>${{message}}</p>
+                        <button class="btn" onclick="window.connect()" style="margin-top: 1rem;">Retry</button>
+                    </div>
+                `;
+                loading.style.display = 'block';
+            }}
+
+            function connect() {{
+                if (rfb) {{
+                    rfb.disconnect();
+                }}
+
+                loading.innerHTML = '<div class="loading"><div class="spinner"></div><p>Connecting to browser...</p></div>';
+                loading.style.display = 'block';
+                updateStatus('connecting', 'Connecting...');
+
+                try {{
+                    rfb = new RFB(document.getElementById('vnc-screen'), wsUrl, {{
+                        credentials: {{ password: '' }},
+                    }});
+
+                    rfb.scaleViewport = true;
+                    rfb.resizeSession = true;
+                    rfb.showDotCursor = true;
+
+                    rfb.addEventListener('connect', () => {{
+                        console.log('VNC connected');
+                        loading.style.display = 'none';
+                        updateStatus('connected', 'Connected');
+                        reconnectAttempts = 0;
+                        reconnectBtn.disabled = false;
+                    }});
+
+                    rfb.addEventListener('disconnect', (e) => {{
+                        console.log('VNC disconnected', e.detail);
+                        if (e.detail.clean) {{
+                            updateStatus('', 'Disconnected');
+                        }} else {{
+                            updateStatus('error', 'Connection lost');
+                            if (reconnectAttempts < maxReconnectAttempts) {{
+                                reconnectAttempts++;
+                                setTimeout(connect, 2000);
+                            }} else {{
+                                showError('Connection lost. Click retry to reconnect.');
+                            }}
+                        }}
+                    }});
+
+                    rfb.addEventListener('securityfailure', (e) => {{
+                        console.error('VNC security failure', e.detail);
+                        showError('Security error: ' + (e.detail.reason || 'Unknown'));
+                    }});
+
+                }} catch (err) {{
+                    console.error('VNC connection error:', err);
+                    showError('Failed to connect: ' + err.message);
+                    updateStatus('error', 'Error');
+                }}
+            }}
+
+            function toggleFullscreen() {{
+                if (document.fullscreenElement) {{
+                    document.exitFullscreen();
+                }} else {{
+                    vncContainer.requestFullscreen();
+                }}
+            }}
+
+            function reconnect() {{
+                reconnectAttempts = 0;
+                connect();
+            }}
+
+            // Expose functions globally
+            window.connect = connect;
+            window.toggleFullscreen = toggleFullscreen;
+            window.reconnect = reconnect;
+
+            // Auto-connect on load
+            connect();
+        </script>
     </head>
     <body>
         <div class="header">
             <h1>Live Browser View</h1>
             <div class="status">
-                <span class="status-dot"></span>
-                <span>Connected</span>
+                <span id="status-dot" class="status-dot"></span>
+                <span id="status-text">Initializing...</span>
             </div>
             <div class="controls">
                 <button class="btn" onclick="toggleFullscreen()">Fullscreen</button>
-                <a class="btn" href="{novnc_url}" target="_blank">Open in New Tab</a>
-                <button class="btn" onclick="reload()">Reload</button>
+                <button id="reconnect-btn" class="btn" onclick="reconnect()">Reconnect</button>
             </div>
         </div>
-        <iframe id="vnc-frame" src="{novnc_url}" allow="fullscreen"></iframe>
-
-        <script>
-            function toggleFullscreen() {{
-                const frame = document.getElementById('vnc-frame');
-                if (document.fullscreenElement) {{
-                    document.exitFullscreen();
-                }} else {{
-                    frame.requestFullscreen();
-                }}
-            }}
-
-            function reload() {{
-                const frame = document.getElementById('vnc-frame');
-                frame.src = frame.src;
-            }}
-        </script>
+        <div id="vnc-container">
+            <div id="vnc-screen"></div>
+            <div id="loading">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Connecting to browser...</p>
+                </div>
+            </div>
+        </div>
     </body>
     </html>
     """
