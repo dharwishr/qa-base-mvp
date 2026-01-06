@@ -54,14 +54,28 @@ export default function LiveBrowserView({
     const iframeRef = useRef<HTMLIFrameElement>(null)
     const recordingMenuRef = useRef<HTMLDivElement>(null)
 
+    // Helper to ensure URL uses HTTPS when the page is served over HTTPS
+    // This prevents mixed content errors when backend returns http:// URLs
+    const ensureHttps = (url: string | null | undefined): string | null => {
+        if (!url) return null
+        // If current page is HTTPS, upgrade http:// URLs to https://
+        if (window.location.protocol === 'https:' && url.startsWith('http://')) {
+            return url.replace('http://', 'https://')
+        }
+        return url
+    }
+
     // Prefer novncUrl (direct noVNC access) over liveViewUrl (wrapper page)
-    const fullViewUrl = novncUrl
+    const rawUrl = novncUrl
         ? novncUrl
         : liveViewUrl
             ? `${import.meta.env.VITE_API_URL}${liveViewUrl}`
             : sessionId
                 ? `${import.meta.env.VITE_API_URL}/browser/sessions/${sessionId}/view`
                 : null
+
+    // Ensure HTTPS to prevent mixed content errors
+    const fullViewUrl = ensureHttps(rawUrl)
 
     const handleIframeLoad = useCallback(() => {
         setIsLoading(false)

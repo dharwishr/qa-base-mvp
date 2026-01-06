@@ -65,15 +65,19 @@ class BrowserSessionResponse(BaseModel):
         # Build live view URL based on request
         live_view_url = None
         novnc_url = None
-        
+
         if request and session.is_active:
-            base_url = str(request.base_url).rstrip("/")
+            # Determine the correct scheme based on X-Forwarded-Proto header
+            # (set by nginx/reverse proxy when SSL is terminated at the proxy)
+            forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+            host = request.headers.get("host", request.url.netloc)
+            base_url = f"{forwarded_proto}://{host}"
             live_view_url = f"{base_url}/browser/sessions/{session.id}/view"
 
             # Use the live_view_url as novnc_url - it handles SSL properly via WebSocket proxy
             if session.novnc_port:
                 novnc_url = live_view_url
-        
+
         return cls(
             id=session.id,
             phase=session.phase.value,
