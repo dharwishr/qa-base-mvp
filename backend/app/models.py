@@ -276,6 +276,9 @@ class TestRun(Base):
 	script_id: Mapped[str] = mapped_column(
 		String(36), ForeignKey("playwright_scripts.id"), nullable=False
 	)
+	user_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+	)
 	status: Mapped[str] = mapped_column(
 		String(20), nullable=False, default="pending"
 	)  # pending | running | passed | failed | healed
@@ -310,6 +313,7 @@ class TestRun(Base):
 
 	# Relationships
 	script: Mapped["PlaywrightScript"] = relationship("PlaywrightScript", back_populates="runs")
+	user: Mapped["User | None"] = relationship("User")
 	run_steps: Mapped[list["RunStep"]] = relationship(
 		"RunStep", back_populates="run", order_by="RunStep.step_index", cascade="all, delete-orphan"
 	)

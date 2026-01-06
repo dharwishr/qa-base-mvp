@@ -299,6 +299,8 @@ class TestSessionListResponse(BaseModel):
 	created_at: datetime
 	updated_at: datetime
 	step_count: int = 0
+	user_name: str | None = None
+	user_email: str | None = None
 
 	class Config:
 		from_attributes = True
@@ -484,6 +486,8 @@ class TestRunResponse(BaseModel):
 	healed_steps: int
 	error_message: str | None = None
 	created_at: datetime
+	user_name: str | None = None
+	user_email: str | None = None
 
 	class Config:
 		from_attributes = True

@@ -111,7 +111,11 @@ Title:"""
 
 
 async def update_session_title_async(session_id: str, prompt: str, llm_model: str) -> None:
-	"""Background task to generate and update session title using LLM."""
+	"""Background task to generate and update session title using LLM.
+	
+	Only updates the title if it's still the auto-generated fallback title.
+	If the user has manually set a custom title, it will be preserved.
+	"""
 	from app.database import SessionLocal
 	
 	logger.info(f"[TITLE_UPDATE] Starting async title update for session: {session_id}")
@@ -125,9 +129,16 @@ async def update_session_title_async(session_id: str, prompt: str, llm_model: st
 			session = db.query(TestSession).filter(TestSession.id == session_id).first()
 			if session:
 				old_title = session.title
-				session.title = title
-				db.commit()
-				logger.info(f"[TITLE_UPDATE] Updated session {session_id} title from '{old_title}' to: '{title}'")
+				# Generate the fallback title to compare
+				fallback_title = generate_title_fallback(prompt)
+				
+				# Only update if the current title is still the fallback (not manually changed)
+				if old_title == fallback_title or not old_title:
+					session.title = title
+					db.commit()
+					logger.info(f"[TITLE_UPDATE] Updated session {session_id} title from '{old_title}' to: '{title}'")
+				else:
+					logger.info(f"[TITLE_UPDATE] Skipping title update for session {session_id} - custom title already set: '{old_title}'")
 			else:
 				logger.warning(f"[TITLE_UPDATE] Session {session_id} not found!")
 		finally:
@@ -169,18 +180,23 @@ async def list_sessions(
 ):
 	"""Get all test sessions ordered by creation date (newest first)."""
 	from sqlalchemy import func
+	from app.models import User
 
-	# Query sessions with step count, filtered by organization
+	# Query sessions with step count and user info, filtered by organization
 	sessions = db.query(
 		TestSession,
-		func.count(TestStep.id).label('step_count')
+		func.count(TestStep.id).label('step_count'),
+		User.name.label('user_name'),
+		User.email.label('user_email')
 	).filter(
 		TestSession.organization_id == current_user.organization_id
-	).outerjoin(TestStep).group_by(TestSession.id).order_by(TestSession.created_at.desc()).all()
+	).outerjoin(TestStep).outerjoin(User, TestSession.user_id == User.id).group_by(
+		TestSession.id, User.name, User.email
+	).order_by(TestSession.created_at.desc()).all()
 
 	# Convert to response format
 	result = []
-	for session, step_count in sessions:
+	for session, step_count, user_name, user_email in sessions:
 		result.append(TestSessionListResponse(
 			id=session.id,
 			prompt=session.prompt,
@@ -189,7 +205,9 @@ async def list_sessions(
 			status=session.status,
 			created_at=session.created_at,
 			updated_at=session.updated_at,
-			step_count=step_count
+			step_count=step_count,
+			user_name=user_name,
+			user_email=user_email
 		))
 	return result
 

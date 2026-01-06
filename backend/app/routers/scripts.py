@@ -382,6 +382,7 @@ async def start_run(
 	# Create run record with full configuration
 	run = TestRun(
 		script_id=script_id,
+		user_id=current_user.id,
 		status="queued",
 		runner_type="playwright",  # Always use Playwright runner with container pool
 		headless=True,  # Container browsers are always headless
@@ -423,11 +424,30 @@ async def list_script_runs(
 	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""List all runs for a script."""
+	from app.models import User
+	
 	script = db.query(PlaywrightScript).filter(PlaywrightScript.id == script_id).first()
 	if not script:
 		raise HTTPException(status_code=404, detail="Script not found")
 	
-	return script.runs
+	# Query runs with user information
+	runs = db.query(
+		TestRun,
+		User.name.label('user_name'),
+		User.email.label('user_email')
+	).filter(
+		TestRun.script_id == script_id
+	).outerjoin(User, TestRun.user_id == User.id).order_by(TestRun.created_at.desc()).all()
+	
+	# Convert to response format
+	result = []
+	for run, user_name, user_email in runs:
+		run_dict = TestRunResponse.model_validate(run).model_dump()
+		run_dict['user_name'] = user_name
+		run_dict['user_email'] = user_email
+		result.append(TestRunResponse(**run_dict))
+	
+	return result
 
 
 # Runs router
