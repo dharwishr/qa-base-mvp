@@ -496,75 +496,15 @@ async def browser_view(session_id: str, request: Request):
             }}
             body {{
                 font-family: system-ui, -apple-system, sans-serif;
-                background: #1a1a2e;
+                background: #000;
                 color: white;
-                display: flex;
-                flex-direction: column;
-            }}
-            .header {{
-                background: #16213e;
-                padding: 0.5rem 1rem;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                border-bottom: 1px solid #0f3460;
-                height: 48px;
-                flex-shrink: 0;
-            }}
-            .header h1 {{
-                font-size: 1rem;
-                font-weight: 500;
-            }}
-            .status {{
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-            }}
-            .status-dot {{
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-                background: #666;
-                transition: background 0.3s;
-            }}
-            .status-dot.connected {{
-                background: #4caf50;
-            }}
-            .status-dot.connecting {{
-                background: #ff9800;
-                animation: pulse 1s infinite;
-            }}
-            .status-dot.error {{
-                background: #f44336;
-            }}
-            @keyframes pulse {{
-                0%, 100% {{ opacity: 1; }}
-                50% {{ opacity: 0.5; }}
-            }}
-            .controls {{
-                display: flex;
-                gap: 0.5rem;
-            }}
-            .btn {{
-                padding: 0.25rem 0.75rem;
-                border: 1px solid #0f3460;
-                background: #16213e;
-                color: white;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 0.875rem;
-                text-decoration: none;
-            }}
-            .btn:hover {{
-                background: #1a3a5c;
-            }}
-            .btn:disabled {{
-                opacity: 0.5;
-                cursor: not-allowed;
             }}
             #vnc-container {{
-                flex: 1;
-                position: relative;
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
                 background: #000;
             }}
             #vnc-screen {{
@@ -607,20 +547,12 @@ async def browser_view(session_id: str, request: Request):
             import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js';
 
             const wsUrl = "{vnc_ws_url}";
-            const statusDot = document.getElementById('status-dot');
-            const statusText = document.getElementById('status-text');
             const vncContainer = document.getElementById('vnc-container');
             const loading = document.getElementById('loading');
-            const reconnectBtn = document.getElementById('reconnect-btn');
 
             let rfb = null;
             let reconnectAttempts = 0;
             const maxReconnectAttempts = 5;
-
-            function updateStatus(state, message) {{
-                statusDot.className = 'status-dot ' + state;
-                statusText.textContent = message;
-            }}
 
             function showError(message) {{
                 loading.innerHTML = `
@@ -640,7 +572,6 @@ async def browser_view(session_id: str, request: Request):
 
                 loading.innerHTML = '<div class="loading"><div class="spinner"></div><p>Connecting to browser...</p></div>';
                 loading.style.display = 'block';
-                updateStatus('connecting', 'Connecting...');
 
                 try {{
                     rfb = new RFB(document.getElementById('vnc-screen'), wsUrl, {{
@@ -648,23 +579,18 @@ async def browser_view(session_id: str, request: Request):
                     }});
 
                     rfb.scaleViewport = true;
-                    rfb.resizeSession = true;
+                    rfb.resizeSession = false;  // Keep fixed 1920x1080 resolution
                     rfb.showDotCursor = true;
 
                     rfb.addEventListener('connect', () => {{
                         console.log('VNC connected');
                         loading.style.display = 'none';
-                        updateStatus('connected', 'Connected');
                         reconnectAttempts = 0;
-                        reconnectBtn.disabled = false;
                     }});
 
                     rfb.addEventListener('disconnect', (e) => {{
                         console.log('VNC disconnected', e.detail);
-                        if (e.detail.clean) {{
-                            updateStatus('', 'Disconnected');
-                        }} else {{
-                            updateStatus('error', 'Connection lost');
+                        if (!e.detail.clean) {{
                             if (reconnectAttempts < maxReconnectAttempts) {{
                                 reconnectAttempts++;
                                 setTimeout(connect, 2000);
@@ -682,7 +608,6 @@ async def browser_view(session_id: str, request: Request):
                 }} catch (err) {{
                     console.error('VNC connection error:', err);
                     showError('Failed to connect: ' + err.message);
-                    updateStatus('error', 'Error');
                 }}
             }}
 
@@ -709,17 +634,6 @@ async def browser_view(session_id: str, request: Request):
         </script>
     </head>
     <body>
-        <div class="header">
-            <h1>Live Browser View</h1>
-            <div class="status">
-                <span id="status-dot" class="status-dot"></span>
-                <span id="status-text">Initializing...</span>
-            </div>
-            <div class="controls">
-                <button class="btn" onclick="toggleFullscreen()">Fullscreen</button>
-                <button id="reconnect-btn" class="btn" onclick="reconnect()">Reconnect</button>
-            </div>
-        </div>
         <div id="vnc-container">
             <div id="vnc-screen"></div>
             <div id="loading">
