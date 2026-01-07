@@ -11,7 +11,7 @@ from datetime import datetime
 
 from app.database import get_db
 from app.deps import AuthenticatedUser, get_current_user
-from app.models import AnalysisEvent, TestPlan, TestSession, TestStep
+from app.models import AnalysisEvent, AnalysisPlan, TestSession, TestStep
 from app.schemas import (
 	ActModeRequest,
 	ActModeResponse,
@@ -34,7 +34,7 @@ from app.schemas import (
 	StepActionResponse,
 	StopResponse,
 	TaskStatusResponse,
-	TestPlanResponse,
+	AnalysisPlanResponse,
 	TestRunResponse,
 	TestSessionDetailResponse,
 	TestSessionListResponse,
@@ -459,7 +459,7 @@ async def continue_session(
 			db.delete(session.plan)
 
 		# Create a simple plan for the continuation task
-		plan = TestPlan(
+		plan = AnalysisPlan(
 			session_id=session.id,
 			plan_text=request.prompt,
 			steps_json={"steps": [{"description": request.prompt}]},
@@ -564,7 +564,7 @@ async def delete_session(
 
 	# Delete plan if exists
 	if session.plan:
-		db.query(TestPlan).filter(TestPlan.session_id == session_id).delete(synchronize_session=False)
+		db.query(AnalysisPlan).filter(AnalysisPlan.session_id == session_id).delete(synchronize_session=False)
 
 	# Expunge session to avoid stale data errors
 	db.expunge(session)
@@ -574,7 +574,7 @@ async def delete_session(
 	db.commit()
 
 
-@router.get("/sessions/{session_id}/plan", response_model=TestPlanResponse)
+@router.get("/sessions/{session_id}/plan", response_model=AnalysisPlanResponse)
 async def get_session_plan(
 	session_id: str,
 	db: Session = Depends(get_db),
@@ -591,7 +591,7 @@ async def get_session_plan(
 	return session.plan
 
 
-@router.put("/sessions/{session_id}/plan", response_model=TestPlanResponse)
+@router.put("/sessions/{session_id}/plan", response_model=AnalysisPlanResponse)
 async def update_session_plan(
 	session_id: str,
 	request: UpdatePlanRequest,
@@ -634,7 +634,7 @@ async def update_session_plan(
 	return updated_plan
 
 
-@router.post("/sessions/{session_id}/plan/regenerate", response_model=TestPlanResponse)
+@router.post("/sessions/{session_id}/plan/regenerate", response_model=AnalysisPlanResponse)
 async def regenerate_session_plan(
 	session_id: str,
 	request: RegeneratePlanRequest,
@@ -877,7 +877,7 @@ async def reset_session(
 
 	# 5. Delete the plan if exists
 	if session.plan:
-		db.query(TestPlan).filter(TestPlan.session_id == session_id).delete(synchronize_session=False)
+		db.query(AnalysisPlan).filter(AnalysisPlan.session_id == session_id).delete(synchronize_session=False)
 
 	# 6. Reset session state (keep title and prompt for user to edit)
 	session.status = "idle"

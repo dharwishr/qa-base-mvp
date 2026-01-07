@@ -16,6 +16,8 @@ celery_app = Celery(
 		"app.tasks.act_mode",
 		"app.tasks.run_till_end",
 		"app.tasks.session_runs",
+		"app.tasks.test_plan_runs",
+		"app.tasks.test_plan_scheduler",
 	],
 )
 
@@ -28,3 +30,11 @@ celery_app.conf.update(
 	task_time_limit=600,  # 10 minute timeout
 	worker_concurrency=4,  # Allow multiple concurrent tests
 )
+
+# Celery Beat schedule for periodic tasks
+celery_app.conf.beat_schedule = {
+	"check-test-plan-schedules": {
+		"task": "check_test_plan_schedules",
+		"schedule": 60.0,  # Every minute
+	},
+}

@@ -617,7 +617,7 @@ async def get_model_run_plan(
 	current_user: AuthenticatedUser = Depends(get_current_user),
 ):
 	"""Get the generated plan for a model run."""
-	from app.schemas import TestPlanResponse
+	from app.schemas import AnalysisPlanResponse
 
 	model_run = db.query(BenchmarkModelRun).filter(
 		BenchmarkModelRun.id == model_run_id,
@@ -635,7 +635,7 @@ async def get_model_run_plan(
 	if not test_session or not test_session.plan:
 		return None
 
-	return TestPlanResponse.model_validate(test_session.plan)
+	return AnalysisPlanResponse.model_validate(test_session.plan)
 
 
 # ============================================

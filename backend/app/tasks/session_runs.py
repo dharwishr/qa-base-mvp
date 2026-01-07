@@ -279,12 +279,12 @@ def execute_session_run(self, run_id: str) -> dict:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(_execute_session_run_async(self, run_id))
+        return loop.run_until_complete(_execute_session_run_async(run_id, task=self))
     finally:
         loop.close()
 
 
-async def _execute_session_run_async(task, run_id: str) -> dict:
+async def _execute_session_run_async(run_id: str, task=None) -> dict:
     """Async implementation of session-based test run execution."""
     db = SessionLocal()
     container = None
@@ -309,7 +309,8 @@ async def _execute_session_run_async(task, run_id: str) -> dict:
         # Update run status
         run.status = "running"
         run.started_at = datetime.utcnow()
-        run.celery_task_id = task.request.id
+        if task is not None:
+            run.celery_task_id = task.request.id
         db.commit()
 
         logger.info(f"Starting session run {run_id} for session {session.id}")

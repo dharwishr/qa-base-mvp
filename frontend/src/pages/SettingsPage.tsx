@@ -1,9 +1,31 @@
-import { useState, useEffect } from 'react';
-import { Monitor, Trash2, RefreshCw, AlertTriangle, CheckCircle, Loader2, Play, Container, Zap } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Monitor, Trash2, RefreshCw, AlertTriangle, CheckCircle, Loader2, Play, Container, Zap, Brain } from 'lucide-react';
 import { browserApi, settingsApi, type BrowserSession } from '@/services/api';
 import type { IsolationMode, SystemSettings, ContainerPoolStats } from '@/types/scripts';
+import type { LlmModel } from '@/types/analysis';
+
+// Available LLM models for test analysis
+const LLM_MODEL_OPTIONS: { value: LlmModel; label: string; description: string }[] = [
+    { value: 'gemini-3.0-flash', label: 'Gemini 3.0 Flash', description: 'Latest and fastest Gemini model (Recommended)' },
+    { value: 'gemini-3.0-pro', label: 'Gemini 3.0 Pro', description: 'Most capable Gemini 3.0 model' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Fast and efficient Gemini 2.5 model' },
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'High capability Gemini 2.5 model' },
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', description: 'Previous generation Gemini model' },
+    { value: 'browser-use-llm', label: 'Browser Use LLM', description: 'Browser Use native LLM' },
+    { value: 'gemini-2.5-computer-use', label: 'Gemini 2.5 Computer Use', description: 'Specialized for computer interaction' },
+];
+
+type SettingsTab = 'runner' | 'ai' | 'pool' | 'browser';
+
+const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'runner', label: 'Test Runner', icon: <Play className="h-4 w-4" /> },
+    { id: 'ai', label: 'AI Models', icon: <Brain className="h-4 w-4" /> },
+    { id: 'pool', label: 'Container Pool', icon: <Container className="h-4 w-4" /> },
+    { id: 'browser', label: 'Browser Sessions', icon: <Monitor className="h-4 w-4" /> },
+];
 
 export default function SettingsPage() {
+    const [activeTab, setActiveTab] = useState<SettingsTab>('runner');
     const [browserSessions, setBrowserSessions] = useState<BrowserSession[]>([]);
     const [loading, setLoading] = useState(true);
     const [killing, setKilling] = useState(false);
@@ -121,6 +143,25 @@ export default function SettingsPage() {
         }
     };
 
+    // Update default analysis model
+    const handleDefaultModelChange = async (model: string) => {
+        if (!systemSettings) return;
+
+        setSavingSettings(true);
+        setError(null);
+        setSuccess(null);
+        try {
+            const updated = await settingsApi.updateSettings({ default_analysis_model: model });
+            setSystemSettings(updated);
+            const modelOption = LLM_MODEL_OPTIONS.find(m => m.value === model);
+            setSuccess(`Default analysis model updated to ${modelOption?.label || model}`);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : 'Failed to update settings');
+        } finally {
+            setSavingSettings(false);
+        }
+    };
+
     useEffect(() => {
         fetchBrowserSessions();
         fetchSystemSettings();
@@ -145,6 +186,26 @@ export default function SettingsPage() {
                 </p>
             </div>
 
+            {/* Tab Navigation */}
+            <div className="border-b">
+                <nav className="flex gap-1" aria-label="Settings tabs">
+                    {TABS.map((tab) => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                                activeTab === tab.id
+                                    ? 'border-primary text-primary'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+                            }`}
+                        >
+                            {tab.icon}
+                            {tab.label}
+                        </button>
+                    ))}
+                </nav>
+            </div>
+
             {/* Success/Error Messages */}
             {success && (
                 <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-4 text-green-700">
@@ -160,6 +221,7 @@ export default function SettingsPage() {
             )}
 
             {/* Test Runner Settings Section */}
+            {activeTab === 'runner' && (
             <div className="rounded-lg border bg-card shadow-sm">
                 <div className="border-b px-6 py-4">
                     <div className="flex items-center gap-3">
@@ -257,8 +319,88 @@ export default function SettingsPage() {
                     )}
                 </div>
             </div>
+            )}
+
+            {/* AI Model Settings Section */}
+            {activeTab === 'ai' && (
+            <div className="rounded-lg border bg-card shadow-sm">
+                <div className="border-b px-6 py-4">
+                    <div className="flex items-center gap-3">
+                        <Brain className="h-5 w-5 text-blue-500" />
+                        <div>
+                            <h2 className="font-semibold">AI Model Settings</h2>
+                            <p className="text-sm text-muted-foreground">
+                                Configure the default AI model for test case analysis
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-6">
+                    {settingsLoading ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                            Loading settings...
+                        </div>
+                    ) : (
+                        <div className="space-y-6">
+                            <div>
+                                <h3 className="font-medium mb-2">Default Analysis Model</h3>
+                                <p className="text-sm text-muted-foreground mb-4">
+                                    Choose the default LLM model used when creating new test analyses.
+                                </p>
+
+                                <div className="space-y-3">
+                                    {LLM_MODEL_OPTIONS.map((option) => (
+                                        <label
+                                            key={option.value}
+                                            className={`flex items-start gap-4 p-4 rounded-lg border cursor-pointer transition-colors ${
+                                                systemSettings?.default_analysis_model === option.value
+                                                    ? 'border-blue-500 bg-blue-50/50'
+                                                    : 'border-border hover:border-blue-300'
+                                            } ${savingSettings ? 'opacity-50 pointer-events-none' : ''}`}
+                                        >
+                                            <input
+                                                type="radio"
+                                                name="default_analysis_model"
+                                                value={option.value}
+                                                checked={systemSettings?.default_analysis_model === option.value}
+                                                onChange={() => handleDefaultModelChange(option.value)}
+                                                disabled={savingSettings}
+                                                className="mt-1"
+                                            />
+                                            <div>
+                                                <div className="font-medium flex items-center gap-2">
+                                                    {option.label}
+                                                    {option.value === 'gemini-3.0-flash' && (
+                                                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800">
+                                                            Default
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="text-sm text-muted-foreground mt-1">
+                                                    {option.description}
+                                                </p>
+                                            </div>
+                                        </label>
+                                    ))}
+                                </div>
+
+                                {savingSettings && (
+                                    <div className="flex items-center gap-2 mt-3 text-sm text-muted-foreground">
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Saving...
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+            )}
 
             {/* Container Pool Section */}
+            {activeTab === 'pool' && (
             <div className="rounded-lg border bg-card shadow-sm">
                 <div className="border-b px-6 py-4">
                     <div className="flex items-center justify-between">
@@ -390,8 +532,11 @@ export default function SettingsPage() {
                     )}
                 </div>
             </div>
+            )}
 
             {/* Browser Management Section */}
+            {activeTab === 'browser' && (
+            <>
             <div className="rounded-lg border bg-card shadow-sm">
                 <div className="border-b px-6 py-4">
                     <div className="flex items-center justify-between">
@@ -503,12 +648,14 @@ export default function SettingsPage() {
                         <p className="font-medium mb-1">Auto-cleanup</p>
                         <p>
                             Browser sessions are automatically stopped after 5 minutes of inactivity
-                            (no steps generated or actions taken). Sessions also have a maximum 
+                            (no steps generated or actions taken). Sessions also have a maximum
                             lifetime of 30 minutes.
                         </p>
                     </div>
                 </div>
             </div>
+            </>
+            )}
         </div>
     );
 }

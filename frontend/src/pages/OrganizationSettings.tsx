@@ -130,7 +130,7 @@ export default function OrganizationSettings() {
                             Access Denied
                         </CardTitle>
                         <CardDescription>
-                            Only organization owners can access this page.
+                            You have to be a owner to see this.
                         </CardDescription>
                     </CardHeader>
                 </Card>

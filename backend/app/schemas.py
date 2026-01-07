@@ -190,7 +190,7 @@ class IsolationMode(str, Enum):
 class CreateSessionRequest(BaseModel):
 	prompt: str = Field(..., min_length=1, description="The QA task prompt")
 	llm_model: str = Field(
-		default="gemini-2.5-flash",
+		default="gemini-3.0-flash",
 		description="LLM model for browser automation: browser-use-llm | gemini-2.0-flash | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use"
 	)
 	headless: bool = Field(
@@ -203,7 +203,7 @@ class ContinueSessionRequest(BaseModel):
 	"""Request to continue an existing session with a new task."""
 	prompt: str = Field(..., min_length=1, description="The new task prompt to continue with")
 	llm_model: str = Field(
-		default="gemini-2.5-flash",
+		default="gemini-3.0-flash",
 		description="LLM model for browser automation"
 	)
 	mode: str = Field(
@@ -265,7 +265,7 @@ class TestStepResponse(BaseModel):
 		from_attributes = True
 
 
-class TestPlanResponse(BaseModel):
+class AnalysisPlanResponse(BaseModel):
 	id: str
 	plan_text: str
 	steps_json: dict[str, Any] | None = None
@@ -289,7 +289,7 @@ class TestSessionResponse(BaseModel):
 	celery_task_id: str | None = None
 	created_at: datetime
 	updated_at: datetime
-	plan: TestPlanResponse | None = None
+	plan: AnalysisPlanResponse | None = None
 
 	class Config:
 		from_attributes = True
@@ -359,7 +359,7 @@ class WSError(WSMessage):
 
 class WSPlanGenerated(WSMessage):
 	type: str = "plan_generated"
-	plan: TestPlanResponse
+	plan: AnalysisPlanResponse
 
 
 class WSInitialState(WSMessage):
@@ -898,11 +898,16 @@ class SystemSettingsRequest(BaseModel):
 		default=IsolationMode.CONTEXT,
 		description="Container isolation mode: 'context' (reuse container) or 'ephemeral' (new container per run)"
 	)
+	default_analysis_model: str | None = Field(
+		default=None,
+		description="Default LLM model for test case analysis: browser-use-llm | gemini-2.0-flash | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use"
+	)
 
 
 class SystemSettingsResponse(BaseModel):
 	"""Response for system settings."""
 	isolation_mode: IsolationMode = IsolationMode.CONTEXT
+	default_analysis_model: str = "gemini-3.0-flash"
 	updated_at: datetime | None = None
 
 	class Config:
@@ -938,3 +943,222 @@ class CancelTaskResponse(BaseModel):
 	success: bool
 	message: str
 	task_id: str | None = None
+
+
+# ============================================
+# Test Plan Module Schemas
+# ============================================
+
+class CreateTestPlanRequest(BaseModel):
+	"""Request to create a new test plan."""
+	name: str = Field(..., min_length=1, max_length=256)
+	url: str | None = Field(None, max_length=2048)
+	description: str | None = None
+
+
+class UpdateTestPlanRequest(BaseModel):
+	"""Request to update a test plan."""
+	name: str | None = Field(None, min_length=1, max_length=256)
+	url: str | None = None
+	description: str | None = None
+	status: str | None = None  # active | archived
+
+
+class UpdateTestPlanSettingsRequest(BaseModel):
+	"""Request to update test plan default run settings."""
+	default_run_type: str | None = None  # sequential | parallel
+	browser_type: str | None = None  # chromium | firefox | webkit | edge
+	resolution_width: int | None = None
+	resolution_height: int | None = None
+	headless: bool | None = None
+	screenshots_enabled: bool | None = None
+	recording_enabled: bool | None = None
+	network_recording_enabled: bool | None = None
+	performance_metrics_enabled: bool | None = None
+
+
+class AddTestCasesRequest(BaseModel):
+	"""Request to add test cases to a test plan."""
+	test_session_ids: list[str] = Field(..., min_length=1)
+
+
+class ReorderTestCasesRequest(BaseModel):
+	"""Request to reorder test cases in a test plan."""
+	test_case_orders: list[dict[str, Any]] = Field(..., description="List of {test_session_id, order}")
+
+
+class RunTestPlanRequest(BaseModel):
+	"""Request to run a test plan."""
+	run_type: str = Field("sequential", description="sequential | parallel")
+	# Optional overrides for run configuration
+	browser_type: str | None = None
+	resolution_width: int | None = None
+	resolution_height: int | None = None
+	headless: bool | None = None
+	screenshots_enabled: bool | None = None
+	recording_enabled: bool | None = None
+	network_recording_enabled: bool | None = None
+	performance_metrics_enabled: bool | None = None
+
+
+class CreateScheduleRequest(BaseModel):
+	"""Request to create a test plan schedule."""
+	name: str = Field(..., min_length=1, max_length=256)
+	schedule_type: str = Field(..., description="one_time | recurring")
+	run_type: str = Field("sequential", description="sequential | parallel")
+	one_time_at: datetime | None = None
+	cron_expression: str | None = None
+	timezone: str = "UTC"
+
+
+class UpdateScheduleRequest(BaseModel):
+	"""Request to update a test plan schedule."""
+	name: str | None = Field(None, min_length=1, max_length=256)
+	schedule_type: str | None = None
+	run_type: str | None = None
+	one_time_at: datetime | None = None
+	cron_expression: str | None = None
+	timezone: str | None = None
+	is_active: bool | None = None
+
+
+# Response Schemas
+
+class TestPlanTestCaseResponse(BaseModel):
+	"""Response for a test case in a test plan."""
+	id: str
+	test_session_id: str
+	title: str | None = None
+	prompt: str
+	status: str
+	order: int
+	step_count: int = 0
+	created_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class TestPlanResponse(BaseModel):
+	"""Response for a test plan (list view)."""
+	id: str
+	name: str
+	url: str | None = None
+	description: str | None = None
+	status: str
+	test_case_count: int = 0
+	last_run_status: str | None = None
+	last_run_at: datetime | None = None
+	# Default run settings
+	default_run_type: str
+	browser_type: str
+	resolution_width: int
+	resolution_height: int
+	headless: bool
+	screenshots_enabled: bool
+	recording_enabled: bool
+	network_recording_enabled: bool
+	performance_metrics_enabled: bool
+	# Metadata
+	created_at: datetime
+	updated_at: datetime
+	user_name: str | None = None
+
+	class Config:
+		from_attributes = True
+
+
+class TestPlanRunResultResponse(BaseModel):
+	"""Response for a test plan run result."""
+	id: str
+	test_session_id: str | None = None
+	test_session_title: str | None = None
+	test_run_id: str | None = None
+	order: int
+	status: str
+	duration_ms: int | None = None
+	error_message: str | None = None
+	started_at: datetime | None = None
+	completed_at: datetime | None = None
+
+	class Config:
+		from_attributes = True
+
+
+class TestPlanRunResponse(BaseModel):
+	"""Response for a test plan run."""
+	id: str
+	test_plan_id: str
+	status: str
+	run_type: str
+	# Run configuration
+	browser_type: str
+	resolution_width: int
+	resolution_height: int
+	headless: bool
+	screenshots_enabled: bool
+	recording_enabled: bool
+	network_recording_enabled: bool
+	performance_metrics_enabled: bool
+	# Stats
+	total_test_cases: int
+	passed_test_cases: int
+	failed_test_cases: int
+	duration_ms: int | None = None
+	started_at: datetime | None = None
+	completed_at: datetime | None = None
+	error_message: str | None = None
+	created_at: datetime
+	user_name: str | None = None
+	celery_task_id: str | None = None
+
+	class Config:
+		from_attributes = True
+
+
+class TestPlanRunDetailResponse(TestPlanRunResponse):
+	"""Detailed response for a test plan run with results."""
+	results: list[TestPlanRunResultResponse] = []
+
+
+class TestPlanScheduleResponse(BaseModel):
+	"""Response for a test plan schedule."""
+	id: str
+	test_plan_id: str
+	name: str
+	schedule_type: str
+	run_type: str
+	one_time_at: datetime | None = None
+	cron_expression: str | None = None
+	timezone: str
+	is_active: bool
+	last_run_at: datetime | None = None
+	next_run_at: datetime | None = None
+	created_at: datetime
+	updated_at: datetime
+
+	class Config:
+		from_attributes = True
+
+
+class TestPlanDetailResponse(TestPlanResponse):
+	"""Detailed response for a test plan with test cases and recent runs."""
+	test_cases: list[TestPlanTestCaseResponse] = []
+	recent_runs: list[TestPlanRunResponse] = []
+	schedules: list[TestPlanScheduleResponse] = []
+
+
+class PaginatedTestPlansResponse(BaseModel):
+	"""Paginated response for test plans."""
+	items: list[TestPlanResponse]
+	total: int
+	page: int
+	page_size: int
+	total_pages: int
+
+
+class StartTestPlanRunResponse(BaseModel):
+	"""Response for starting a test plan run."""
+	run_id: str
+	status: str
+	celery_task_id: str | None = None

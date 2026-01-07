@@ -6,7 +6,7 @@ from datetime import datetime
 
 from app.celery_app import celery_app
 from app.database import SessionLocal
-from app.models import BenchmarkModelRun, BenchmarkSession, TestPlan, TestSession
+from app.models import BenchmarkModelRun, BenchmarkSession, AnalysisPlan, TestSession
 from app.utils.log_handler import SessionLogHandler
 
 logger = logging.getLogger(__name__)

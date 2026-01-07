@@ -6,7 +6,7 @@ import ConfigPanel from "@/components/analysis/ConfigPanel"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
 import LiveBrowserView from "@/components/LiveBrowserView"
 import ActionFooter from "@/components/analysis/ActionFooter"
-import { analysisApi, scriptsApi, getScreenshotUrl } from "@/services/api"
+import { analysisApi, scriptsApi, settingsApi, getScreenshotUrl } from "@/services/api"
 import { getAuthToken } from "@/contexts/AuthContext"
 import { useSessionSubscription } from "@/hooks/useSessionSubscription"
 import type { TestSession, LlmModel } from "@/types/analysis"
@@ -30,8 +30,24 @@ export default function TestAnalysis() {
     const [analysisState, setAnalysisState] = useState<AnalysisState>('idle')
     const [error, setError] = useState<string | null>(null)
     const [selectedStepId, setSelectedStepId] = useState<string | number | null>(null)
-    const [selectedLlm, setSelectedLlm] = useState<LlmModel>('gemini-2.5-flash')
+    const [selectedLlm, setSelectedLlm] = useState<LlmModel>('gemini-3.0-flash')
     const [headless, setHeadless] = useState(true) // Default to headless mode
+
+    // Fetch system settings to get the default model
+    useEffect(() => {
+        const fetchDefaultModel = async () => {
+            try {
+                const settings = await settingsApi.getSettings()
+                if (settings.default_analysis_model) {
+                    setSelectedLlm(settings.default_analysis_model as LlmModel)
+                }
+            } catch (e) {
+                console.error('Error fetching system settings:', e)
+                // Keep the default model if fetch fails
+            }
+        }
+        fetchDefaultModel()
+    }, [])
     const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null)
     const [isRecording, setIsRecording] = useState(false)
     const [simpleMode, setSimpleMode] = useState(false)

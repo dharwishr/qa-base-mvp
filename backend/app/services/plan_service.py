@@ -5,7 +5,7 @@ from google import genai
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import TestPlan, TestSession, TestStep
+from app.models import AnalysisPlan, TestSession, TestStep
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ def build_execution_context(db: Session, session: TestSession) -> str:
 	return "\n".join(context_parts) if context_parts else ""
 
 
-async def generate_plan(db: Session, session: TestSession, task_prompt: str | None = None) -> TestPlan:
+async def generate_plan(db: Session, session: TestSession, task_prompt: str | None = None) -> AnalysisPlan:
 	"""Generate a test plan using Gemini 2.0 Flash.
 
 	Args:
@@ -193,7 +193,7 @@ The browser is already positioned on the correct page. Start directly with the u
 			steps_json = []
 
 		# Create and save the plan
-		plan = TestPlan(
+		plan = AnalysisPlan(
 			session_id=session.id,
 			plan_text=plan_text,
 			steps_json={"steps": steps_json},
@@ -215,7 +215,7 @@ The browser is already positioned on the correct page. Start directly with the u
 		raise
 
 
-def generate_plan_sync(db: Session, session: TestSession, task_prompt: str | None = None) -> TestPlan:
+def generate_plan_sync(db: Session, session: TestSession, task_prompt: str | None = None) -> AnalysisPlan:
 	"""Synchronous version of generate_plan for Celery workers.
 
 	Args:
@@ -278,7 +278,7 @@ The browser is already positioned on the correct page. Start directly with the u
 			plan_text = response_text
 			steps_json = []
 
-		plan = TestPlan(
+		plan = AnalysisPlan(
 			session_id=session.id,
 			plan_text=plan_text,
 			steps_json={"steps": steps_json},
@@ -299,7 +299,7 @@ The browser is already positioned on the correct page. Start directly with the u
 		raise
 
 
-def get_plan_as_task(plan: TestPlan, is_continuation: bool = False) -> str:
+def get_plan_as_task(plan: AnalysisPlan, is_continuation: bool = False) -> str:
 	"""Convert a test plan to a task string for browser-use agent.
 
 	Args:
@@ -363,10 +363,10 @@ Work only with elements on the current page."""
 
 def update_plan_steps(
 	db: Session,
-	plan: TestPlan,
+	plan: AnalysisPlan,
 	steps: list[dict],
 	user_prompt: str | None = None
-) -> TestPlan:
+) -> AnalysisPlan:
 	"""Update a plan with manually edited steps.
 
 	Args:
@@ -376,7 +376,7 @@ def update_plan_steps(
 		user_prompt: Optional user instructions to save with the plan
 
 	Returns:
-		Updated TestPlan
+		Updated AnalysisPlan
 	"""
 	# Renumber steps sequentially
 	for i, step in enumerate(steps):
@@ -444,10 +444,10 @@ Be specific and practical. Include verification steps where appropriate."""
 async def regenerate_plan_with_context(
 	db: Session,
 	session: TestSession,
-	plan: TestPlan,
+	plan: AnalysisPlan,
 	edited_steps: list[dict],
 	user_prompt: str
-) -> TestPlan:
+) -> AnalysisPlan:
 	"""Regenerate a plan using AI with user's edits as context.
 
 	Args:
@@ -458,7 +458,7 @@ async def regenerate_plan_with_context(
 		user_prompt: User's refinement instructions
 
 	Returns:
-		Updated TestPlan
+		Updated AnalysisPlan
 	"""
 	try:
 		# Format edited steps for prompt

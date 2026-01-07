@@ -36,6 +36,7 @@ def get_or_create_settings(db: Session) -> SystemSettings:
         settings = SystemSettings(
             id="default",
             isolation_mode=IsolationMode.CONTEXT.value,
+            default_analysis_model="gemini-3.0-flash",
         )
         db.add(settings)
         db.commit()
@@ -50,6 +51,7 @@ async def get_settings(db: Session = Depends(get_db)):
     settings = get_or_create_settings(db)
     return SystemSettingsResponse(
         isolation_mode=IsolationMode(settings.isolation_mode),
+        default_analysis_model=settings.default_analysis_model,
         updated_at=settings.updated_at,
     )
 
@@ -65,6 +67,13 @@ async def update_settings(
     # Update isolation mode
     old_mode = settings.isolation_mode
     settings.isolation_mode = request.isolation_mode.value
+
+    # Update default analysis model if provided
+    if request.default_analysis_model is not None:
+        old_model = settings.default_analysis_model
+        settings.default_analysis_model = request.default_analysis_model
+        logger.info(f"System settings updated: default_analysis_model changed from {old_model} to {settings.default_analysis_model}")
+
     settings.updated_at = datetime.utcnow()
 
     db.commit()
@@ -74,6 +83,7 @@ async def update_settings(
 
     return SystemSettingsResponse(
         isolation_mode=IsolationMode(settings.isolation_mode),
+        default_analysis_model=settings.default_analysis_model,
         updated_at=settings.updated_at,
     )
 

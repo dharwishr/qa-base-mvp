@@ -9,7 +9,9 @@ import {
     Boxes,
     Zap,
     Compass,
-    FlaskConical
+    FlaskConical,
+    Building2,
+    ClipboardList
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 
@@ -89,6 +91,12 @@ export default function DashboardLayout() {
                         onClick={() => navigate('/scripts')}
                     />
                     <SidebarItem
+                        icon={ClipboardList}
+                        label="Test Plans"
+                        active={activePath.startsWith('/test-plans') || activePath.startsWith('/test-plan-runs')}
+                        onClick={() => navigate('/test-plans')}
+                    />
+                    <SidebarItem
                         icon={Compass}
                         label="Discovery"
                         active={activePath.startsWith('/discovery')}
@@ -99,6 +107,12 @@ export default function DashboardLayout() {
                         label="Benchmark"
                         active={activePath.startsWith('/benchmark')}
                         onClick={() => navigate('/benchmarks')}
+                    />
+                    <SidebarItem
+                        icon={Building2}
+                        label="Organization"
+                        active={activePath === '/organization'}
+                        onClick={() => navigate('/organization')}
                     />
                     <SidebarItem
                         icon={Settings}
@@ -121,11 +135,13 @@ export default function DashboardLayout() {
                             activePath.includes('/test-generation') ? 'Test Generation' :
                                 activePath.includes('/test-cases') ? 'Test Cases' :
                                     activePath.includes('/test-analysis') ? 'Test Analysis' :
-                                        activePath.includes('/scripts') ? 'Test Scripts' :
-                                            activePath.includes('/discovery') ? 'Module Discovery' :
-                                                activePath.includes('/benchmark') ? 'LLM Benchmark' :
-                                                    activePath.includes('/settings') ? 'Settings' :
-                                                        'SmartTester'}
+                                        activePath.includes('/test-plan') ? 'Test Plans' :
+                                            activePath.includes('/scripts') ? 'Test Scripts' :
+                                                activePath.includes('/discovery') ? 'Module Discovery' :
+                                                    activePath.includes('/benchmark') ? 'LLM Benchmark' :
+                                                        activePath.includes('/organization') ? 'Organization' :
+                                                            activePath.includes('/settings') ? 'Settings' :
+                                                                'SmartTester'}
                     </h1>
                 </header>
                 <main className="flex-1 overflow-auto">

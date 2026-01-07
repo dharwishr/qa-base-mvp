@@ -1,6 +1,22 @@
 import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestStep, UndoResponse, PaginatedTestSessions } from '../types/analysis';
 import type { PlanStep } from '../types/chat';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse, SystemSettings, NetworkRequest, ConsoleLog, ContainerPoolStats } from '../types/scripts';
+import type {
+  TestPlan as TestPlanModule,
+  TestPlanDetail,
+  TestPlanRun,
+  TestPlanRunDetail,
+  TestPlanSchedule,
+  PaginatedTestPlans,
+  CreateTestPlanRequest,
+  UpdateTestPlanRequest,
+  UpdateTestPlanSettingsRequest,
+  RunTestPlanRequest,
+  CreateScheduleRequest,
+  UpdateScheduleRequest,
+  StartTestPlanRunResponse,
+  TestCaseOrder,
+} from '../types/test-plans';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config, getWsUrl } from '../config';
 
@@ -67,7 +83,7 @@ export const analysisApi = {
    * Create a new test session with the given prompt, LLM model, and headless option.
    * This will also generate a plan using Gemini.
    */
-  async createSession(prompt: string, llmModel: LlmModel = 'gemini-2.5-flash', headless: boolean = true): Promise<TestSession> {
+  async createSession(prompt: string, llmModel: LlmModel = 'gemini-3.0-flash', headless: boolean = true): Promise<TestSession> {
     const response = await fetch(`${API_BASE}/api/analysis/sessions`, {
       method: 'POST',
       headers: getAuthHeaders(),
@@ -948,6 +964,185 @@ export const speechApi = {
       body: JSON.stringify({ audio_data: audioData, language_code: languageCode }),
     });
     return handleResponse(response);
+  },
+};
+
+/**
+ * Test Plans API - Manage test plans, test cases, runs, and schedules
+ */
+export const testPlansApi = {
+  // Test Plan CRUD
+  async listTestPlans(params?: { search?: string; status?: string; page?: number; page_size?: number }): Promise<PaginatedTestPlans> {
+    const urlParams = new URLSearchParams();
+    if (params?.search) urlParams.set('search', params.search);
+    if (params?.status) urlParams.set('status_filter', params.status);
+    if (params?.page) urlParams.set('page', String(params.page));
+    if (params?.page_size) urlParams.set('page_size', String(params.page_size));
+    const query = urlParams.toString() ? `?${urlParams.toString()}` : '';
+    const response = await fetch(`${API_BASE}/api/test-plans${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<PaginatedTestPlans>(response);
+  },
+
+  async getTestPlan(planId: string): Promise<TestPlanDetail> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestPlanDetail>(response);
+  },
+
+  async createTestPlan(request: CreateTestPlanRequest): Promise<TestPlanModule> {
+    const response = await fetch(`${API_BASE}/api/test-plans`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse<TestPlanModule>(response);
+  },
+
+  async updateTestPlan(planId: string, request: UpdateTestPlanRequest): Promise<TestPlanModule> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse<TestPlanModule>(response);
+  },
+
+  async updateTestPlanSettings(planId: string, request: UpdateTestPlanSettingsRequest): Promise<TestPlanModule> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}/settings`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse<TestPlanModule>(response);
+  },
+
+  async deleteTestPlan(planId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) {
+      await handleResponse(response);
+    }
+  },
+
+  // Test Case Management
+  async addTestCases(planId: string, sessionIds: string[]): Promise<{ added: string[]; count: number }> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}/test-cases`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ test_session_ids: sessionIds }),
+    });
+    return handleResponse(response);
+  },
+
+  async removeTestCase(planId: string, sessionId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}/test-cases/${sessionId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) {
+      await handleResponse(response);
+    }
+  },
+
+  async reorderTestCases(planId: string, orders: TestCaseOrder[]): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}/test-cases/reorder`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ test_case_orders: orders }),
+    });
+    if (!response.ok) {
+      await handleResponse(response);
+    }
+  },
+
+  // Execution
+  async runTestPlan(planId: string, request: RunTestPlanRequest): Promise<StartTestPlanRunResponse> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}/run`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse<StartTestPlanRunResponse>(response);
+  },
+
+  async listRuns(planId: string, page: number = 1, pageSize: number = 20): Promise<TestPlanRun[]> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}/runs?page=${page}&page_size=${pageSize}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestPlanRun[]>(response);
+  },
+
+  async getRunDetail(runId: string): Promise<TestPlanRunDetail> {
+    const response = await fetch(`${API_BASE}/api/test-plan-runs/${runId}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestPlanRunDetail>(response);
+  },
+
+  async cancelRun(runId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/test-plan-runs/${runId}/cancel`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) {
+      await handleResponse(response);
+    }
+  },
+
+  // Schedules
+  async createSchedule(planId: string, request: CreateScheduleRequest): Promise<TestPlanSchedule> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}/schedules`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse<TestPlanSchedule>(response);
+  },
+
+  async listSchedules(planId: string): Promise<TestPlanSchedule[]> {
+    const response = await fetch(`${API_BASE}/api/test-plans/${planId}/schedules`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestPlanSchedule[]>(response);
+  },
+
+  async getSchedule(scheduleId: string): Promise<TestPlanSchedule> {
+    const response = await fetch(`${API_BASE}/api/test-plan-schedules/${scheduleId}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestPlanSchedule>(response);
+  },
+
+  async updateSchedule(scheduleId: string, request: UpdateScheduleRequest): Promise<TestPlanSchedule> {
+    const response = await fetch(`${API_BASE}/api/test-plan-schedules/${scheduleId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+    return handleResponse<TestPlanSchedule>(response);
+  },
+
+  async deleteSchedule(scheduleId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/test-plan-schedules/${scheduleId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) {
+      await handleResponse(response);
+    }
+  },
+
+  async toggleSchedule(scheduleId: string): Promise<TestPlanSchedule> {
+    const response = await fetch(`${API_BASE}/api/test-plan-schedules/${scheduleId}/toggle`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TestPlanSchedule>(response);
   },
 };
 

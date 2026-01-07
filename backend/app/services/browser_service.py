@@ -14,7 +14,7 @@ from fastapi import WebSocket
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import ChatMessage, StepAction, TestPlan, TestSession, TestStep
+from app.models import ChatMessage, StepAction, AnalysisPlan, TestSession, TestStep
 from app.schemas import StepActionResponse, TestStepResponse, WSCompleted, WSError, WSStepCompleted, WSStepStarted
 from app.services.browser_orchestrator import (
 	get_orchestrator,
@@ -158,7 +158,7 @@ class BrowserService:
 		except Exception as e:
 			logger.error(f"Error sending status changed message: {e}")
 
-	def _extract_target_url(self, plan: TestPlan) -> str | None:
+	def _extract_target_url(self, plan: AnalysisPlan) -> str | None:
 		"""Extract the target URL from a test plan.
 
 		Looks for:
@@ -350,7 +350,7 @@ class BrowserService:
 			logger.error(f"Error in on_step_end: {e}")
 			raise
 
-	async def execute(self, plan: TestPlan, max_steps: int = 300) -> None:
+	async def execute(self, plan: AnalysisPlan, max_steps: int = 300) -> None:
 		"""Execute the test plan using browser-use."""
 		browser_session = None
 		remote_session: OrchestratorSession | None = None
@@ -578,7 +578,7 @@ class BrowserService:
 				logger.info(f"Remote browser session still alive for reuse: {remote_session.id}")
 
 
-async def execute_test(db: Session, session: TestSession, plan: TestPlan, websocket: WebSocket) -> None:
+async def execute_test(db: Session, session: TestSession, plan: AnalysisPlan, websocket: WebSocket) -> None:
 	"""Execute a test plan and stream results via WebSocket."""
 	service = BrowserService(db, session, websocket)
 	await service.execute(plan)
@@ -789,7 +789,7 @@ class BrowserServiceSync:
 			logger.error(f"Error in on_step_end: {e}")
 			raise
 
-	async def execute(self, plan: TestPlan, max_steps: int = 300) -> dict:
+	async def execute(self, plan: AnalysisPlan, max_steps: int = 300) -> dict:
 		"""Execute the test plan using browser-use."""
 		browser_session = None
 		remote_session: OrchestratorSession | None = None
@@ -1095,7 +1095,7 @@ class BrowserServiceSync:
 				logger.info(f"Act mode - Remote browser session still alive: {remote_session.id}")
 
 
-def execute_test_sync(db: Session, session: TestSession, plan: TestPlan) -> dict:
+def execute_test_sync(db: Session, session: TestSession, plan: AnalysisPlan) -> dict:
 	"""Execute test synchronously (for Celery worker).
 
 	Runs the async execution in a new event loop.

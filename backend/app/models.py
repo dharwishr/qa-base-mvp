@@ -110,7 +110,7 @@ class TestSession(Base):
 	prompt: Mapped[str] = mapped_column(Text, nullable=False)
 	title: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Auto-generated from first prompt
 	llm_model: Mapped[str] = mapped_column(
-		String(50), nullable=False, default="gemini-2.5-flash"
+		String(50), nullable=False, default="gemini-3.0-flash"
 	)  # browser-use-llm | gemini-2.0-flash | gemini-2.5-flash | gemini-3.0-flash | gemini-2.5-computer-use
 	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # True = headless (default), False = live browser
 	status: Mapped[str] = mapped_column(
@@ -130,8 +130,8 @@ class TestSession(Base):
 	# Relationships
 	organization: Mapped["Organization | None"] = relationship("Organization")
 	user: Mapped["User | None"] = relationship("User")
-	plan: Mapped["TestPlan | None"] = relationship(
-		"TestPlan", back_populates="session", uselist=False
+	plan: Mapped["AnalysisPlan | None"] = relationship(
+		"AnalysisPlan", back_populates="session", uselist=False
 	)
 	steps: Mapped[list["TestStep"]] = relationship(
 		"TestStep", back_populates="session", order_by="TestStep.step_number"
@@ -149,10 +149,10 @@ class TestSession(Base):
 	)
 
 
-class TestPlan(Base):
-	"""Generated plan from LLM."""
+class AnalysisPlan(Base):
+	"""Generated plan from LLM for test case analysis (renamed from TestPlan)."""
 
-	__tablename__ = "test_plans"
+	__tablename__ = "analysis_plans"
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
 	session_id: Mapped[str] = mapped_column(
@@ -614,6 +614,184 @@ class SystemSettings(Base):
 	isolation_mode: Mapped[str] = mapped_column(
 		String(20), nullable=False, default="context"
 	)  # context | ephemeral
+	default_analysis_model: Mapped[str] = mapped_column(
+		String(50), nullable=False, default="gemini-3.0-flash"
+	)  # Default LLM model for test case analysis
 	updated_at: Mapped[datetime] = mapped_column(
 		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
 	)
+
+
+# ============================================
+# Test Plan Module Models
+# ============================================
+
+class TestPlan(Base):
+	"""Test Plan for grouping and executing multiple test cases."""
+
+	__tablename__ = "test_plans"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	organization_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+	)
+	user_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+	)
+	name: Mapped[str] = mapped_column(String(256), nullable=False)
+	url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+	description: Mapped[str | None] = mapped_column(Text, nullable=True)
+	status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active | archived
+
+	# Default Run Settings
+	default_run_type: Mapped[str] = mapped_column(String(20), nullable=False, default="sequential")  # sequential | parallel
+	browser_type: Mapped[str] = mapped_column(String(20), nullable=False, default="chromium")  # chromium | firefox | webkit | edge
+	resolution_width: Mapped[int] = mapped_column(Integer, nullable=False, default=1920)
+	resolution_height: Mapped[int] = mapped_column(Integer, nullable=False, default=1080)
+	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	screenshots_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	recording_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	network_recording_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+	performance_metrics_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+	# Relationships
+	organization: Mapped["Organization"] = relationship("Organization")
+	user: Mapped["User | None"] = relationship("User")
+	test_cases: Mapped[list["TestPlanTestCase"]] = relationship(
+		"TestPlanTestCase", back_populates="test_plan", cascade="all, delete-orphan", order_by="TestPlanTestCase.order"
+	)
+	runs: Mapped[list["TestPlanRun"]] = relationship(
+		"TestPlanRun", back_populates="test_plan", cascade="all, delete-orphan", order_by="TestPlanRun.created_at.desc()"
+	)
+	schedules: Mapped[list["TestPlanSchedule"]] = relationship(
+		"TestPlanSchedule", back_populates="test_plan", cascade="all, delete-orphan"
+	)
+
+
+class TestPlanTestCase(Base):
+	"""Junction table linking test plans to test sessions with order."""
+
+	__tablename__ = "test_plan_test_cases"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	test_plan_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_plans.id", ondelete="CASCADE"), nullable=False, index=True
+	)
+	test_session_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+	)
+	order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Unique constraint
+	__table_args__ = (
+		UniqueConstraint('test_plan_id', 'test_session_id', name='uq_test_plan_test_case'),
+	)
+
+	# Relationships
+	test_plan: Mapped["TestPlan"] = relationship("TestPlan", back_populates="test_cases")
+	test_session: Mapped["TestSession"] = relationship("TestSession")
+
+
+class TestPlanRun(Base):
+	"""Execution history for a test plan run."""
+
+	__tablename__ = "test_plan_runs"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	test_plan_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_plans.id", ondelete="CASCADE"), nullable=False, index=True
+	)
+	user_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+	)
+	celery_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+	status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending | running | passed | failed | cancelled
+	run_type: Mapped[str] = mapped_column(String(20), nullable=False, default="sequential")  # sequential | parallel
+
+	# Run Configuration
+	browser_type: Mapped[str] = mapped_column(String(20), nullable=False, default="chromium")
+	resolution_width: Mapped[int] = mapped_column(Integer, nullable=False, default=1920)
+	resolution_height: Mapped[int] = mapped_column(Integer, nullable=False, default=1080)
+	headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	screenshots_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	recording_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	network_recording_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+	performance_metrics_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+	# Stats
+	total_test_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	passed_test_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	failed_test_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+	# Relationships
+	test_plan: Mapped["TestPlan"] = relationship("TestPlan", back_populates="runs")
+	user: Mapped["User | None"] = relationship("User")
+	results: Mapped[list["TestPlanRunResult"]] = relationship(
+		"TestPlanRunResult", back_populates="run", cascade="all, delete-orphan", order_by="TestPlanRunResult.order"
+	)
+
+
+class TestPlanRunResult(Base):
+	"""Per-test-case result within a test plan run."""
+
+	__tablename__ = "test_plan_run_results"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	test_plan_run_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_plan_runs.id", ondelete="CASCADE"), nullable=False, index=True
+	)
+	test_session_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("test_sessions.id", ondelete="SET NULL"), nullable=True
+	)
+	test_run_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+	)
+	order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending | running | passed | failed | skipped
+	duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+	started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+	# Relationships
+	run: Mapped["TestPlanRun"] = relationship("TestPlanRun", back_populates="results")
+	test_session: Mapped["TestSession | None"] = relationship("TestSession")
+	test_run: Mapped["TestRun | None"] = relationship("TestRun")
+
+
+class TestPlanSchedule(Base):
+	"""Scheduling configuration for automated test plan runs."""
+
+	__tablename__ = "test_plan_schedules"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	test_plan_id: Mapped[str] = mapped_column(
+		String(36), ForeignKey("test_plans.id", ondelete="CASCADE"), nullable=False, index=True
+	)
+	user_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+	)
+	name: Mapped[str] = mapped_column(String(256), nullable=False)
+	schedule_type: Mapped[str] = mapped_column(String(20), nullable=False)  # one_time | recurring
+	run_type: Mapped[str] = mapped_column(String(20), nullable=False, default="sequential")  # sequential | parallel
+	one_time_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	cron_expression: Mapped[str | None] = mapped_column(String(100), nullable=True)
+	timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="UTC")
+	is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+	last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+	# Relationships
+	test_plan: Mapped["TestPlan"] = relationship("TestPlan", back_populates="schedules")
+	user: Mapped["User | None"] = relationship("User")

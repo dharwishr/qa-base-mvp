@@ -108,6 +108,7 @@ export function useExistingSession(): UseExistingSessionReturn {
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const browserPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const planPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastStepCountRef = useRef(0);
 
   const totalSteps = messages.filter(m => m.type === 'step').length;
@@ -123,6 +124,13 @@ export function useExistingSession(): UseExistingSessionReturn {
     if (browserPollIntervalRef.current) {
       clearInterval(browserPollIntervalRef.current);
       browserPollIntervalRef.current = null;
+    }
+  }, []);
+
+  const stopPlanPolling = useCallback(() => {
+    if (planPollIntervalRef.current) {
+      clearInterval(planPollIntervalRef.current);
+      planPollIntervalRef.current = null;
     }
   }, []);
 
@@ -161,6 +169,62 @@ export function useExistingSession(): UseExistingSessionReturn {
     browserPollIntervalRef.current = setInterval(checkBrowserSession, 3000);
   }, [stopBrowserPolling]);
 
+  // Poll for plan generation completion
+  const startPlanPolling = useCallback(() => {
+    if (!sessionId) return;
+    stopPlanPolling();
+
+    const checkPlanStatus = async () => {
+      try {
+        const session = await analysisApi.getSession(sessionId);
+        setSessionStatus(session.status);
+        setCurrentSession(session);
+
+        if (session.status === 'plan_ready' && session.plan) {
+          // Plan is ready, stop polling and show the plan
+          stopPlanPolling();
+          setIsGeneratingPlan(false);
+
+          const planSteps: PlanStep[] = session.plan.steps_json?.steps || [];
+          setMessages((prev) => [
+            // Remove the "Generating test plan..." message
+            ...prev.filter((m) => !(m.type === 'system' && m.content === 'Generating test plan...')),
+            createTimelineMessage('plan', {
+              planId: session.id,
+              planText: session.plan!.plan_text,
+              planSteps,
+              status: 'pending' as const,
+            }),
+          ]);
+
+          // Persist plan message to database
+          await analysisApi.createMessage(sessionId, {
+            message_type: 'plan',
+            content: session.plan!.plan_text,
+            mode: 'plan',
+          });
+
+          setIsPlanPending(true);
+        } else if (session.status === 'failed') {
+          // Plan generation failed
+          stopPlanPolling();
+          setIsGeneratingPlan(false);
+          setMessages((prev) => [
+            ...prev.filter((m) => !(m.type === 'system' && m.content === 'Generating test plan...')),
+            createTimelineMessage('error', {
+              content: 'Failed to generate test plan. Please try again.',
+            }),
+          ]);
+        }
+      } catch (e) {
+        console.error('Error polling plan status:', e);
+      }
+    };
+
+    checkPlanStatus();
+    planPollIntervalRef.current = setInterval(checkPlanStatus, 2000);
+  }, [sessionId, stopPlanPolling]);
+
   // Load an existing session
   const loadSession = useCallback(async (id: string) => {
     setIsLoading(true);
@@ -186,16 +250,22 @@ export function useExistingSession(): UseExistingSessionReturn {
 
       // If no stored chat messages, reconstruct from session data (backward compatibility)
       if (chatMessages.length === 0) {
+        // Detect if this was an act mode session by checking if plan is a simple auto-approved plan
+        // Act mode creates a plan where plan_text equals the prompt and approval_status is 'approved'
+        const isActModeSession = session.plan &&
+          session.plan.plan_text === session.prompt &&
+          session.plan.approval_status === 'approved';
+
         // Add user message (original prompt)
         timelineMessages.push(
           createTimelineMessage('user', {
             content: session.prompt,
-            mode: 'plan' as ChatMode,
+            mode: isActModeSession ? 'act' as ChatMode : 'plan' as ChatMode,
           })
         );
 
-        // Add plan if exists
-        if (session.plan) {
+        // Add plan if exists (but NOT for act mode sessions - they have a placeholder plan)
+        if (session.plan && !isActModeSession) {
           const planSteps: PlanStep[] = session.plan.steps_json?.steps || [];
           timelineMessages.push(
             createTimelineMessage('plan', {
@@ -498,80 +568,6 @@ export function useExistingSession(): UseExistingSessionReturn {
     setReplayFailure(null);
   }, []);
 
-  // Continue session with new message
-  const sendMessage = useCallback(
-    async (text: string, messageMode: ChatMode) => {
-      if (!sessionId) return;
-
-      setError(null);
-      setIsGeneratingPlan(true);
-
-      // Add user message to timeline (optimistic UI update)
-      const userMessage = createTimelineMessage('user', {
-        content: text,
-        mode: messageMode,
-      });
-      setMessages((prev) => [...prev, userMessage]);
-
-      try {
-        // Continue the existing session
-        const session = await analysisApi.continueSession(sessionId, text, selectedLlm, messageMode);
-
-        // Persist user message to database
-        await analysisApi.createMessage(sessionId, {
-          message_type: 'user',
-          content: text,
-          mode: messageMode,
-        });
-
-        setCurrentSession(session);
-        setSessionStatus(session.status);
-
-        if (messageMode === 'plan' && session.status === 'plan_ready' && session.plan) {
-          const planSteps: PlanStep[] = session.plan.steps_json?.steps || [];
-          setMessages((prev) => [
-            ...prev,
-            createTimelineMessage('plan', {
-              planId: session.id,
-              planText: session.plan!.plan_text,
-              planSteps,
-              status: 'pending' as const,
-            }),
-          ]);
-
-          // Persist plan message to database
-          await analysisApi.createMessage(sessionId, {
-            message_type: 'plan',
-            content: session.plan!.plan_text,
-            mode: 'plan',
-          });
-
-          setIsPlanPending(true);
-        } else if (session.status === 'approved') {
-          // Start execution
-          await analysisApi.startExecution(sessionId);
-          setIsExecuting(true);
-          startPolling();
-          if (!headless) {
-            startBrowserPolling(sessionId);
-          }
-        }
-      } catch (e) {
-        console.error('Error sending message:', e);
-        setMessages((prev) => [
-          ...prev,
-          createTimelineMessage('error', {
-            content: e instanceof Error ? e.message : 'Failed to continue session',
-          }),
-        ]);
-      } finally {
-        setIsGeneratingPlan(false);
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionId, selectedLlm, headless, startBrowserPolling]
-  );
-
   // Poll for session updates during execution
   const pollSession = useCallback(async () => {
     if (!sessionId) return;
@@ -639,6 +635,96 @@ export function useExistingSession(): UseExistingSessionReturn {
     pollSession();
     pollIntervalRef.current = setInterval(pollSession, POLL_INTERVAL);
   }, [pollSession, stopPolling]);
+
+  // Continue session with new message
+  const sendMessage = useCallback(
+    async (text: string, messageMode: ChatMode) => {
+      if (!sessionId) return;
+
+      setError(null);
+      setIsGeneratingPlan(true);
+
+      // Add user message to timeline (optimistic UI update)
+      const userMessage = createTimelineMessage('user', {
+        content: text,
+        mode: messageMode,
+      });
+      setMessages((prev) => [...prev, userMessage]);
+
+      try {
+        // Continue the existing session
+        const session = await analysisApi.continueSession(sessionId, text, selectedLlm, messageMode);
+
+        // Persist user message to database
+        await analysisApi.createMessage(sessionId, {
+          message_type: 'user',
+          content: text,
+          mode: messageMode,
+        });
+
+        setCurrentSession(session);
+        setSessionStatus(session.status);
+
+        if (messageMode === 'plan' && session.status === 'plan_ready' && session.plan) {
+          const planSteps: PlanStep[] = session.plan.steps_json?.steps || [];
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('plan', {
+              planId: session.id,
+              planText: session.plan!.plan_text,
+              planSteps,
+              status: 'pending' as const,
+            }),
+          ]);
+
+          // Persist plan message to database
+          await analysisApi.createMessage(sessionId, {
+            message_type: 'plan',
+            content: session.plan!.plan_text,
+            mode: 'plan',
+          });
+
+          setIsPlanPending(true);
+        } else if (messageMode === 'plan' && session.status === 'generating_plan') {
+          // Plan is being generated asynchronously by Celery
+          // Start polling to wait for plan to be ready
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('system', {
+              content: 'Generating test plan...',
+            }),
+          ]);
+          // Poll for plan completion
+          startPlanPolling();
+        } else if (session.status === 'approved') {
+          // Act mode: Start execution immediately
+          setMessages((prev) => [
+            ...prev,
+            createTimelineMessage('system', {
+              content: 'Starting execution...',
+            }),
+          ]);
+          await analysisApi.startExecution(sessionId);
+          setIsExecuting(true);
+          startPolling();
+          if (!headless) {
+            startBrowserPolling(sessionId);
+          }
+        }
+      } catch (e) {
+        console.error('Error sending message:', e);
+        setMessages((prev) => [
+          ...prev,
+          createTimelineMessage('error', {
+            content: e instanceof Error ? e.message : 'Failed to continue session',
+          }),
+        ]);
+      } finally {
+        setIsGeneratingPlan(false);
+      }
+    },
+    [sessionId, selectedLlm, headless, startBrowserPolling, startPolling, startPlanPolling]
+  );
 
   // Approve plan
   const approvePlan = useCallback(
@@ -819,8 +905,9 @@ export function useExistingSession(): UseExistingSessionReturn {
     return () => {
       stopPolling();
       stopBrowserPolling();
+      stopPlanPolling();
     };
-  }, [stopPolling, stopBrowserPolling]);
+  }, [stopPolling, stopBrowserPolling, stopPlanPolling]);
 
   return {
     messages,

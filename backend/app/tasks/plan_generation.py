@@ -10,7 +10,7 @@ from google.api_core import exceptions as google_exceptions
 
 from app.celery_app import celery_app
 from app.database import SessionLocal
-from app.models import ChatMessage, TestPlan, TestSession
+from app.models import ChatMessage, AnalysisPlan, TestSession
 from app.services.event_publisher import AnalysisEventPublisher, check_cancelled
 from app.services.plan_service import generate_plan_sync
 

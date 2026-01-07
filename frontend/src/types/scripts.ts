@@ -8,6 +8,7 @@ export type IsolationMode = 'context' | 'ephemeral';
 // System-wide settings
 export interface SystemSettings {
   isolation_mode: IsolationMode;
+  default_analysis_model: string;
   updated_at: string | null;
 }
 

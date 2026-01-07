@@ -21,6 +21,8 @@ import BenchmarkHistoryPage from "./pages/BenchmarkHistoryPage"
 import BenchmarkDetailPage from "./pages/BenchmarkDetailPage"
 import SettingsPage from "./pages/SettingsPage"
 import OrganizationSettings from "./pages/OrganizationSettings"
+import TestPlans from "./pages/TestPlans"
+import TestPlanRunDetail from "./pages/TestPlanRunDetail"
 
 import DashboardLayout from "./components/layout/DashboardLayout"
 
@@ -49,6 +51,9 @@ function App() {
             <Route path="/scripts" element={<Scripts />} />
             <Route path="/scripts/:scriptId" element={<ScriptDetail />} />
             <Route path="/scripts/:scriptId/runs/:runId" element={<RunDetail />} />
+            <Route path="/test-plans" element={<TestPlans />} />
+            <Route path="/test-plans/:planId" element={<TestPlans />} />
+            <Route path="/test-plan-runs/:runId" element={<TestPlanRunDetail />} />
             <Route path="/discovery" element={<ModuleDiscovery />} />
             <Route path="/benchmark" element={<BenchmarkPage />} />
             <Route path="/benchmarks" element={<BenchmarkHistoryPage />} />

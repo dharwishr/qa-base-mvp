@@ -21,6 +21,7 @@ from app.routers.discovery import router as discovery_router
 from app.routers.benchmark import router as benchmark_router
 from app.routers.speech import router as speech_router
 from app.routers.settings import router as settings_router
+from app.routers.test_plans import router as test_plans_router, run_router as test_plan_runs_router, schedule_router as test_plan_schedules_router
 from app.services.browser_orchestrator import init_orchestrator, shutdown_orchestrator
 from app.services.db_init import init_database
 
@@ -98,6 +99,9 @@ app.include_router(discovery_router)
 app.include_router(benchmark_router)
 app.include_router(speech_router)
 app.include_router(settings_router)
+app.include_router(test_plans_router)
+app.include_router(test_plan_runs_router)
+app.include_router(test_plan_schedules_router)
 
 # Mount static files for screenshots
 app.mount("/screenshots", StaticFiles(directory=settings.SCREENSHOTS_DIR), name="screenshots")
