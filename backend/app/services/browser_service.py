@@ -188,12 +188,23 @@ class BrowserService:
 		logger.warning("Could not extract target URL from plan")
 		return None
 
+	def _check_user_prompts(self) -> list[str]:
+		"""Check for user-injected prompts/hints in the Redis queue."""
+		from app.services.event_publisher import pop_user_prompts
+		return pop_user_prompts(self._session_id)
+
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
 		# Check if stop was requested - raise exception to gracefully exit
 		if self._stop_requested:
 			logger.info(f"Stop requested, halting execution at step {self.current_step_number + 1}")
 			raise StopExecutionException("Execution paused by user")
+
+		# Check for user-injected prompts/hints and add them to the agent
+		user_prompts = self._check_user_prompts()
+		for prompt in user_prompts:
+			logger.info(f"Injecting user guidance: {prompt[:50]}...")
+			agent.add_user_guidance(prompt)
 
 		self.current_step_number += 1
 		logger.info(f"Step {self.current_step_number} started")
@@ -558,6 +569,11 @@ class BrowserService:
 		finally:
 			# Unregister this service
 			unregister_browser_service(self._session_id)
+
+			# Clean up any remaining user prompts in the queue
+			from app.services.event_publisher import clear_user_prompt_queue
+			clear_user_prompt_queue(self._session_id)
+
 			# ALWAYS stop the browser_use BrowserSession to clean up CDP connection
 			# This does NOT kill the browser - it just disconnects the CDP client
 			# The browser container stays alive for reuse via the orchestrator
@@ -635,6 +651,11 @@ class BrowserServiceSync:
 		except Exception as e:
 			logger.error(f"Error updating session status: {e}")
 
+	def _check_user_prompts(self) -> list[str]:
+		"""Check for user-injected prompts/hints in the Redis queue."""
+		from app.services.event_publisher import pop_user_prompts
+		return pop_user_prompts(self._session_id)
+
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
 		# Check if stop was requested
@@ -642,6 +663,12 @@ class BrowserServiceSync:
 			logger.info(f"Stop requested before step {self.current_step_number + 1}, stopping agent")
 			agent.stop()
 			return
+
+		# Check for user-injected prompts/hints and add them to the agent
+		user_prompts = self._check_user_prompts()
+		for prompt in user_prompts:
+			logger.info(f"Injecting user guidance: {prompt[:50]}...")
+			agent.add_user_guidance(prompt)
 
 		self.current_step_number += 1
 		logger.info(f"Step {self.current_step_number} started")
@@ -939,6 +966,10 @@ class BrowserServiceSync:
 			raise
 
 		finally:
+			# Clean up any remaining user prompts in the queue
+			from app.services.event_publisher import clear_user_prompt_queue
+			clear_user_prompt_queue(self._session_id)
+
 			# ALWAYS stop the browser_use BrowserSession to clean up CDP connection
 			# This does NOT kill the browser - it just disconnects the CDP client
 			# The browser container stays alive for reuse via the orchestrator

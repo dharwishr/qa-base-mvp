@@ -32,7 +32,12 @@ export default function Login() {
         setIsLoading(false)
 
         if (result.success) {
-            navigate("/dashboard")
+            // Check if user has multiple organizations
+            if (result.organizationCount && result.organizationCount > 1) {
+                navigate("/select-organization")
+            } else {
+                navigate("/dashboard")
+            }
         } else {
             setError(result.error || "Login failed")
         }

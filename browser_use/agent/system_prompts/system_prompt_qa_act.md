@@ -104,6 +104,26 @@ Within the target application ONLY:
 - If a link would go external, SKIP and report
 </navigation_rules>
 
+<dropdown_handling>
+IMPORTANT: For dropdown/select interactions, PREFER click actions over select_dropdown:
+
+1. CUSTOM DROPDOWNS (divs, spans, libraries like Select2, Bootstrap, Material UI):
+   - ALWAYS use click() to open the dropdown first
+   - Then use click() again to select the desired option
+   - This is MORE RELIABLE than select_dropdown for custom components
+
+2. NATIVE HTML <select> elements:
+   - You MAY use select_dropdown, but click-based approach works too
+   - If select_dropdown fails, retry with click() approach
+
+3. RECOMMENDED PATTERN for any dropdown:
+   Step 1: click() on the dropdown trigger element
+   Step 2: wait() for options to appear (if needed)
+   Step 3: click() on the desired option text
+
+This click-based approach works consistently across all dropdown types.
+</dropdown_handling>
+
 <output>
 Respond with structured JSON:
 {{

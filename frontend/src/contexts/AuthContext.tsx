@@ -10,10 +10,13 @@ interface AuthContextType {
     isAuthenticated: boolean;
     isLoading: boolean;
     isOwner: boolean;
-    login: (email: string, password: string, organizationId?: string) => Promise<{ success: boolean; error?: string; needsOrgSelection?: boolean }>;
+    organizationCount: number;
+    isOwnerOfAny: boolean;
+    login: (email: string, password: string, organizationId?: string) => Promise<{ success: boolean; error?: string; organizationCount?: number }>;
     logout: () => void;
     switchOrganization: (organizationId: string) => Promise<{ success: boolean; error?: string }>;
     refreshUser: () => Promise<void>;
+    refreshOrganizations: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,6 +29,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [organization, setOrganization] = useState<Organization | null>(null);
     const [role, setRole] = useState<UserRole | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [organizationCount, setOrganizationCount] = useState<number>(1);
+    const [isOwnerOfAny, setIsOwnerOfAny] = useState<boolean>(false);
     const navigate = useNavigate();
 
     const clearAuth = useCallback(() => {
@@ -34,6 +39,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
         setOrganization(null);
         setRole(null);
+        setOrganizationCount(1);
+        setIsOwnerOfAny(false);
+    }, []);
+
+    const refreshOrganizations = useCallback(async () => {
+        try {
+            const orgs = await authApi.getUserOrganizations();
+            setOrganizationCount(orgs.length);
+            setIsOwnerOfAny(orgs.some(org => org.role === 'owner'));
+        } catch {
+            // Keep existing values on error
+        }
     }, []);
 
     const refreshUser = useCallback(async () => {
@@ -48,6 +65,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(response.user);
             setOrganization(response.organization);
             setRole(response.role);
+            // Also refresh organizations to get count and owner status
+            const orgs = await authApi.getUserOrganizations();
+            setOrganizationCount(orgs.length);
+            setIsOwnerOfAny(orgs.some(org => org.role === 'owner'));
         } catch {
             clearAuth();
         }
@@ -63,6 +84,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     setUser(response.user);
                     setOrganization(response.organization);
                     setRole(response.role);
+                    // Also fetch organizations to get count and owner status
+                    const orgs = await authApi.getUserOrganizations();
+                    setOrganizationCount(orgs.length);
+                    setIsOwnerOfAny(orgs.some(org => org.role === 'owner'));
                 } catch {
                     clearAuth();
                 }
@@ -76,14 +101,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const login = useCallback(async (email: string, password: string, organizationId?: string) => {
         try {
             const response: LoginResponse = await authApi.login(email, password, organizationId);
-            
+
             localStorage.setItem('auth_token', response.access_token);
             setToken(response.access_token);
             setUser(response.user);
             setOrganization(response.organization);
             setRole(response.role);
+            setOrganizationCount(response.organization_count);
 
-            return { success: true };
+            // Fetch organizations to determine if user is owner of any
+            try {
+                const orgs = await authApi.getUserOrganizations();
+                setIsOwnerOfAny(orgs.some(org => org.role === 'owner'));
+            } catch {
+                setIsOwnerOfAny(response.role === 'owner');
+            }
+
+            return { success: true, organizationCount: response.organization_count };
         } catch (error: unknown) {
             const err = error as { status?: number; message?: string };
             if (err.status === 403 && err.message?.includes('not a member')) {
@@ -107,12 +141,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const switchOrganization = useCallback(async (organizationId: string) => {
         try {
             const response = await authApi.switchOrganization(organizationId);
-            
+
             localStorage.setItem('auth_token', response.access_token);
             setToken(response.access_token);
             setUser(response.user);
             setOrganization(response.organization);
             setRole(response.role);
+            setOrganizationCount(response.organization_count);
 
             return { success: true };
         } catch (error: unknown) {
@@ -132,10 +167,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: !!token && !!user,
         isLoading,
         isOwner: role === 'owner',
+        organizationCount,
+        isOwnerOfAny,
         login,
         logout,
         switchOrganization,
         refreshUser,
+        refreshOrganizations,
     };
 
     return (

@@ -346,6 +346,7 @@ def _build_assertion(params: dict, action_name: str = "") -> AssertionConfig | N
         assertion_type=assertion_type,
         expected_value=expected_value,
         expected_count=params.get("expected_count"),
-        case_sensitive=params.get("case_sensitive", True),
+        case_sensitive=params.get("case_sensitive", False),  # Default case-insensitive for flexibility
         partial_match=params.get("partial_match", True),  # Default to partial match for flexibility
+        pattern_type=params.get("pattern_type", "substring"),  # Default to substring matching
     )

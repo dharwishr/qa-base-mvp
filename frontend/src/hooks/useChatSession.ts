@@ -1072,25 +1072,52 @@ export function useChatSession(): UseChatSessionReturn {
         return;
       }
 
-      if (isExecuting) {
-        // Add user message to timeline
+      if (isExecuting && sessionId) {
+        // During execution, treat all messages as hints
+        const hintMode = 'hint';
+
+        // Add user hint message to timeline
         const userMessage = createTimelineMessage('user', {
           content: text,
-          mode: messageMode,
+          mode: hintMode,
         });
         setMessages((prev) => [...prev, userMessage]);
 
-        // If already executing, inject command via WebSocket
+        // Persist user hint to database
+        try {
+          await analysisApi.createMessage(sessionId, {
+            message_type: 'user',
+            content: text,
+            mode: hintMode,
+          });
+        } catch (e) {
+          console.error('Failed to persist hint message:', e);
+        }
+
+        // Send hint via WebSocket to inject into agent
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(
             JSON.stringify({ command: 'inject_command', content: text })
           );
+
+          // Add system response to timeline
+          const systemContent = 'Hint queued - will be applied at next step';
           setMessages((prev) => [
             ...prev,
-            createTimelineMessage('assistant', {
-              content: 'Command received. Processing...',
+            createTimelineMessage('system', {
+              content: systemContent,
             }),
           ]);
+
+          // Persist system response to database
+          try {
+            await analysisApi.createMessage(sessionId, {
+              message_type: 'system',
+              content: systemContent,
+            });
+          } catch (e) {
+            console.error('Failed to persist system message:', e);
+          }
         }
         return;
       }
@@ -1098,7 +1125,7 @@ export function useChatSession(): UseChatSessionReturn {
       // Not busy, execute immediately
       await executeMessage(text, messageMode, true);
     },
-    [isBusy, isExecuting, queueMessage, executeMessage]
+    [isBusy, isExecuting, queueMessage, executeMessage, sessionId]
   );
 
   // Approve a plan
@@ -2181,6 +2208,20 @@ export function useChatSession(): UseChatSessionReturn {
       setSelectedRunId(null);
     }
   }, [sessionId, refreshSessionRuns]);
+
+  // Poll session runs when there's an active run (pending or running)
+  useEffect(() => {
+    const hasActiveRun = sessionRuns.some(
+      run => run.status === 'pending' || run.status === 'running'
+    );
+
+    if (hasActiveRun && sessionId) {
+      const interval = setInterval(async () => {
+        await refreshSessionRuns();
+      }, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [sessionId, sessionRuns, refreshSessionRuns]);
 
   return {
     // State

@@ -1,4 +1,4 @@
-import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, InsertActionRequest, InsertStepRequest, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestStep, UndoResponse, PaginatedTestSessions } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ChatMode, ExecuteResponse, ExecutionLog, InsertActionRequest, InsertStepRequest, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestStep, UndoResponse, PaginatedTestSessions } from '../types/analysis';
 import type { PlanStep } from '../types/chat';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse, SystemSettings, NetworkRequest, ConsoleLog, ContainerPoolStats } from '../types/scripts';
 import type {
@@ -346,7 +346,7 @@ export const analysisApi = {
    * Continue an existing session with a new task.
    * This allows adding more tasks to a completed session without creating a new one.
    */
-  async continueSession(sessionId: string, prompt: string, llmModel: LlmModel = 'gemini-2.5-flash', mode: 'plan' | 'act' = 'act'): Promise<TestSession> {
+  async continueSession(sessionId: string, prompt: string, llmModel: LlmModel = 'gemini-2.5-flash', mode: ChatMode = 'act'): Promise<TestSession> {
     const response = await fetch(
       `${API_BASE}/api/analysis/sessions/${sessionId}/continue`,
       {

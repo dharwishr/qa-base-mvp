@@ -4,6 +4,7 @@ import { AuthProvider } from "./contexts/AuthContext"
 import ProtectedRoute from "./components/ProtectedRoute"
 import Login from "./pages/Login"
 import Signup from "./pages/Signup"
+import SelectOrganization from "./pages/SelectOrganization"
 import Dashboard from "./pages/Dashboard"
 import MethodSelection from "./pages/test-generation/MethodSelection"
 import TypeSelection from "./pages/test-generation/TypeSelection"
@@ -35,6 +36,11 @@ function App() {
         <Routes>
           <Route path="/" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/select-organization" element={
+            <ProtectedRoute>
+              <SelectOrganization />
+            </ProtectedRoute>
+          } />
 
           {/* Protected Dashboard Routes */}
           <Route element={

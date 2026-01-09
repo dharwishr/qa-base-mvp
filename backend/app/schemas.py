@@ -36,6 +36,12 @@ class OrganizationUpdate(BaseModel):
 	description: str | None = Field(None, description="Organization description")
 
 
+class CreateOrganizationRequest(BaseModel):
+	"""Request to create a new organization (owner-only)."""
+	name: str = Field(..., min_length=1, max_length=256, description="Organization name")
+	description: str | None = Field(None, description="Organization description")
+
+
 class OrganizationResponse(OrganizationBase):
 	"""Response schema for organization."""
 	id: str
@@ -147,6 +153,7 @@ class LoginResponse(BaseModel):
 	user: UserResponse
 	organization: OrganizationResponse
 	role: UserRole
+	organization_count: int = Field(1, description="Total number of organizations user belongs to")
 
 
 class SelectOrganizationRequest(BaseModel):
@@ -218,10 +225,15 @@ class UpdateStepActionTextRequest(BaseModel):
 
 
 class UpdateStepActionRequest(BaseModel):
-	"""Request to update step action fields (xpath, css_selector, text)."""
+	"""Request to update step action fields (xpath, css_selector, text, assertion params)."""
 	element_xpath: str | None = Field(None, description="XPath selector for the element")
 	css_selector: str | None = Field(None, description="CSS selector for the element")
 	text: str | None = Field(None, description="Input text (for type_text actions only)")
+	# Assertion-specific fields
+	expected_value: str | None = Field(None, description="Expected value for assert actions (text, URL, etc.)")
+	pattern_type: str | None = Field(None, description="Pattern matching type: 'exact', 'substring', 'wildcard', 'regex'")
+	case_sensitive: bool | None = Field(None, description="Whether the assertion should be case-sensitive")
+	partial_match: bool | None = Field(None, description="Whether to use partial/substring matching")
 
 
 class ToggleActionEnabledRequest(BaseModel):

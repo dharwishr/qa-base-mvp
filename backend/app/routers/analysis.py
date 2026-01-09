@@ -1046,6 +1046,56 @@ async def update_action(
 			)
 		params["text"] = request.text
 
+	# Handle assertion-specific fields
+	assert_action_types = ['assert', 'assert_text', 'assert_element', 'assert_url', 'assert_value', 'verify']
+	is_assert_action = any(t in action.action_name.lower() for t in assert_action_types)
+
+	if request.expected_value is not None:
+		if not is_assert_action:
+			raise HTTPException(
+				status_code=400,
+				detail=f"Cannot update expected_value for action type: {action.action_name}. "
+					   f"This field is only valid for assertion actions."
+			)
+		params["expected_value"] = request.expected_value
+		# Also update 'text' param for text_visible assertions (backward compatibility)
+		if "text" in action.action_name.lower():
+			params["text"] = request.expected_value
+
+	if request.pattern_type is not None:
+		if not is_assert_action:
+			raise HTTPException(
+				status_code=400,
+				detail=f"Cannot update pattern_type for action type: {action.action_name}. "
+					   f"This field is only valid for assertion actions."
+			)
+		valid_pattern_types = ['exact', 'substring', 'wildcard', 'regex']
+		if request.pattern_type not in valid_pattern_types:
+			raise HTTPException(
+				status_code=400,
+				detail=f"Invalid pattern_type: {request.pattern_type}. "
+					   f"Must be one of: {', '.join(valid_pattern_types)}"
+			)
+		params["pattern_type"] = request.pattern_type
+
+	if request.case_sensitive is not None:
+		if not is_assert_action:
+			raise HTTPException(
+				status_code=400,
+				detail=f"Cannot update case_sensitive for action type: {action.action_name}. "
+					   f"This field is only valid for assertion actions."
+			)
+		params["case_sensitive"] = request.case_sensitive
+
+	if request.partial_match is not None:
+		if not is_assert_action:
+			raise HTTPException(
+				status_code=400,
+				detail=f"Cannot update partial_match for action type: {action.action_name}. "
+					   f"This field is only valid for assertion actions."
+			)
+		params["partial_match"] = request.partial_match
+
 	action.action_params = params
 	flag_modified(action, "action_params")
 
@@ -1054,7 +1104,9 @@ async def update_action(
 
 	logger.info(
 		f"Updated action {action_id}: xpath={request.element_xpath}, "
-		f"css_selector={request.css_selector}, text={request.text[:20] if request.text else None}..."
+		f"css_selector={request.css_selector}, text={request.text[:20] if request.text else None}, "
+		f"expected_value={request.expected_value[:20] if request.expected_value else None}, "
+		f"pattern_type={request.pattern_type}"
 	)
 	return action
 
@@ -2334,18 +2386,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 					})
 
 				elif command == "inject_command":
-					# Handle command injection during execution
+					# Handle command injection during execution (user hints)
 					content = data.get("content", "")
 					if content:
 						logger.info(f"Received inject_command for session {session_id}: {content}")
+						# Push to Redis queue for agent to pick up
+						from app.services.event_publisher import push_user_prompt
+						success = push_user_prompt(session_id, content)
 						# Acknowledge receipt
 						await websocket.send_json({
 							"type": "command_received",
 							"content": content,
-							"status": "received"
+							"status": "queued" if success else "failed"
 						})
-						# TODO: Implement actual command injection to running agent
-						# For now, we just acknowledge the command
 
 				elif command == "run_till_end":
 					# Start Run Till End execution in background task

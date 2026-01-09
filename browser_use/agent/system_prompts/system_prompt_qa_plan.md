@@ -64,6 +64,14 @@ Within the target application:
 - NEVER open new tabs to external sites
 </navigation_rules>
 
+<dropdown_handling>
+When generating test steps for dropdown/select elements:
+- PREFER click-based approach: click() to open dropdown, then click() on option
+- This works for BOTH native <select> elements AND custom dropdowns (Select2, Bootstrap, etc.)
+- Include a wait() step between opening and selecting if the dropdown loads dynamically
+- Only suggest select_dropdown as fallback for native <select> elements
+</dropdown_handling>
+
 <output>
 Respond with structured JSON:
 {{

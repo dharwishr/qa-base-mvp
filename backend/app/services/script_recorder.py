@@ -37,8 +37,9 @@ class AssertionConfig(BaseModel):
 	assertion_type: str  # text_visible | text_contains | element_visible | element_count | url_contains | url_equals | value_equals
 	expected_value: str | None = None  # Expected text, URL, value, etc.
 	expected_count: int | None = None  # For element_count assertions
-	case_sensitive: bool = True
-	partial_match: bool = False  # For text assertions - substring match
+	case_sensitive: bool = False  # Default to case-insensitive for flexibility
+	partial_match: bool = True  # For text assertions - substring match (default True for better matching)
+	pattern_type: str = "substring"  # "exact" | "substring" | "wildcard" | "regex"
 
 
 class PlaywrightStep(BaseModel):

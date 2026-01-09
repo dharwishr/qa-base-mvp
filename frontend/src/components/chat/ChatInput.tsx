@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
-import { Send, FileText, Zap, Mic, Square, Loader2 } from 'lucide-react';
+import { Send, FileText, Zap, Mic, Square, Loader2, Lightbulb } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ChatMode } from '@/types/chat';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
@@ -26,6 +26,7 @@ export default function ChatInput({
   onInitialValueConsumed,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
+  const [hintModeEnabled, setHintModeEnabled] = useState(false);
 
   // Set initial value when provided (e.g., after reset)
   useEffect(() => {
@@ -34,6 +35,14 @@ export default function ChatInput({
       onInitialValueConsumed?.();
     }
   }, [initialValue, onInitialValueConsumed]);
+
+  // Reset hint mode when execution ends
+  useEffect(() => {
+    if (!isExecuting) {
+      setHintModeEnabled(false);
+    }
+  }, [isExecuting]);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Voice input hook
@@ -68,12 +77,15 @@ export default function ChatInput({
     }
   }, [input]);
 
-  const isBlocked = disabled || isExecuting;
+  // During execution, input is blocked unless hint mode is enabled
+  const isBlocked = disabled || (isExecuting && !hintModeEnabled);
 
   const handleSend = () => {
     const trimmed = input.trim();
     if (trimmed && !isBlocked) {
-      onSend(trimmed, mode);
+      // When executing with hint mode, send as 'hint' mode
+      const sendMode: ChatMode = (isExecuting && hintModeEnabled) ? 'hint' : mode;
+      onSend(trimmed, sendMode);
       setInput('');
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
@@ -99,7 +111,9 @@ export default function ChatInput({
   };
 
   const dynamicPlaceholder = isExecuting
-    ? 'Waiting for execution to complete...'
+    ? (hintModeEnabled
+      ? 'Send a hint to help the AI (e.g., "Try clicking the login button")...'
+      : 'Enable Hint Mode to send guidance to the AI...')
     : mode === 'plan'
     ? 'Describe your test case to generate a plan...'
     : 'Describe what you want the browser to do...';
@@ -109,37 +123,63 @@ export default function ChatInput({
       {/* Mode Toggle */}
       <div className="flex items-center gap-2 mb-3">
         <span className="text-xs text-muted-foreground">Mode:</span>
-        <div className="inline-flex rounded-lg border bg-muted p-0.5">
+        {isExecuting ? (
+          /* During execution: show Hint Mode toggle */
           <button
             type="button"
-            onClick={() => onModeChange('plan')}
-            disabled={isBlocked}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              mode === 'plan'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            } ${isBlocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+            onClick={() => setHintModeEnabled(!hintModeEnabled)}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 transition-colors cursor-pointer ${
+              hintModeEnabled
+                ? 'bg-amber-50 dark:bg-amber-950 border-amber-300 dark:border-amber-700'
+                : 'bg-muted border-border hover:border-amber-300 dark:hover:border-amber-700'
+            }`}
           >
-            <FileText className="h-3.5 w-3.5" />
-            Plan
+            <Lightbulb className={`h-4 w-4 ${hintModeEnabled ? 'text-amber-500' : 'text-muted-foreground'}`} />
+            <span className={`text-xs font-medium ${hintModeEnabled ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}>
+              Hint Mode
+            </span>
+            <div className={`ml-1 w-8 h-4 rounded-full transition-colors ${
+              hintModeEnabled ? 'bg-amber-500' : 'bg-gray-300 dark:bg-gray-600'
+            }`}>
+              <div className={`w-3 h-3 rounded-full bg-white shadow-sm transform transition-transform mt-0.5 ${
+                hintModeEnabled ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
+              }`} />
+            </div>
           </button>
-          <button
-            type="button"
-            onClick={() => onModeChange('act')}
-            disabled={isBlocked}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              mode === 'act'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            } ${isBlocked ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            <Zap className="h-3.5 w-3.5" />
-            Act
-          </button>
-        </div>
+        ) : (
+          /* Normal: show Plan/Act toggle */
+          <div className="inline-flex rounded-lg border bg-muted p-0.5">
+            <button
+              type="button"
+              onClick={() => onModeChange('plan')}
+              disabled={disabled}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                mode === 'plan'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Plan
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange('act')}
+              disabled={disabled}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                mode === 'act'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Act
+            </button>
+          </div>
+        )}
         <span className="text-xs text-muted-foreground ml-2">
           {isExecuting
-            ? 'Please wait for execution to complete'
+            ? (hintModeEnabled ? 'Send guidance to help the AI' : 'Enable to send hints during execution')
             : mode === 'plan'
             ? 'Generate a plan first, then execute'
             : 'Execute actions directly'}

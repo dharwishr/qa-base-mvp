@@ -956,6 +956,19 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 			agent_id_suffix = 'a' + agent_id_suffix
 		self.eventbus = EventBus(name=f'Agent_{agent_id_suffix}')
 
+	def add_user_guidance(self, guidance: str) -> None:
+		"""Add user guidance/hint to help with the current task.
+
+		Unlike add_new_task(), this doesn't change the task itself - it just adds
+		helpful context/guidance that the LLM will consider when generating the
+		next action. Use this when the user wants to provide a hint without
+		changing the overall objective.
+
+		Args:
+			guidance: The user's guidance/hint text
+		"""
+		self._message_manager.add_user_guidance(guidance)
+
 	async def _check_stop_or_pause(self) -> None:
 		"""Check if the agent should stop or pause, and handle accordingly."""
 

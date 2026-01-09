@@ -2,9 +2,9 @@
 
 import type { TestStep, TestPlan, LlmModel } from './analysis';
 
-export type MessageType = 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system';
+export type MessageType = 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system' | 'hint';
 
-export type ChatMode = 'plan' | 'act';
+export type ChatMode = 'plan' | 'act' | 'hint';
 
 export type PlanStatus = 'pending' | 'approved' | 'rejected' | 'executing';
 

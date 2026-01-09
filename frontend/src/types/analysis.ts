@@ -223,8 +223,8 @@ export type WSMessage =
   | WSAllStopped;
 
 // Chat message types
-export type ChatMessageType = 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system';
-export type ChatMode = 'plan' | 'act';
+export type ChatMessageType = 'user' | 'assistant' | 'plan' | 'step' | 'error' | 'system' | 'hint';
+export type ChatMode = 'plan' | 'act' | 'hint';
 
 export interface ChatMessageCreate {
   message_type: ChatMessageType;

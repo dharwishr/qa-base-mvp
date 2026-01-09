@@ -9,6 +9,7 @@ from app.deps import AuthenticatedUser, get_current_user, require_owner
 from app.models import Organization, User, UserOrganization, generate_slug
 from app.schemas import (
 	AddUserToOrganizationRequest,
+	CreateOrganizationRequest,
 	OrganizationResponse,
 	OrganizationUpdate,
 	UpdateUserRoleRequest,
@@ -33,6 +34,52 @@ def make_unique_slug(db: Session, base_slug: str, exclude_id: str | None = None)
 			return slug
 		slug = f"{base_slug}-{counter}"
 		counter += 1
+
+
+@router.post("", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)
+async def create_organization(
+	request: CreateOrganizationRequest,
+	current_user: AuthenticatedUser = Depends(get_current_user),
+	db: Session = Depends(get_db),
+):
+	"""Create a new organization. Only users who are owners of any organization can create new organizations."""
+	# Check if current user is an owner of ANY organization
+	is_owner_of_any = db.query(UserOrganization).filter(
+		UserOrganization.user_id == current_user.id,
+		UserOrganization.role == "owner"
+	).first()
+
+	if not is_owner_of_any:
+		raise HTTPException(
+			status_code=status.HTTP_403_FORBIDDEN,
+			detail="Only organization owners can create new organizations"
+		)
+
+	# Generate unique slug from name
+	base_slug = generate_slug(request.name)
+	unique_slug = make_unique_slug(db, base_slug)
+
+	# Create the new organization
+	new_org = Organization(
+		name=request.name,
+		slug=unique_slug,
+		description=request.description
+	)
+	db.add(new_org)
+	db.flush()  # Get the org ID before creating association
+
+	# Add the creator as owner of the new organization
+	user_org = UserOrganization(
+		user_id=current_user.id,
+		organization_id=new_org.id,
+		role="owner"
+	)
+	db.add(user_org)
+	db.commit()
+	db.refresh(new_org)
+
+	logger.info(f"Organization {new_org.id} created by user {current_user.id}")
+	return new_org
 
 
 @router.get("", response_model=OrganizationResponse)

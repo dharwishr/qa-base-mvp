@@ -607,7 +607,10 @@ class CDPRunner(BaseRunner):
         return healer
 
     async def _execute_select(self, step: PlaywrightStep) -> CDPElementLocator:
-        """Execute dropdown select with self-healing."""
+        """Execute dropdown select with self-healing.
+
+        Handles both native <select> elements and custom dropdowns (Select2, etc.).
+        """
         assert self._page and step.selectors and step.value is not None and self._session_id
 
         healer = CDPElementLocator(self._page, self._session_id, step.selectors, step.element_context)
@@ -616,24 +619,165 @@ class CDPRunner(BaseRunner):
         if not element:
             raise Exception(f"Could not find dropdown. Tried selectors: {step.selectors.all_selectors()}")
 
-        # Use JavaScript to set select value
         cdp_client = self._page._client
         object_id = await element._get_remote_object_id()
-        if object_id:
-            await cdp_client.send.Runtime.callFunctionOn(
-                params={
-                    'functionDeclaration': f'''
-                        function() {{
-                            this.value = "{step.value}";
-                            this.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+        if not object_id:
+            raise Exception("Could not get element reference for dropdown")
+
+        # Check if this is a native <select> element
+        tag_result = await cdp_client.send.Runtime.callFunctionOn(
+            params={
+                'functionDeclaration': 'function() { return this.tagName.toLowerCase(); }',
+                'objectId': object_id,
+                'returnByValue': True,
+            },
+            session_id=self._session_id,
+        )
+        tag_name = tag_result.get('result', {}).get('value', '')
+
+        if tag_name == "select":
+            return await self._select_native_option_cdp(element, step.value, healer)
+        else:
+            return await self._select_custom_dropdown_cdp(element, step.value, step.timeout, healer)
+
+    async def _select_native_option_cdp(
+        self, element, value: str, healer: 'CDPElementLocator'
+    ) -> 'CDPElementLocator':
+        """Select option from native <select> element using CDP."""
+        assert self._session_id
+        cdp_client = self._page._client
+        object_id = await element._get_remote_object_id()
+
+        escaped_value = value.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+
+        await cdp_client.send.Runtime.callFunctionOn(
+            params={
+                'functionDeclaration': f'''
+                    function() {{
+                        const targetValue = "{escaped_value}";
+                        const options = Array.from(this.options);
+
+                        // Strategy 1: Match by value attribute
+                        let option = options.find(o => o.value === targetValue);
+
+                        // Strategy 2: Match by label (text content)
+                        if (!option) {{
+                            option = options.find(o => o.text === targetValue || o.textContent.trim() === targetValue);
                         }}
-                    ''',
-                    'objectId': object_id,
-                },
-                session_id=self._session_id,
-            )
+
+                        // Strategy 3: Case-insensitive match
+                        if (!option) {{
+                            const lowerTarget = targetValue.toLowerCase();
+                            option = options.find(o =>
+                                o.value.toLowerCase() === lowerTarget ||
+                                o.text.toLowerCase() === lowerTarget
+                            );
+                        }}
+
+                        // Strategy 4: Partial match
+                        if (!option) {{
+                            const lowerTarget = targetValue.toLowerCase();
+                            option = options.find(o =>
+                                o.text.toLowerCase().includes(lowerTarget) ||
+                                lowerTarget.includes(o.text.toLowerCase().trim())
+                            );
+                        }}
+
+                        if (option) {{
+                            this.value = option.value;
+                            this.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            return true;
+                        }}
+                        return false;
+                    }}
+                ''',
+                'objectId': object_id,
+                'returnByValue': True,
+            },
+            session_id=self._session_id,
+        )
 
         return healer
+
+    async def _select_custom_dropdown_cdp(
+        self, element, value: str, _timeout: int, healer: 'CDPElementLocator'
+    ) -> 'CDPElementLocator':
+        """Select option from custom dropdown (Select2, Choices.js, etc.) using CDP.
+
+        Works by clicking to open the dropdown, then clicking the matching option.
+        """
+        assert self._session_id and self._page
+
+        # Click to open the dropdown
+        await element.click()
+        await asyncio.sleep(0.3)  # Wait for animation
+
+        cdp_client = self._page._client
+        escaped_value = value.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+
+        # Use JavaScript to find and click the option in custom dropdown
+        result = await cdp_client.send.Runtime.evaluate(
+            params={
+                'expression': f'''
+                    (function() {{
+                        const targetValue = "{escaped_value}";
+                        const lowerTarget = targetValue.toLowerCase();
+
+                        // Common dropdown option selectors
+                        const selectors = [
+                            // Select2
+                            '.select2-results__option',
+                            '.select2-results li',
+                            // Choices.js
+                            '.choices__item--choice',
+                            // Bootstrap
+                            '.dropdown-menu.show li',
+                            '.dropdown-item',
+                            // Material UI
+                            '.MuiMenuItem-root',
+                            '[role="option"]',
+                            // Ant Design
+                            '.ant-select-item-option',
+                            // Generic
+                            '[role="listbox"] [role="option"]',
+                        ];
+
+                        for (const selector of selectors) {{
+                            const options = document.querySelectorAll(selector);
+                            for (const option of options) {{
+                                const text = option.textContent.trim();
+                                if (text === targetValue ||
+                                    text.toLowerCase() === lowerTarget ||
+                                    text.toLowerCase().includes(lowerTarget) ||
+                                    lowerTarget.includes(text.toLowerCase())) {{
+                                    option.click();
+                                    return {{ success: true, matched: text }};
+                                }}
+                            }}
+                        }}
+
+                        return {{ success: false }};
+                    }})()
+                ''',
+                'returnByValue': True,
+            },
+            session_id=self._session_id,
+        )
+
+        result_value = result.get('result', {}).get('value', {})
+        if result_value.get('success'):
+            healer.successful_selector = f"[CUSTOM_SELECT] matched: {result_value.get('matched', value)}"
+            await asyncio.sleep(0.2)  # Wait for selection to register
+            return healer
+
+        # If nothing worked, press Escape and raise error
+        await self._page.press("Escape")
+
+        raise Exception(
+            f"Could not select '{value}' from custom dropdown. "
+            f"Tried Select2, Choices.js, Bootstrap, Material UI, and Ant Design selectors."
+        )
 
     async def _execute_press(self, step: PlaywrightStep):
         """Execute key press."""
@@ -686,6 +830,40 @@ class CDPRunner(BaseRunner):
         await element.hover()
         return healer
 
+    def _match_text_pattern(self, actual: str, expected: str, assertion: AssertionConfig) -> bool:
+        """Match text based on pattern type.
+
+        Args:
+            actual: The actual text from the page
+            expected: The expected pattern/text
+            assertion: Assertion config with pattern_type and case_sensitive settings
+
+        Returns:
+            True if the pattern matches, False otherwise
+        """
+        pattern_type = getattr(assertion, 'pattern_type', 'substring')
+
+        if pattern_type == "exact":
+            if assertion.case_sensitive:
+                return actual.strip() == expected.strip()
+            return actual.strip().lower() == expected.strip().lower()
+        elif pattern_type == "substring":
+            if assertion.case_sensitive:
+                return expected in actual
+            return expected.lower() in actual.lower()
+        elif pattern_type == "wildcard":
+            # Convert wildcard (*) to regex pattern
+            pattern = re.escape(expected).replace(r"\*", ".*")
+            flags = 0 if assertion.case_sensitive else re.IGNORECASE
+            return bool(re.search(pattern, actual, flags))
+        elif pattern_type == "regex":
+            flags = 0 if assertion.case_sensitive else re.IGNORECASE
+            try:
+                return bool(re.search(expected, actual, flags))
+            except re.error:
+                return False
+        return False
+
     async def _execute_assertion(self, step: PlaywrightStep) -> dict[str, Any]:
         """Execute an assertion step."""
         assert self._page and step.assertion and self._session_id
@@ -693,10 +871,14 @@ class CDPRunner(BaseRunner):
         assertion = step.assertion
         result: dict[str, Any] = {"success": False, "heal_attempts": [], "selector_used": None}
         cdp_client = self._page._client
+        pattern_type = getattr(assertion, 'pattern_type', 'substring')
 
         try:
             if assertion.assertion_type == "text_visible":
                 expected = assertion.expected_value or ""
+                timeout_ms = step.timeout or 10000
+                poll_interval = 500  # Check every 500ms
+                max_attempts = max(timeout_ms // poll_interval, 1)
 
                 if step.selectors:
                     # Look for text within a specific element
@@ -718,28 +900,38 @@ class CDPRunner(BaseRunner):
                                 session_id=self._session_id,
                             )
                             actual_text = text_result.get('result', {}).get('value', '')
-                            if assertion.partial_match:
-                                result["success"] = expected in actual_text
-                            else:
-                                result["success"] = actual_text.strip() == expected.strip()
+                            # Use pattern matching for element text
+                            result["success"] = self._match_text_pattern(actual_text, expected, assertion)
                             if not result["success"]:
-                                result["error"] = f"Expected '{expected}', got '{actual_text[:100]}'"
+                                result["error"] = f"Text pattern '{expected}' not found. Got: '{actual_text[:100]}'"
                     else:
                         result["error"] = f"Could not find element containing text: {expected}"
                 else:
-                    # Look for text anywhere on page
-                    escaped_expected = expected.replace('"', '\\"')
-                    eval_result = await cdp_client.send.Runtime.evaluate(
-                        params={
-                            'expression': f'document.body.innerText.includes("{escaped_expected}")',
-                            'returnByValue': True,
-                        },
-                        session_id=self._session_id,
-                    )
-                    result["success"] = eval_result.get('result', {}).get('value', False)
-                    result["selector_used"] = f"text={expected}"
+                    # Look for text anywhere on page with polling (wait for dynamic content)
+                    for attempt in range(max_attempts):
+                        # Wait for page to be idle before checking
+                        await self._wait_for_page_idle()
+
+                        page_text_result = await cdp_client.send.Runtime.evaluate(
+                            params={
+                                'expression': 'document.body.innerText',
+                                'returnByValue': True,
+                            },
+                            session_id=self._session_id,
+                        )
+                        page_text = page_text_result.get('result', {}).get('value', '')
+
+                        if self._match_text_pattern(page_text, expected, assertion):
+                            result["success"] = True
+                            result["selector_used"] = f"text={expected} (pattern_type={pattern_type})"
+                            break
+
+                        # If not found and not last attempt, wait and retry
+                        if attempt < max_attempts - 1:
+                            await asyncio.sleep(poll_interval / 1000)
+
                     if not result["success"]:
-                        result["error"] = f"Text '{expected}' not found on page"
+                        result["error"] = f"Text '{expected}' not found on page after {max_attempts} attempts (pattern_type={pattern_type})"
 
             elif assertion.assertion_type == "element_visible":
                 assert step.selectors

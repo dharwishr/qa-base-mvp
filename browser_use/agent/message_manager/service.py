@@ -173,6 +173,20 @@ class MessageManager:
 		task_update_item = HistoryItem(system_message=new_task)
 		self.state.agent_history_items.append(task_update_item)
 
+	def add_user_guidance(self, guidance: str) -> None:
+		"""Add user guidance/hint during execution.
+
+		Unlike add_new_task(), this adds guidance as a hint to help with the current
+		objective, not as a new objective to pursue. The agent treats this as helpful
+		context rather than a task modification.
+
+		Args:
+			guidance: The user's guidance/hint text
+		"""
+		guidance_msg = f'<user_guidance>\n{guidance.strip()}\n</user_guidance>'
+		guidance_item = HistoryItem(system_message=guidance_msg)
+		self.state.agent_history_items.append(guidance_item)
+
 	def _update_agent_history_description(
 		self,
 		model_output: AgentOutput | None = None,

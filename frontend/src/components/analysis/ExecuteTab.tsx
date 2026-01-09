@@ -87,6 +87,13 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
   const [steps, setSteps] = useState<RunStep[]>([]);
   const [isLoadingSteps, setIsLoadingSteps] = useState(false);
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null);
+  // Local run state for real-time updates (merged with prop)
+  const [localRun, setLocalRun] = useState<TestRun>(run);
+
+  // Update local run when prop changes
+  useEffect(() => {
+    setLocalRun(run);
+  }, [run]);
 
   // Fetch steps when run changes
   useEffect(() => {
@@ -110,18 +117,23 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
 
   // Poll for updates if run is in progress
   useEffect(() => {
-    if (run.status === 'running' || run.status === 'pending') {
+    if (localRun.status === 'running' || localRun.status === 'pending') {
       const interval = setInterval(async () => {
         try {
-          const runSteps = await runsApi.getRunSteps(run.id);
+          // Fetch both steps and run status in parallel for responsive updates
+          const [runSteps, updatedRun] = await Promise.all([
+            runsApi.getRunSteps(run.id),
+            runsApi.getRun(run.id),
+          ]);
           setSteps(runSteps);
+          setLocalRun(updatedRun);
         } catch {
           // Ignore errors during polling
         }
       }, 2000);
       return () => clearInterval(interval);
     }
-  }, [run.id, run.status]);
+  }, [run.id, localRun.status]);
 
   const selectedStep = selectedStepIndex !== null ? steps[selectedStepIndex] : null;
 
@@ -135,11 +147,11 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
           </Button>
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-sm">Run {run.id.slice(0, 8)}</span>
-              <StatusBadge status={run.status} />
+              <span className="font-medium text-sm">Run {localRun.id.slice(0, 8)}</span>
+              <StatusBadge status={localRun.status} />
             </div>
             <div className="text-xs text-muted-foreground mt-0.5">
-              {run.browser_type} | {run.resolution_width}x{run.resolution_height}
+              {localRun.browser_type} | {localRun.resolution_width}x{localRun.resolution_height}
             </div>
           </div>
         </div>
@@ -147,23 +159,23 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
         {/* Stats */}
         <div className="grid grid-cols-5 gap-2 mt-3">
           <div className="text-center p-2 bg-background rounded border">
-            <div className="text-lg font-semibold">{run.total_steps || steps.length}</div>
+            <div className="text-lg font-semibold">{localRun.total_steps || steps.length}</div>
             <div className="text-xs text-muted-foreground">Total</div>
           </div>
           <div className="text-center p-2 bg-green-50 rounded border border-green-200">
-            <div className="text-lg font-semibold text-green-600">{run.passed_steps || 0}</div>
+            <div className="text-lg font-semibold text-green-600">{localRun.passed_steps || 0}</div>
             <div className="text-xs text-green-600">Passed</div>
           </div>
           <div className="text-center p-2 bg-red-50 rounded border border-red-200">
-            <div className="text-lg font-semibold text-red-600">{run.failed_steps || 0}</div>
+            <div className="text-lg font-semibold text-red-600">{localRun.failed_steps || 0}</div>
             <div className="text-xs text-red-600">Failed</div>
           </div>
           <div className="text-center p-2 bg-purple-50 rounded border border-purple-200">
-            <div className="text-lg font-semibold text-purple-600">{run.healed_steps || 0}</div>
+            <div className="text-lg font-semibold text-purple-600">{localRun.healed_steps || 0}</div>
             <div className="text-xs text-purple-600">Healed</div>
           </div>
           <div className="text-center p-2 bg-background rounded border">
-            <div className="text-lg font-semibold">{formatDuration(run.duration_ms)}</div>
+            <div className="text-lg font-semibold">{formatDuration(localRun.duration_ms)}</div>
             <div className="text-xs text-muted-foreground">Duration</div>
           </div>
         </div>
@@ -179,7 +191,7 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
             </div>
           ) : steps.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              {run.status === 'running' ? 'Waiting for steps...' : 'No steps recorded'}
+              {localRun.status === 'running' ? 'Waiting for steps...' : 'No steps recorded'}
             </div>
           ) : (
             <div className="p-2 space-y-1">
@@ -240,9 +252,9 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
       </div>
 
       {/* Error message */}
-      {run.error_message && (
+      {localRun.error_message && (
         <div className="px-4 py-2 bg-red-50 border-t border-red-200 text-sm text-red-700">
-          <strong>Error:</strong> {run.error_message}
+          <strong>Error:</strong> {localRun.error_message}
         </div>
       )}
     </div>

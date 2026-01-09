@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { ThemeToggle } from "@/components/ThemeToggle"
+import OrganizationSwitcher from "@/components/OrganizationSwitcher"
 
 // Sidebar Item Component
 const SidebarItem = ({
@@ -123,7 +124,9 @@ export default function DashboardLayout() {
                     />
                 </nav>
 
-                <div className="mt-auto p-2">
+                <div className="mt-auto p-2 space-y-1">
+                    <OrganizationSwitcher />
+                    <div className="border-t my-2" />
                     <ThemeToggle />
                     <SidebarItem icon={LogOut} label="Logout" onClick={handleLogout} />
                 </div>

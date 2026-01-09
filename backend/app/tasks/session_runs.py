@@ -13,6 +13,7 @@ creating a PlaywrightScript intermediary.
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -131,30 +132,106 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
     return None
 
 
+# Patterns for dynamic values that should be replaced with wildcards
+# Order matters: more specific patterns should come first
+DYNAMIC_PATTERNS = [
+    # UUIDs: 550e8400-e29b-41d4-a716-446655440000 (check first, most specific)
+    (r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b', '*'),
+    # ISO timestamps: 2024-01-15T10:30:00Z, 2024-01-15 10:30:00
+    (r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?', '*'),
+    # Complex reference numbers with multiple parts: INV-2024-001, ORD-123-456
+    (r'\b[A-Z]{2,5}(?:[-#][A-Z0-9]+)+\b', '*'),
+    # Simple reference numbers: PUR0201, ORD12345, REF#123
+    (r'\b[A-Z]{2,5}[-#]?\d{3,10}\b', '*'),
+    # Date formats: 01/15/2024, 15-01-2024
+    (r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b', '*'),
+    # Date formats: Jan 15, 2024, January 15 2024
+    (r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}\b', '*'),
+    # Time formats: 10:30:00, 10:30 AM
+    (r'\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b', '*'),
+    # Amounts with currency: $123.45, €100.00
+    (r'[$€£¥]\s*[\d,]+\.?\d*', '*'),
+    (r'\b(?:USD|EUR|GBP|INR)\s*[\d,]+\.?\d*', '*'),
+    # Sequential IDs in parentheses: (Ref: PUR0201), (ID: 123)
+    (r'\((?:Ref|ID|No|#)[:\s]*[A-Z0-9-]+\)', '(*)'),
+    # Prefix IDs: ID: 123, No: 456, #789
+    (r'\b(?:ID|No|#)[:\s]*\d+\b', '*'),
+    # Order/ticket numbers: Order #12345, Invoice INV-123
+    (r'\b(?:Order|Ticket|Invoice|Receipt|Transaction)[:\s#-]*[A-Z0-9-]+\b', '*'),
+]
+
+
+def _make_assertion_dynamic(text: str) -> tuple[str, str]:
+    """Convert assertion text to use wildcards for dynamic values.
+
+    Args:
+        text: The original assertion text
+
+    Returns:
+        Tuple of (processed_text, pattern_type)
+        - If dynamic patterns found: (text_with_wildcards, "wildcard")
+        - If no dynamic patterns: (original_text, "substring")
+    """
+    if not text:
+        return text, "substring"
+
+    modified_text = text
+    has_dynamic = False
+
+    for pattern, replacement in DYNAMIC_PATTERNS:
+        new_text = re.sub(pattern, replacement, modified_text)
+        if new_text != modified_text:
+            has_dynamic = True
+            modified_text = new_text
+
+    # Clean up multiple consecutive wildcards
+    modified_text = re.sub(r'\*+', '*', modified_text)
+
+    if has_dynamic:
+        logger.debug(f"Made assertion dynamic: '{text[:50]}...' -> '{modified_text[:50]}...'")
+        return modified_text, "wildcard"
+
+    return text, "substring"
+
+
 def _convert_assert_action(action: StepAction, index: int) -> dict[str, Any] | None:
     """Convert assertion actions to PlaywrightStep format."""
     action_name = action.action_name.lower()
     params = action.action_params or {}
 
+    # Build selectors if element_xpath available (for all assertion types)
+    selectors = _build_selectors(action) if action.element_xpath else None
+    element_context = _build_element_context(action) if action.element_xpath else None
+
     # Assert text visible
     if "text" in action_name:
-        expected_text = params.get("text", "")
+        raw_text = params.get("text", params.get("expected_value", ""))
+
+        # If pattern_type is not explicitly set, auto-detect dynamic values
+        if "pattern_type" not in params:
+            expected_text, pattern_type = _make_assertion_dynamic(raw_text)
+        else:
+            expected_text = raw_text
+            pattern_type = params.get("pattern_type", "substring")
+
         partial_match = params.get("partial_match", True)
         return {
             "index": index,
             "action": "assert",
+            "selectors": selectors,  # Include selectors if available
+            "element_context": element_context,
             "assertion": {
                 "assertion_type": "text_visible",
                 "expected_value": expected_text,
                 "partial_match": partial_match,
-                "case_sensitive": not partial_match,
+                "case_sensitive": params.get("case_sensitive", False),  # Default case-insensitive
+                "pattern_type": pattern_type,
             },
             "description": f"Assert text visible: '{expected_text[:40]}...'" if len(expected_text) > 40 else f"Assert text visible: '{expected_text}'",
         }
 
     # Assert element visible
     elif "element" in action_name or "visible" in action_name:
-        selectors = _build_selectors(action) if action.element_xpath else None
         return {
             "index": index,
             "action": "assert",
@@ -162,14 +239,15 @@ def _convert_assert_action(action: StepAction, index: int) -> dict[str, Any] | N
             "assertion": {
                 "assertion_type": "element_visible",
             },
-            "element_context": _build_element_context(action),
+            "element_context": element_context,
             "description": action.element_name or "Assert element is visible",
         }
 
     # Assert URL
     elif "url" in action_name:
-        expected_url = params.get("url", "")
+        expected_url = params.get("url", params.get("expected_value", ""))
         exact_match = params.get("exact_match", False)
+        pattern_type = params.get("pattern_type", "substring" if not exact_match else "exact")
         return {
             "index": index,
             "action": "assert",
@@ -177,18 +255,26 @@ def _convert_assert_action(action: StepAction, index: int) -> dict[str, Any] | N
                 "assertion_type": "url_contains" if not exact_match else "url_equals",
                 "expected_value": expected_url,
                 "partial_match": not exact_match,
+                "pattern_type": pattern_type,
             },
             "description": f"Assert URL {'contains' if not exact_match else 'equals'}: {expected_url}",
         }
 
     # Generic assertion (fallback)
+    raw_text = action.extracted_content or params.get("text", "")
+    expected_text, pattern_type = _make_assertion_dynamic(raw_text)
+
     return {
         "index": index,
         "action": "assert",
+        "selectors": selectors,
+        "element_context": element_context,
         "assertion": {
             "assertion_type": "text_visible",
-            "expected_value": action.extracted_content or "",
+            "expected_value": expected_text,
             "partial_match": True,
+            "case_sensitive": False,
+            "pattern_type": pattern_type,
         },
         "description": action.element_name or "Verify assertion",
     }
@@ -211,14 +297,25 @@ def _build_selectors(action: StepAction) -> dict[str, Any]:
 
 
 def _build_element_context(action: StepAction) -> dict[str, Any] | None:
-    """Build element context from action."""
+    """Build element context from action for self-healing."""
     params = action.action_params or {}
 
+    # Try to extract tag name from xpath if not provided
+    tag_name = params.get("tag_name")
+    if not tag_name and action.element_xpath:
+        # Extract last element name from xpath (e.g., ".../a[2]" -> "a")
+        import re
+        match = re.search(r'/([a-z]+)(?:\[[^\]]+\])?$', action.element_xpath, re.IGNORECASE)
+        if match:
+            tag_name = match.group(1)
+
     return {
-        "tag_name": params.get("tag_name", "element"),
-        "text_content": action.element_name,
+        "tag_name": tag_name or "element",
+        "text_content": action.element_name or params.get("text_content"),
         "aria_label": params.get("aria_label"),
         "placeholder": params.get("placeholder"),
+        "role": params.get("role"),
+        "classes": params.get("classes", []),
     }
 
 

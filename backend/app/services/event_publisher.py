@@ -483,3 +483,83 @@ def clear_cancelled(session_id: str) -> bool:
     except Exception as e:
         logger.error(f"Failed to clear cancel flag in Redis: {e}")
         return False
+
+
+# =====================================
+# User Prompt Injection (Hints during execution)
+# =====================================
+
+def push_user_prompt(session_id: str, prompt: str, ttl_seconds: int = 600) -> bool:
+    """Push a user prompt/hint to the injection queue.
+
+    Used to inject guidance/hints during AI execution. The agent will
+    pick up these prompts and include them in the LLM context.
+
+    Args:
+        session_id: The session ID to push prompt for
+        prompt: The user's prompt/hint text
+        ttl_seconds: Time-to-live for the queue (default 10 minutes)
+
+    Returns:
+        True if prompt was pushed successfully, False otherwise
+    """
+    try:
+        r = redis.from_url(settings.CELERY_BROKER_URL, decode_responses=True)
+        key = f"user_prompt_queue:{session_id}"
+        r.rpush(key, prompt)
+        r.expire(key, ttl_seconds)
+        logger.info(f"Pushed user prompt for session {session_id}: {prompt[:50]}...")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to push user prompt to Redis: {e}")
+        return False
+
+
+def pop_user_prompts(session_id: str) -> list[str]:
+    """Pop all pending user prompts from the queue.
+
+    Returns all queued prompts and removes them from the queue.
+    Called by the agent before each step to check for guidance.
+
+    Args:
+        session_id: The session ID to pop prompts for
+
+    Returns:
+        List of prompt strings (empty if none queued)
+    """
+    try:
+        r = redis.from_url(settings.CELERY_BROKER_URL, decode_responses=True)
+        key = f"user_prompt_queue:{session_id}"
+        prompts = []
+        while True:
+            prompt = r.lpop(key)
+            if prompt is None:
+                break
+            prompts.append(prompt)
+        if prompts:
+            logger.info(f"Popped {len(prompts)} user prompt(s) for session {session_id}")
+        return prompts
+    except Exception as e:
+        logger.error(f"Failed to pop user prompts from Redis: {e}")
+        return []
+
+
+def clear_user_prompt_queue(session_id: str) -> bool:
+    """Clear the user prompt queue for a session.
+
+    Called when execution completes to clean up any remaining prompts.
+
+    Args:
+        session_id: The session ID to clear prompt queue for
+
+    Returns:
+        True if queue was cleared successfully, False otherwise
+    """
+    try:
+        r = redis.from_url(settings.CELERY_BROKER_URL, decode_responses=True)
+        r.delete(f"user_prompt_queue:{session_id}")
+        logger.info(f"Cleared user prompt queue for session {session_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to clear user prompt queue in Redis: {e}")
+        return False

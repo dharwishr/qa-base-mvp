@@ -5,7 +5,7 @@ import type {
   CreateBenchmarkRequest,
   StartBenchmarkResponse,
 } from '../types/benchmark';
-import type { TestPlan, ActModeResponse } from '../types/analysis';
+import type { TestPlan, ActModeResponse, ChatMode } from '../types/analysis';
 import type { TestStep } from '../types/analysis';
 import { getAuthToken, handleUnauthorized } from '../contexts/AuthContext';
 import { config } from '../config';
@@ -259,7 +259,7 @@ export const benchmarkApi = {
     benchmarkId: string,
     modelRunId: string,
     prompt: string,
-    mode: 'plan' | 'act'
+    mode: ChatMode
   ): Promise<BenchmarkModelRun> {
     const response = await fetch(
       `${API_BASE}/api/benchmark/sessions/${benchmarkId}/runs/${modelRunId}/continue`,

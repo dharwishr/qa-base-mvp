@@ -417,7 +417,7 @@ class Tools(Generic[Context]):
 			if node is None:
 				msg = f'Element index {params.index} not available - page may have changed. Try refreshing browser state.'
 				logger.warning(f'⚠️ {msg}')
-				return ActionResult(extracted_content=msg)
+				return ActionResult(error=msg)
 
 			# Record input for script generation
 			if RECORDING_ENABLED:
@@ -1014,7 +1014,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
 			if node is None:
 				msg = f'Element index {params.index} not available - page may have changed. Try refreshing browser state.'
 				logger.warning(f'⚠️ {msg}')
-				return ActionResult(extracted_content=msg)
+				return ActionResult(error=msg)
 
 			# Dispatch GetDropdownOptionsEvent to the event handler
 
@@ -1032,7 +1032,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
 			)
 
 		@self.registry.action(
-			'Set the option of a <select> element.',
+			'Set the option of a native <select> element. WARNING: Only use for native HTML <select> elements. For custom dropdowns (divs, spans, etc.), use click() to open the dropdown and click() again to select an option - this is more reliable.',
 			param_model=SelectDropdownOptionAction,
 		)
 		async def select_dropdown(params: SelectDropdownOptionAction, browser_session: BrowserSession):
@@ -1042,7 +1042,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
 			if node is None:
 				msg = f'Element index {params.index} not available - page may have changed. Try refreshing browser state.'
 				logger.warning(f'⚠️ {msg}')
-				return ActionResult(extracted_content=msg)
+				return ActionResult(error=msg)
 
 			# Dispatch SelectDropdownOptionEvent to the event handler
 			from browser_use.browser.events import SelectDropdownOptionEvent

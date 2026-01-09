@@ -155,7 +155,8 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
 			created_at=organization.created_at,
 			updated_at=organization.updated_at
 		),
-		role=UserRole(user_org.role)
+		role=UserRole(user_org.role),
+		organization_count=len(user_orgs)
 	)
 
 
@@ -257,6 +258,11 @@ async def switch_organization(
 
 	logger.info(f"User {user.email} switched to organization {organization.slug}")
 
+	# Get total organization count for this user
+	user_orgs = db.query(UserOrganization).filter(
+		UserOrganization.user_id == current_user.id
+	).all()
+
 	return LoginResponse(
 		access_token=access_token,
 		token_type="bearer",
@@ -275,5 +281,6 @@ async def switch_organization(
 			created_at=organization.created_at,
 			updated_at=organization.updated_at
 		),
-		role=UserRole(user_org.role)
+		role=UserRole(user_org.role),
+		organization_count=len(user_orgs)
 	)

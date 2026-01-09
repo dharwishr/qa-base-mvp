@@ -98,31 +98,49 @@ class SelfHealingLocator:
 	async def _try_fuzzy_match(self, timeout: int) -> Locator | None:
 		"""Try to find element using fuzzy matching based on context."""
 		ctx = self.element_context
-		if not ctx:
-			return None
-		
 		fuzzy_selectors = []
-		
-		# Try by text content
-		if ctx.text_content:
-			fuzzy_selectors.append(f"text={ctx.text_content}")
-			fuzzy_selectors.append(f"{ctx.tag_name}:has-text('{ctx.text_content}')")
-		
-		# Try by aria-label
-		if ctx.aria_label:
-			fuzzy_selectors.append(f"[aria-label='{ctx.aria_label}']")
-		
-		# Try by placeholder
-		if ctx.placeholder:
-			fuzzy_selectors.append(f"[placeholder='{ctx.placeholder}']")
-		
-		# Try by role
-		if ctx.role:
+
+		if ctx:
+			# Try by text content
 			if ctx.text_content:
-				fuzzy_selectors.append(f"role={ctx.role}[name='{ctx.text_content}']")
-			else:
-				fuzzy_selectors.append(f"role={ctx.role}")
-		
+				fuzzy_selectors.append(f"text={ctx.text_content}")
+				fuzzy_selectors.append(f"{ctx.tag_name}:has-text('{ctx.text_content}')")
+				# Also try as link text
+				if ctx.tag_name == "a":
+					fuzzy_selectors.append(f"a:text-is('{ctx.text_content}')")
+
+			# Try by aria-label
+			if ctx.aria_label:
+				fuzzy_selectors.append(f"[aria-label='{ctx.aria_label}']")
+				fuzzy_selectors.append(f"{ctx.tag_name}[aria-label='{ctx.aria_label}']")
+
+			# Try by placeholder
+			if ctx.placeholder:
+				fuzzy_selectors.append(f"[placeholder='{ctx.placeholder}']")
+
+			# Try by role
+			if ctx.role:
+				if ctx.text_content:
+					fuzzy_selectors.append(f"role={ctx.role}[name='{ctx.text_content}']")
+				else:
+					fuzzy_selectors.append(f"role={ctx.role}")
+
+			# Try by classes (if available)
+			if ctx.classes:
+				class_selector = ".".join(ctx.classes[:3])  # Use first 3 classes
+				if ctx.tag_name:
+					fuzzy_selectors.append(f"{ctx.tag_name}.{class_selector}")
+				else:
+					fuzzy_selectors.append(f".{class_selector}")
+
+		# Try to extract hints from the original XPath selector
+		primary = self.selectors.primary
+		if primary and primary.startswith("xpath="):
+			xpath = primary[6:]
+			# Extract element type from xpath (e.g., 'a', 'button', 'input')
+			alt_selectors = self._extract_alternative_selectors(xpath)
+			fuzzy_selectors.extend(alt_selectors)
+
 		for selector in fuzzy_selectors:
 			try:
 				locator = self.page.locator(selector)
@@ -138,8 +156,43 @@ class SelfHealingLocator:
 					success=False,
 					error=str(e)
 				))
-		
+
 		return None
+
+	def _extract_alternative_selectors(self, xpath: str) -> list[str]:
+		"""Extract alternative selectors from XPath patterns."""
+		alternatives = []
+
+		# Common patterns for action links in tables
+		# Pattern: .../a[1] or .../a[2] at the end - likely an action button
+		if xpath.endswith("/a[1]") or xpath.endswith("/a[2]"):
+			# Try to find links with common action text
+			action_texts = ["Edit", "View", "Delete", "Remove", "Update", "Details", "Open"]
+			for text in action_texts:
+				alternatives.append(f"a:text-is('{text}')")
+				alternatives.append(f"a:has-text('{text}')")
+
+		# Pattern: table row with specific cell - try finding by visible text in row
+		if "/tr[" in xpath and "/td[" in xpath:
+			# For table cells, try the last element type
+			if "/a" in xpath:
+				alternatives.append("table a:visible")
+			elif "/button" in xpath:
+				alternatives.append("table button:visible")
+
+		# Extract @class, @id, @name attributes if present in xpath
+		import re
+		class_match = re.search(r"@class=['\"]([^'\"]+)['\"]", xpath)
+		if class_match:
+			classes = class_match.group(1).split()
+			if classes:
+				alternatives.append(f".{classes[0]}")
+
+		id_match = re.search(r"@id=['\"]([^'\"]+)['\"]", xpath)
+		if id_match:
+			alternatives.append(f"#{id_match.group(1)}")
+
+		return alternatives
 	
 	def was_healed(self) -> bool:
 		"""Check if the locator required healing (used a fallback selector)."""
@@ -647,17 +700,167 @@ class PlaywrightRunner(BaseRunner):
 		return healer
 	
 	async def _execute_select(self, step: PlaywrightStep) -> SelfHealingLocator:
-		"""Execute dropdown select with self-healing."""
+		"""Execute dropdown select with self-healing.
+
+		Handles both native <select> elements and custom dropdowns (Select2, etc.):
+		- Native select: Uses Playwright's select_option
+		- Custom dropdown: Clicks to open, then clicks the matching option
+		"""
 		assert self._page and step.selectors and step.value is not None
-		
+
 		healer = SelfHealingLocator(self._page, step.selectors, step.element_context)
 		locator = await healer.locate(timeout=step.timeout)
-		
+
 		if not locator:
 			raise Exception(f"Could not find dropdown. Tried selectors: {step.selectors.all_selectors()}")
-		
-		await locator.select_option(step.value, timeout=step.timeout)
+
+		value = step.value
+
+		# Check if this is a native <select> element
+		tag_name = await locator.evaluate("el => el.tagName.toLowerCase()")
+
+		if tag_name == "select":
+			# Native select - use standard strategies
+			return await self._select_native_option(locator, value, step.timeout, healer)
+		else:
+			# Custom dropdown (Select2, Choices.js, etc.) - click to open and select
+			return await self._select_custom_dropdown(locator, value, step.timeout, healer)
+
+	async def _select_native_option(
+		self, locator: Locator, value: str, timeout: int, healer: SelfHealingLocator
+	) -> SelfHealingLocator:
+		"""Select option from native <select> element."""
+		short_timeout = min(timeout // 3, 5000)
+
+		# Strategy 1: Try by value attribute
+		try:
+			await locator.select_option(value=value, timeout=short_timeout)
+			return healer
+		except Exception:
+			pass
+
+		# Strategy 2: Try by label (visible text)
+		try:
+			await locator.select_option(label=value, timeout=short_timeout)
+			return healer
+		except Exception:
+			pass
+
+		# Strategy 3: Try partial label match
+		try:
+			options = await locator.locator("option").all_text_contents()
+			for option_text in options:
+				if value.lower() in option_text.lower() or option_text.lower() in value.lower():
+					await locator.select_option(label=option_text, timeout=short_timeout)
+					return healer
+		except Exception:
+			pass
+
+		# Strategy 4: Try by index if value is numeric
+		if value.isdigit():
+			try:
+				await locator.select_option(index=int(value), timeout=short_timeout)
+				return healer
+			except Exception:
+				pass
+
+		# Final attempt with full timeout
+		await locator.select_option(value=value, timeout=timeout)
 		return healer
+
+	async def _select_custom_dropdown(
+		self, locator: Locator, value: str, timeout: int, healer: SelfHealingLocator
+	) -> SelfHealingLocator:
+		"""Select option from custom dropdown (Select2, Choices.js, etc.).
+
+		Works by:
+		1. Clicking to open the dropdown
+		2. Waiting for options to appear
+		3. Clicking the matching option
+		"""
+		assert self._page
+		short_timeout = min(timeout // 3, 5000)
+
+		# Click to open the dropdown
+		await locator.click(timeout=short_timeout)
+		await asyncio.sleep(0.3)  # Wait for animation
+
+		# Common dropdown option selectors for various libraries
+		dropdown_option_selectors = [
+			# Select2
+			f".select2-results__option:has-text('{value}')",
+			f".select2-results li:has-text('{value}')",
+			# Choices.js
+			f".choices__item--choice:has-text('{value}')",
+			# Bootstrap Select
+			f".dropdown-menu li:has-text('{value}')",
+			f".dropdown-item:has-text('{value}')",
+			# Material UI
+			f".MuiMenuItem-root:has-text('{value}')",
+			f"[role='option']:has-text('{value}')",
+			# Ant Design
+			f".ant-select-item-option:has-text('{value}')",
+			# Generic listbox options
+			f"[role='listbox'] [role='option']:has-text('{value}')",
+			f".listbox-option:has-text('{value}')",
+			# Generic dropdown items
+			f"li[data-value='{value}']",
+			f"li:has-text('{value}')",
+		]
+
+		# Try each selector until one works
+		for selector in dropdown_option_selectors:
+			try:
+				option = self._page.locator(selector).first
+				await option.wait_for(state="visible", timeout=short_timeout)
+				await option.click(timeout=short_timeout)
+				healer.successful_selector = f"[CUSTOM_SELECT] {selector}"
+				return healer
+			except Exception:
+				continue
+
+		# Fallback: Try finding by partial text match in any visible dropdown
+		try:
+			# Look for any visible dropdown container
+			dropdown_containers = [
+				".select2-dropdown",
+				".select2-results",
+				".choices__list--dropdown",
+				".dropdown-menu.show",
+				"[role='listbox']",
+				".ant-select-dropdown",
+			]
+
+			for container_sel in dropdown_containers:
+				container = self._page.locator(container_sel)
+				if await container.count() > 0 and await container.is_visible():
+					# Find all options in this container
+					options = container.locator("li, [role='option'], .dropdown-item")
+					count = await options.count()
+
+					for i in range(count):
+						option = options.nth(i)
+						try:
+							text = await option.inner_text(timeout=500)
+							if value.lower() in text.lower() or text.lower() in value.lower():
+								await option.click(timeout=short_timeout)
+								healer.successful_selector = f"[CUSTOM_SELECT] partial match: {text}"
+								return healer
+						except Exception:
+							continue
+		except Exception:
+			pass
+
+		# If nothing worked, try clicking away to close dropdown and raise error
+		try:
+			await self._page.keyboard.press("Escape")
+		except Exception:
+			pass
+
+		raise Exception(
+			f"Could not select '{value}' from custom dropdown. "
+			f"Tried Select2, Choices.js, Bootstrap, Material UI, and Ant Design selectors."
+		)
 	
 	async def _execute_press(self, step: PlaywrightStep):
 		"""Execute key press."""
@@ -701,39 +904,94 @@ class PlaywrightRunner(BaseRunner):
 		await locator.hover(timeout=step.timeout)
 		return healer
 	
+	def _match_text_pattern(self, actual: str, expected: str, assertion: AssertionConfig) -> bool:
+		"""Match text based on pattern type.
+
+		Args:
+			actual: The actual text from the page
+			expected: The expected pattern/text
+			assertion: Assertion config with pattern_type and case_sensitive settings
+
+		Returns:
+			True if the pattern matches, False otherwise
+		"""
+		pattern_type = getattr(assertion, 'pattern_type', 'substring')
+
+		if pattern_type == "exact":
+			if assertion.case_sensitive:
+				return actual.strip() == expected.strip()
+			return actual.strip().lower() == expected.strip().lower()
+		elif pattern_type == "substring":
+			if assertion.case_sensitive:
+				return expected in actual
+			return expected.lower() in actual.lower()
+		elif pattern_type == "wildcard":
+			# Convert wildcard (*) to regex pattern
+			pattern = re.escape(expected).replace(r"\*", ".*")
+			flags = 0 if assertion.case_sensitive else re.IGNORECASE
+			return bool(re.search(pattern, actual, flags))
+		elif pattern_type == "regex":
+			flags = 0 if assertion.case_sensitive else re.IGNORECASE
+			try:
+				return bool(re.search(expected, actual, flags))
+			except re.error:
+				return False
+		return False
+
 	async def _execute_assertion(self, step: PlaywrightStep) -> dict[str, Any]:
 		"""Execute an assertion step."""
 		assert self._page and step.assertion
-		
+
 		assertion = step.assertion
 		result: dict[str, Any] = {"success": False, "heal_attempts": [], "selector_used": None}
-		
+		pattern_type = getattr(assertion, 'pattern_type', 'substring')
+
 		try:
 			if assertion.assertion_type == "text_visible":
-				# Check if text is visible on page
+				# Check if text is visible on page with retry/polling
 				expected = assertion.expected_value or ""
-				
+				timeout_ms = step.timeout or 10000
+				poll_interval = 500  # Check every 500ms
+				max_attempts = max(timeout_ms // poll_interval, 1)
+
 				if step.selectors:
 					# Look for text within a specific element
 					healer = SelfHealingLocator(self._page, step.selectors, step.element_context)
 					locator = await healer.locate(timeout=step.timeout)
 					result["heal_attempts"] = healer.heal_attempts
 					result["selector_used"] = healer.successful_selector
-					
+
 					if locator:
-						if assertion.partial_match:
-							await expect(locator).to_contain_text(expected, timeout=step.timeout)
+						# Get element text and use pattern matching
+						actual_text = await locator.inner_text()
+						if self._match_text_pattern(actual_text, expected, assertion):
+							result["success"] = True
 						else:
-							await expect(locator).to_have_text(expected, timeout=step.timeout)
-						result["success"] = True
+							result["error"] = f"Text pattern '{expected}' not found in element text"
 					else:
 						result["error"] = f"Could not find element containing text: {expected}"
 				else:
-					# Look for text anywhere on page
-					text_locator = self._page.get_by_text(expected, exact=not assertion.partial_match)
-					await expect(text_locator.first).to_be_visible(timeout=step.timeout)
-					result["success"] = True
-					result["selector_used"] = f"text={expected}"
+					# Look for text anywhere on page with polling (wait for dynamic content)
+					for attempt in range(max_attempts):
+						try:
+							# Wait for page to be in a stable state
+							await self._page.wait_for_load_state("domcontentloaded", timeout=2000)
+						except Exception:
+							pass
+
+						page_text = await self._page.evaluate("() => document.body.innerText")
+
+						if self._match_text_pattern(page_text, expected, assertion):
+							result["success"] = True
+							result["selector_used"] = f"text={expected} (pattern_type={pattern_type})"
+							break
+
+						# If not found and not last attempt, wait and retry
+						if attempt < max_attempts - 1:
+							await asyncio.sleep(poll_interval / 1000)
+
+					if not result["success"]:
+						result["error"] = f"Text '{expected}' not found on page after {max_attempts} attempts (pattern_type={pattern_type})"
 			
 			elif assertion.assertion_type == "element_visible":
 				assert step.selectors

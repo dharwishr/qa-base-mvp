@@ -39,6 +39,12 @@ export interface LoginResponse {
   user: User;
   organization: Organization;
   role: UserRole;
+  organization_count: number;
+}
+
+export interface CreateOrganizationRequest {
+  name: string;
+  description?: string;
 }
 
 export interface SignupResponse {
@@ -126,6 +132,15 @@ export const authApi = {
 };
 
 export const organizationApi = {
+  async createOrganization(data: CreateOrganizationRequest): Promise<Organization> {
+    const response = await fetch(`${API_BASE}/api/v1/organizations`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<Organization>(response);
+  },
+
   async getCurrentOrganization(): Promise<Organization> {
     const response = await fetch(`${API_BASE}/api/v1/organizations`, {
       headers: getAuthHeaders(),

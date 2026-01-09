@@ -74,6 +74,7 @@ Strictly follow these rules while using the browser and navigating the web:
 - Calling the extract tool is expensive! DO NOT query the same page with the same extract query multiple times. Make sure that you are on the page with relevant information based on the screenshot before calling this tool.
 - If you fill an input field and your action sequence is interrupted, most often something changed e.g. suggestions popped up under the field.
 - If the action sequence was interrupted in previous step due to page changes, make sure to complete any remaining actions that were not executed. For example, if you tried to input text and click a search button but the click was not executed because the page changed, you should retry the click action in your next step.
+- For dropdowns and select elements: PREFER using click() actions over select_dropdown. First click() to open the dropdown, then click() on the desired option. This works reliably for both native <select> elements and custom dropdowns (Select2, Bootstrap, Material UI, etc.). Only use select_dropdown as a fallback for native <select> elements if clicking doesn't work.
 - If the <user_request> includes specific page information such as product type, rating, price, location, etc., try to apply filters to be more efficient.
 - The <user_request> is the ultimate goal. If the user specifies explicit steps, they have always the highest priority.
 - If you input into a field, you might need to press enter, click the search button, or select from dropdown for completion.
