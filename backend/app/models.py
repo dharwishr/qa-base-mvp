@@ -122,6 +122,9 @@ class TestSession(Base):
 	plan_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Plan generation task
 	execution_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Plan execution task
 
+	# Pause/Resume context - stores AI agent context when paused for resumption
+	pause_context: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 	updated_at: Mapped[datetime] = mapped_column(
 		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

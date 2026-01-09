@@ -93,6 +93,20 @@ export const analysisApi = {
   },
 
   /**
+   * Create a new recording-mode session that skips plan generation.
+   * The session will be created with a goto step for the start URL and
+   * immediately ready for recording.
+   */
+  async createRecordingSession(startUrl: string, llmModel: LlmModel = 'gemini-3.0-flash'): Promise<TestSession> {
+    const response = await fetch(`${API_BASE}/api/analysis/sessions/recording`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ start_url: startUrl, llm_model: llmModel }),
+    });
+    return handleResponse<TestSession>(response);
+  },
+
+  /**
    * Get a test session by ID with all details including plan and steps.
    */
   async getSession(sessionId: string): Promise<TestSession> {
@@ -244,6 +258,36 @@ export const analysisApi = {
       }
     );
     return handleResponse<{ status: string; message: string }>(response);
+  },
+
+  /**
+   * Pause a running test execution (resumable).
+   * Unlike stop, pause allows execution to be resumed later.
+   */
+  async pauseExecution(sessionId: string): Promise<{ status: string; message: string }> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/pause`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      }
+    );
+    return handleResponse<{ status: string; message: string }>(response);
+  },
+
+  /**
+   * Resume a paused test execution.
+   * Continues from where it was paused, with awareness of any steps recorded during pause.
+   */
+  async resumeExecution(sessionId: string): Promise<{ task_id: string; status: string }> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/resume`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      }
+    );
+    return handleResponse<{ task_id: string; status: string }>(response);
   },
 
   /**

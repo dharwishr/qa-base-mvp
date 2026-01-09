@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
-import { useNavigate } from "react-router-dom"
-import { List, LayoutList, FileCode, Loader2, ExternalLink } from "lucide-react"
+import { useNavigate, useLocation } from "react-router-dom"
+import { List, LayoutList, FileCode, Loader2, ExternalLink, Pause, Play, Video } from "lucide-react"
 import StepList, { type TestStep as DisplayTestStep } from "@/components/analysis/StepList"
 import ConfigPanel from "@/components/analysis/ConfigPanel"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
@@ -21,17 +21,28 @@ interface BrowserSessionInfo {
     novncUrl?: string
 }
 
-type AnalysisState = 'idle' | 'generating_plan' | 'plan_ready' | 'executing' | 'completed' | 'failed' | 'stopped'
+type AnalysisState = 'idle' | 'generating_plan' | 'plan_ready' | 'executing' | 'completed' | 'failed' | 'stopped' | 'paused' | 'recording_ready'
+
+interface LocationState {
+    mode?: 'ai' | 'record'
+    startUrl?: string
+}
 
 export default function TestAnalysis() {
     const navigate = useNavigate()
+    const location = useLocation()
+    const locationState = location.state as LocationState | null
+    const creationMode = locationState?.mode || 'ai'
+    const startUrl = locationState?.startUrl
+
     const [prompt, setPrompt] = useState("")
     const [session, setSession] = useState<TestSession | null>(null)
     const [analysisState, setAnalysisState] = useState<AnalysisState>('idle')
     const [error, setError] = useState<string | null>(null)
     const [selectedStepId, setSelectedStepId] = useState<string | number | null>(null)
     const [selectedLlm, setSelectedLlm] = useState<LlmModel>('gemini-3.0-flash')
-    const [headless, setHeadless] = useState(true) // Default to headless mode
+    const [headless, setHeadless] = useState(creationMode === 'record' ? false : true) // Recording mode requires live browser
+    const [isInitializingRecording, setIsInitializingRecording] = useState(false)
 
     // Fetch system settings to get the default model
     useEffect(() => {
@@ -78,10 +89,13 @@ export default function TestAnalysis() {
         isExecuting,
         isCompleted,
         isStopped,
+        isPaused,
         success,
         error: subscriptionError,
         startExecution,
         stopExecution,
+        pauseExecution,
+        resumeExecution,
         clear,
         updateStepAction,
         deleteStep,
@@ -122,12 +136,14 @@ export default function TestAnalysis() {
     useEffect(() => {
         if (isExecuting) {
             setAnalysisState('executing')
+        } else if (isPaused) {
+            setAnalysisState('paused')
         } else if (isStopped) {
             setAnalysisState('stopped')
         } else if (isCompleted) {
             setAnalysisState(success ? 'completed' : 'failed')
         }
-    }, [isExecuting, isCompleted, isStopped, success])
+    }, [isExecuting, isCompleted, isStopped, isPaused, success])
 
     // Handle subscription errors
     useEffect(() => {
@@ -135,6 +151,49 @@ export default function TestAnalysis() {
             setError(subscriptionError)
         }
     }, [subscriptionError])
+
+    // Initialize recording mode when navigated with recording params
+    useEffect(() => {
+        const initializeRecordingMode = async () => {
+            if (creationMode !== 'record' || !startUrl || session || isInitializingRecording) {
+                return
+            }
+
+            setIsInitializingRecording(true)
+            setError(null)
+
+            try {
+                // Create session in recording mode (no plan generation)
+                const newSession = await analysisApi.createRecordingSession(startUrl, selectedLlm)
+                setSession(newSession)
+                setAnalysisState('recording_ready')
+                // Clear the location state to prevent re-initialization on refresh
+                window.history.replaceState({}, document.title)
+            } catch (e) {
+                console.error('Error initializing recording mode:', e)
+                setError(e instanceof Error ? e.message : 'Failed to start recording session')
+                setAnalysisState('failed')
+            } finally {
+                setIsInitializingRecording(false)
+            }
+        }
+
+        initializeRecordingMode()
+    }, [creationMode, startUrl, session, isInitializingRecording, selectedLlm])
+
+    // Auto-start recording when browser session is available in recording mode
+    useEffect(() => {
+        if (
+            creationMode === 'record' &&
+            analysisState === 'recording_ready' &&
+            browserSession?.id &&
+            session?.id &&
+            !isRecording &&
+            !isInitializingRecording
+        ) {
+            handleStartRecording()
+        }
+    }, [creationMode, analysisState, browserSession?.id, session?.id, isRecording, isInitializingRecording])
 
     // Poll for browser session when in non-headless mode
     // Keep polling even after execution to allow recording
@@ -327,10 +386,10 @@ export default function TestAnalysis() {
 
     // Auto-switch to live tab when execution starts or recording begins
     useEffect(() => {
-        if (!headless && (isExecuting || isRecording || browserSession)) {
+        if (!headless && (isExecuting || isPaused || isRecording || browserSession)) {
             setActiveTab('live')
         }
-    }, [isExecuting, isRecording, browserSession, headless])
+    }, [isExecuting, isPaused, isRecording, browserSession, headless])
 
     return (
         <div
@@ -345,8 +404,8 @@ export default function TestAnalysis() {
                     className="border-r flex flex-col overflow-hidden hidden md:flex"
                     style={{ width: `${leftWidth}px` }}
                 >
-                    {/* Input Section - Initial State */}
-                    {analysisState === 'idle' && (
+                    {/* Input Section - Initial State (AI mode only) */}
+                    {analysisState === 'idle' && creationMode === 'ai' && (
                         <div className="p-4 space-y-4">
                             <Card>
                                 <CardHeader className="pb-3">
@@ -372,6 +431,65 @@ export default function TestAnalysis() {
                                         Generate Plan
                                     </Button>
                                 </CardFooter>
+                            </Card>
+                        </div>
+                    )}
+
+                    {/* Recording Mode Initialization */}
+                    {analysisState === 'idle' && creationMode === 'record' && (
+                        <div className="p-4 flex items-center justify-center h-full">
+                            <div className="text-center space-y-3">
+                                <Loader2 className="h-8 w-8 animate-spin mx-auto text-purple-600" />
+                                <p className="text-sm text-muted-foreground">Starting recording session...</p>
+                                <p className="text-xs text-muted-foreground">
+                                    Navigating to {startUrl}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Recording Ready State */}
+                    {analysisState === 'recording_ready' && (
+                        <div className="p-4 space-y-4">
+                            <Card className="border-purple-200 bg-purple-50/10">
+                                <CardHeader className="pb-3 bg-purple-50/20 border-b border-purple-100">
+                                    <CardTitle className="text-lg text-purple-900 flex items-center gap-2">
+                                        <Video className="h-5 w-5" />
+                                        Recording Mode
+                                    </CardTitle>
+                                    <CardDescription className="text-purple-700/80">
+                                        {isRecording
+                                            ? 'Recording your interactions. Click Stop when done.'
+                                            : browserSession
+                                                ? 'Ready to record. Click Start Recording to begin.'
+                                                : 'Waiting for browser to start...'}
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="pt-4 space-y-4">
+                                    <div className="flex gap-2">
+                                        {isRecording ? (
+                                            <Button
+                                                onClick={handleStopRecording}
+                                                variant="destructive"
+                                                className="flex-1"
+                                            >
+                                                Stop Recording
+                                            </Button>
+                                        ) : (
+                                            <Button
+                                                onClick={handleStartRecording}
+                                                disabled={!browserSession?.id}
+                                                className="flex-1 bg-purple-600 hover:bg-purple-700"
+                                            >
+                                                <Video className="h-4 w-4 mr-2" />
+                                                {browserSession ? 'Start Recording' : 'Waiting for browser...'}
+                                            </Button>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        You can stop and resume recording at any time. Use the AI chat to execute additional steps.
+                                    </p>
+                                </CardContent>
                             </Card>
                         </div>
                     )}
@@ -441,14 +559,57 @@ export default function TestAnalysis() {
                                             Executing Step {displaySteps.length + 1}...
                                         </div>
                                     </div>
-                                    <Button
-                                        onClick={stopExecution}
-                                        variant="destructive"
-                                        size="sm"
-                                        className="h-8"
-                                    >
-                                        Stop
-                                    </Button>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            onClick={pauseExecution}
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 gap-1"
+                                        >
+                                            <Pause className="h-3 w-3" />
+                                            Pause
+                                        </Button>
+                                        <Button
+                                            onClick={stopExecution}
+                                            variant="destructive"
+                                            size="sm"
+                                            className="h-8"
+                                        >
+                                            Stop
+                                        </Button>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+
+                    {/* Paused State */}
+                    {analysisState === 'paused' && (
+                        <div className="p-4 border-b space-y-3 bg-blue-50/10">
+                            <Card className="border-blue-200 bg-blue-50/20 shadow-none">
+                                <CardHeader className="p-4 pb-2">
+                                    <CardTitle className="text-base text-blue-900">Execution Paused</CardTitle>
+                                    <CardDescription className="text-blue-700/80">
+                                        You can now record steps manually. Click Resume to continue AI execution.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="p-4 pt-2">
+                                    <div className="flex gap-2">
+                                        <Button
+                                            onClick={resumeExecution}
+                                            className="flex-1 gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+                                        >
+                                            <Play className="h-4 w-4" />
+                                            Resume
+                                        </Button>
+                                        <Button
+                                            onClick={stopExecution}
+                                            variant="outline"
+                                            className="flex-1 border-blue-200 hover:bg-blue-100"
+                                        >
+                                            Cancel
+                                        </Button>
+                                    </div>
                                 </CardContent>
                             </Card>
                         </div>
@@ -621,7 +782,7 @@ export default function TestAnalysis() {
                     {/* Tab Content */}
                     {activeTab === 'live' ? (
                         // Live Browser Tab
-                        !headless && (isExecuting || isRecording || browserSession) ? (
+                        !headless && (isExecuting || isPaused || isRecording || browserSession) ? (
                             browserSession ? (
                                 <LiveBrowserView
                                     sessionId={browserSession.id}
@@ -633,6 +794,8 @@ export default function TestAnalysis() {
                                     onStopRecording={handleStopRecording}
                                     canRecord={!!session?.id && !!browserSession?.id && !isExecuting}
                                     isAIExecuting={isExecuting}
+                                    onPauseExecution={pauseExecution}
+                                    onStopExecution={stopExecution}
                                 />
                             ) : (
                                 <div className="flex-1 flex items-center justify-center">

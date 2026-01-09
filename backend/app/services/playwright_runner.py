@@ -729,9 +729,62 @@ class PlaywrightRunner(BaseRunner):
 	async def _select_native_option(
 		self, locator: Locator, value: str, timeout: int, healer: SelfHealingLocator
 	) -> SelfHealingLocator:
-		"""Select option from native <select> element."""
-		short_timeout = min(timeout // 3, 5000)
+		"""Select option from native <select> element.
 
+		Uses JavaScript-based selection to ensure proper event dispatching
+		for reactive frameworks (Vue, Svelte, React, etc.).
+		"""
+		assert self._page
+		short_timeout = min(timeout // 3, 5000)
+		value_lower = value.lower()
+
+		# Use JavaScript for proper event dispatching (matching browser_use behavior)
+		select_script = """
+		(element, targetText) => {
+			const options = Array.from(element.options);
+			const targetTextLower = targetText.toLowerCase();
+
+			for (const option of options) {
+				const optionTextLower = option.text.trim().toLowerCase();
+				const optionValueLower = option.value.toLowerCase();
+
+				// Match against both text and value (case-insensitive)
+				if (optionTextLower === targetTextLower || optionValueLower === targetTextLower ||
+				    optionTextLower.includes(targetTextLower) || targetTextLower.includes(optionTextLower)) {
+					// Focus the element first (important for reactive frameworks)
+					element.focus();
+
+					// Set the value
+					element.value = option.value;
+					option.selected = true;
+
+					// Dispatch all necessary events for reactive frameworks
+					element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+					element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+					element.blur();
+
+					return { success: true, selectedText: option.text.trim(), selectedValue: option.value };
+				}
+			}
+
+			// Return available options for debugging
+			const availableOptions = options.map(opt => opt.text.trim()).filter(t => t);
+			return { success: false, availableOptions };
+		}
+		"""
+
+		try:
+			result = await locator.evaluate(select_script, value)
+			if result.get('success'):
+				healer.successful_selector = f"[NATIVE_SELECT] JS selection: {result.get('selectedText', value)}"
+				return healer
+			else:
+				available = result.get('availableOptions', [])
+				logger.warning(f"JS selection failed. Available options: {available[:10]}")
+		except Exception as e:
+			logger.debug(f"JS-based selection failed: {e}, falling back to Playwright methods")
+
+		# Fallback: Try Playwright's native methods
 		# Strategy 1: Try by value attribute
 		try:
 			await locator.select_option(value=value, timeout=short_timeout)
@@ -739,19 +792,20 @@ class PlaywrightRunner(BaseRunner):
 		except Exception:
 			pass
 
-		# Strategy 2: Try by label (visible text)
+		# Strategy 2: Try by label (visible text) - case insensitive
 		try:
 			await locator.select_option(label=value, timeout=short_timeout)
 			return healer
 		except Exception:
 			pass
 
-		# Strategy 3: Try partial label match
+		# Strategy 3: Try partial/case-insensitive label match
 		try:
 			options = await locator.locator("option").all_text_contents()
 			for option_text in options:
-				if value.lower() in option_text.lower() or option_text.lower() in value.lower():
-					await locator.select_option(label=option_text, timeout=short_timeout)
+				option_lower = option_text.strip().lower()
+				if value_lower == option_lower or value_lower in option_lower or option_lower in value_lower:
+					await locator.select_option(label=option_text.strip(), timeout=short_timeout)
 					return healer
 		except Exception:
 			pass
@@ -771,21 +825,104 @@ class PlaywrightRunner(BaseRunner):
 	async def _select_custom_dropdown(
 		self, locator: Locator, value: str, timeout: int, healer: SelfHealingLocator
 	) -> SelfHealingLocator:
-		"""Select option from custom dropdown (Select2, Choices.js, etc.).
+		"""Select option from custom dropdown (Select2, Choices.js, Semantic UI, ARIA, etc.).
 
-		Works by:
-		1. Clicking to open the dropdown
-		2. Waiting for options to appear
-		3. Clicking the matching option
+		Matches browser_use behavior by:
+		1. First trying JavaScript-based selection for ARIA/Semantic UI dropdowns
+		2. Clicking to open the dropdown
+		3. Waiting for options to appear
+		4. Clicking the matching option with proper event dispatching
 		"""
 		assert self._page
 		short_timeout = min(timeout // 3, 5000)
+		value_lower = value.lower()
+
+		# First, try JavaScript-based selection (matching browser_use behavior)
+		# This handles ARIA dropdowns and Semantic UI without needing to click first
+		js_select_script = """
+		(element, targetText) => {
+			const targetTextLower = targetText.toLowerCase();
+
+			// Check ARIA role
+			const role = element.getAttribute('role');
+			if (role === 'menu' || role === 'listbox' || role === 'combobox') {
+				const menuItems = element.querySelectorAll('[role="menuitem"], [role="option"]');
+
+				for (const item of menuItems) {
+					if (item.textContent) {
+						const itemTextLower = item.textContent.trim().toLowerCase();
+						const itemValueLower = (item.getAttribute('data-value') || '').toLowerCase();
+
+						if (itemTextLower === targetTextLower || itemValueLower === targetTextLower ||
+						    itemTextLower.includes(targetTextLower) || targetTextLower.includes(itemTextLower)) {
+							// Clear previous selections
+							menuItems.forEach(mi => {
+								mi.setAttribute('aria-selected', 'false');
+								mi.classList.remove('selected');
+							});
+
+							// Select this item
+							item.setAttribute('aria-selected', 'true');
+							item.classList.add('selected');
+							item.click();
+
+							return { success: true, method: 'aria', selectedText: item.textContent.trim() };
+						}
+					}
+				}
+			}
+
+			// Check Semantic UI dropdown
+			if (element.classList.contains('dropdown') || element.classList.contains('ui') ||
+			    element.classList.contains('selection')) {
+				const menuItems = element.querySelectorAll('.item, .option, [data-value]');
+
+				for (const item of menuItems) {
+					if (item.textContent) {
+						const itemTextLower = item.textContent.trim().toLowerCase();
+						const itemValueLower = (item.getAttribute('data-value') || '').toLowerCase();
+
+						if (itemTextLower === targetTextLower || itemValueLower === targetTextLower ||
+						    itemTextLower.includes(targetTextLower) || targetTextLower.includes(itemTextLower)) {
+							// Clear previous selections
+							menuItems.forEach(mi => mi.classList.remove('selected', 'active'));
+
+							// Select this item
+							item.classList.add('selected', 'active');
+
+							// Update dropdown text if there's a text element
+							const textElement = element.querySelector('.text');
+							if (textElement) {
+								textElement.textContent = item.textContent.trim();
+							}
+
+							// Trigger events
+							item.click();
+							element.dispatchEvent(new Event('change', { bubbles: true }));
+
+							return { success: true, method: 'semantic-ui', selectedText: item.textContent.trim() };
+						}
+					}
+				}
+			}
+
+			return { success: false };
+		}
+		"""
+
+		try:
+			result = await locator.evaluate(js_select_script, value)
+			if result.get('success'):
+				healer.successful_selector = f"[CUSTOM_SELECT] JS {result.get('method')}: {result.get('selectedText', value)}"
+				return healer
+		except Exception as e:
+			logger.debug(f"JS-based custom dropdown selection failed: {e}")
 
 		# Click to open the dropdown
 		await locator.click(timeout=short_timeout)
 		await asyncio.sleep(0.3)  # Wait for animation
 
-		# Common dropdown option selectors for various libraries
+		# Common dropdown option selectors for various libraries (case-insensitive using :text-is or regex)
 		dropdown_option_selectors = [
 			# Select2
 			f".select2-results__option:has-text('{value}')",
@@ -798,14 +935,20 @@ class PlaywrightRunner(BaseRunner):
 			# Material UI
 			f".MuiMenuItem-root:has-text('{value}')",
 			f"[role='option']:has-text('{value}')",
+			f"[role='menuitem']:has-text('{value}')",
 			# Ant Design
 			f".ant-select-item-option:has-text('{value}')",
-			# Generic listbox options
+			# Semantic UI
+			f".menu .item:has-text('{value}')",
+			f".ui.dropdown .item:has-text('{value}')",
+			# Generic ARIA options
 			f"[role='listbox'] [role='option']:has-text('{value}')",
+			f"[role='menu'] [role='menuitem']:has-text('{value}')",
 			f".listbox-option:has-text('{value}')",
 			# Generic dropdown items
 			f"li[data-value='{value}']",
 			f"li:has-text('{value}')",
+			f"div[data-value='{value}']",
 		]
 
 		# Try each selector until one works
@@ -819,7 +962,7 @@ class PlaywrightRunner(BaseRunner):
 			except Exception:
 				continue
 
-		# Fallback: Try finding by partial text match in any visible dropdown
+		# Fallback: Try finding by partial/case-insensitive text match in any visible dropdown
 		try:
 			# Look for any visible dropdown container
 			dropdown_containers = [
@@ -827,27 +970,36 @@ class PlaywrightRunner(BaseRunner):
 				".select2-results",
 				".choices__list--dropdown",
 				".dropdown-menu.show",
+				".dropdown-menu:visible",
 				"[role='listbox']",
+				"[role='menu']",
 				".ant-select-dropdown",
+				".ui.dropdown .menu",
+				".menu.visible",
 			]
 
 			for container_sel in dropdown_containers:
-				container = self._page.locator(container_sel)
-				if await container.count() > 0 and await container.is_visible():
-					# Find all options in this container
-					options = container.locator("li, [role='option'], .dropdown-item")
-					count = await options.count()
+				try:
+					container = self._page.locator(container_sel)
+					if await container.count() > 0 and await container.is_visible():
+						# Find all options in this container
+						options = container.locator("li, [role='option'], [role='menuitem'], .dropdown-item, .item")
+						count = await options.count()
 
-					for i in range(count):
-						option = options.nth(i)
-						try:
-							text = await option.inner_text(timeout=500)
-							if value.lower() in text.lower() or text.lower() in value.lower():
-								await option.click(timeout=short_timeout)
-								healer.successful_selector = f"[CUSTOM_SELECT] partial match: {text}"
-								return healer
-						except Exception:
-							continue
+						for i in range(count):
+							option = options.nth(i)
+							try:
+								text = await option.inner_text(timeout=500)
+								text_lower = text.strip().lower()
+								# Case-insensitive comparison
+								if value_lower == text_lower or value_lower in text_lower or text_lower in value_lower:
+									await option.click(timeout=short_timeout)
+									healer.successful_selector = f"[CUSTOM_SELECT] partial match in {container_sel}: {text.strip()}"
+									return healer
+							except Exception:
+								continue
+				except Exception:
+					continue
 		except Exception:
 			pass
 
@@ -859,7 +1011,7 @@ class PlaywrightRunner(BaseRunner):
 
 		raise Exception(
 			f"Could not select '{value}' from custom dropdown. "
-			f"Tried Select2, Choices.js, Bootstrap, Material UI, and Ant Design selectors."
+			f"Tried Select2, Choices.js, Bootstrap, Material UI, Ant Design, and Semantic UI selectors."
 		)
 	
 	async def _execute_press(self, step: PlaywrightStep):
@@ -1008,17 +1160,42 @@ class PlaywrightRunner(BaseRunner):
 			
 			elif assertion.assertion_type == "url_contains":
 				expected = assertion.expected_value or ""
-				# Use regex pattern for url_contains since Playwright's to_have_url glob doesn't support substring matching well
-				pattern = re.compile(re.escape(expected))
-				await expect(self._page).to_have_url(pattern, timeout=step.timeout)
+				pattern_type = assertion.pattern_type or "substring"
+
+				if pattern_type == "regex":
+					# Use raw regex pattern
+					pattern = re.compile(expected, re.IGNORECASE if not assertion.case_sensitive else 0)
+					await expect(self._page).to_have_url(pattern, timeout=step.timeout)
+					result["selector_used"] = f"url matches regex {expected}"
+				elif pattern_type == "wildcard":
+					# Convert wildcard to regex: * -> .*, ? -> .
+					wildcard_pattern = expected.replace("*", ".*").replace("?", ".")
+					flags = re.IGNORECASE if not assertion.case_sensitive else 0
+					pattern = re.compile(wildcard_pattern, flags)
+					await expect(self._page).to_have_url(pattern, timeout=step.timeout)
+					result["selector_used"] = f"url matches wildcard {expected}"
+				else:
+					# Default substring matching - escape regex chars
+					flags = re.IGNORECASE if not assertion.case_sensitive else 0
+					pattern = re.compile(re.escape(expected), flags)
+					await expect(self._page).to_have_url(pattern, timeout=step.timeout)
+					result["selector_used"] = f"url contains {expected}"
 				result["success"] = True
-				result["selector_used"] = f"url contains {expected}"
-			
+
 			elif assertion.assertion_type == "url_equals":
 				expected = assertion.expected_value or ""
 				await expect(self._page).to_have_url(expected, timeout=step.timeout)
 				result["success"] = True
 				result["selector_used"] = f"url equals {expected}"
+
+			elif assertion.assertion_type == "url_regex" or assertion.assertion_type == "url_matches":
+				# Explicit regex-based URL assertion
+				expected = assertion.expected_value or ""
+				flags = re.IGNORECASE if not assertion.case_sensitive else 0
+				pattern = re.compile(expected, flags)
+				await expect(self._page).to_have_url(pattern, timeout=step.timeout)
+				result["success"] = True
+				result["selector_used"] = f"url matches regex {expected}"
 			
 			elif assertion.assertion_type == "value_equals":
 				assert step.selectors

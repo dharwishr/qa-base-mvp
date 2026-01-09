@@ -206,6 +206,15 @@ class CreateSessionRequest(BaseModel):
 	)
 
 
+class CreateRecordingSessionRequest(BaseModel):
+	"""Request to create a recording-mode session that skips plan generation."""
+	start_url: str = Field(..., min_length=1, description="Starting URL to navigate to and begin recording")
+	llm_model: str = Field(
+		default="gemini-3.0-flash",
+		description="LLM model for potential AI assistance later"
+	)
+
+
 class ContinueSessionRequest(BaseModel):
 	"""Request to continue an existing session with a new task."""
 	prompt: str = Field(..., min_length=1, description="The new task prompt to continue with")

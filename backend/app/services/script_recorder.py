@@ -34,12 +34,12 @@ class ElementContext(BaseModel):
 
 class AssertionConfig(BaseModel):
 	"""Configuration for assertion/verification steps."""
-	assertion_type: str  # text_visible | text_contains | element_visible | element_count | url_contains | url_equals | value_equals
-	expected_value: str | None = None  # Expected text, URL, value, etc.
+	assertion_type: str  # text_visible | text_contains | element_visible | element_count | url_contains | url_equals | url_regex | url_matches | value_equals
+	expected_value: str | None = None  # Expected text, URL, value, regex pattern, etc.
 	expected_count: int | None = None  # For element_count assertions
 	case_sensitive: bool = False  # Default to case-insensitive for flexibility
 	partial_match: bool = True  # For text assertions - substring match (default True for better matching)
-	pattern_type: str = "substring"  # "exact" | "substring" | "wildcard" | "regex"
+	pattern_type: str = "substring"  # "exact" | "substring" | "wildcard" | "regex" - used by url_contains to determine matching strategy
 
 
 class PlaywrightStep(BaseModel):

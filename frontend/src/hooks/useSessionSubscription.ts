@@ -28,6 +28,7 @@ interface UseSessionSubscriptionReturn {
   isExecuting: boolean;
   isCompleted: boolean;
   isStopped: boolean;
+  isPaused: boolean;
   success: boolean | null;
   error: string | null;
   connectionMode: 'websocket' | 'polling' | 'disconnected';
@@ -38,6 +39,8 @@ interface UseSessionSubscriptionReturn {
   subscribe: (includeInitialState?: boolean) => void;
   startExecution: () => Promise<void>;
   stopExecution: () => Promise<void>;
+  pauseExecution: () => Promise<void>;
+  resumeExecution: () => Promise<void>;
   sendCommand: (command: string, data?: Record<string, unknown>) => void;
   refreshFromServer: () => Promise<void>;
   updateStepAction: (stepId: string, updatedAction: StepAction) => void;
@@ -67,6 +70,7 @@ export function useSessionSubscription(
   const [isExecuting, setIsExecuting] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
   const [isStopped, setIsStopped] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [success, setSuccess] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionMode, setConnectionMode] = useState<'websocket' | 'polling' | 'disconnected'>('disconnected');
@@ -94,20 +98,30 @@ export function useSessionSubscription(
       setIsExecuting(true);
       setIsCompleted(false);
       setIsStopped(false);
+      setIsPaused(false);
     } else if (newStatus === 'completed') {
       setIsExecuting(false);
       setIsCompleted(true);
       setIsStopped(false);
+      setIsPaused(false);
       setSuccess(true);
     } else if (newStatus === 'stopped') {
       setIsExecuting(false);
       setIsCompleted(false);
       setIsStopped(true);
+      setIsPaused(false);
+      setSuccess(null);
+    } else if (newStatus === 'paused') {
+      setIsExecuting(false);
+      setIsCompleted(false);
+      setIsStopped(false);
+      setIsPaused(true);
       setSuccess(null);
     } else if (newStatus === 'failed') {
       setIsExecuting(false);
       setIsCompleted(true);
       setIsStopped(false);
+      setIsPaused(false);
       setSuccess(false);
     }
   }, []);
@@ -422,6 +436,36 @@ export function useSessionSubscription(
     }
   }, []);
 
+  // Pause execution (resumable)
+  const pauseExecution = useCallback(async () => {
+    const targetSessionId = sessionIdRef.current;
+    if (!targetSessionId) return;
+
+    try {
+      await analysisApi.pauseExecution(targetSessionId);
+      // Note: Status will be updated via WebSocket/polling when agent actually pauses
+    } catch (e) {
+      console.error('Error pausing execution:', e);
+      setError(e instanceof Error ? e.message : 'Failed to pause execution');
+    }
+  }, []);
+
+  // Resume execution from paused state
+  const resumeExecution = useCallback(async () => {
+    const targetSessionId = sessionIdRef.current;
+    if (!targetSessionId) return;
+
+    try {
+      await analysisApi.resumeExecution(targetSessionId);
+      setIsPaused(false);
+      setIsExecuting(true);
+      setStatus('queued');
+    } catch (e) {
+      console.error('Error resuming execution:', e);
+      setError(e instanceof Error ? e.message : 'Failed to resume execution');
+    }
+  }, []);
+
   // Update step action
   const updateStepAction = useCallback((stepId: string, updatedAction: StepAction) => {
     setSteps((prevSteps) =>
@@ -517,6 +561,7 @@ export function useSessionSubscription(
     isExecuting,
     isCompleted,
     isStopped,
+    isPaused,
     success,
     error,
     connectionMode,
@@ -525,6 +570,8 @@ export function useSessionSubscription(
     subscribe,
     startExecution,
     stopExecution,
+    pauseExecution,
+    resumeExecution,
     sendCommand,
     refreshFromServer,
     updateStepAction,

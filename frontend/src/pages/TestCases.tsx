@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
-import { Plus, RefreshCw, Trash2, Pencil, Check, X, Search, ChevronLeft, ChevronRight } from "lucide-react"
+import { Plus, RefreshCw, Trash2, Pencil, Check, X, Search, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Video } from "lucide-react"
 import { analysisApi } from "@/services/api"
 import type { TestSessionListItem, LlmModel } from "@/types/analysis"
+import UrlInputModal from "@/components/UrlInputModal"
 
 const STATUS_COLORS: Record<string, string> = {
     'pending_plan': 'bg-gray-100 text-gray-700',
@@ -11,6 +12,7 @@ const STATUS_COLORS: Record<string, string> = {
     'running': 'bg-yellow-100 text-yellow-700',
     'completed': 'bg-green-100 text-green-700',
     'failed': 'bg-red-100 text-red-700',
+    'recording_ready': 'bg-purple-100 text-purple-700',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -20,6 +22,7 @@ const STATUS_LABELS: Record<string, string> = {
     'running': 'Running',
     'completed': 'Completed',
     'failed': 'Failed',
+    'recording_ready': 'Recording',
 }
 
 const LLM_LABELS: Record<LlmModel, string> = {
@@ -80,8 +83,24 @@ export default function TestCases() {
     const [total, setTotal] = useState(0)
     const [totalPages, setTotalPages] = useState(1)
 
+    // New test case dropdown and modal state
+    const [showNewTestDropdown, setShowNewTestDropdown] = useState(false)
+    const [showUrlModal, setShowUrlModal] = useState(false)
+    const dropdownRef = useRef<HTMLDivElement>(null)
+
     // Debounce search query
     const debouncedSearch = useDebounce(searchQuery, 300)
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setShowNewTestDropdown(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [])
 
     const fetchSessions = useCallback(async (search?: string, pageNum?: number) => {
         setLoading(true)
@@ -186,13 +205,43 @@ export default function TestCases() {
                         <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                         Refresh
                     </button>
-                    <button
-                        onClick={() => navigate('/test-analysis')}
-                        className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
-                    >
-                        <Plus className="h-4 w-4 mr-2" />
-                        New Test Case
-                    </button>
+                    <div className="relative" ref={dropdownRef}>
+                        <button
+                            onClick={() => setShowNewTestDropdown(!showNewTestDropdown)}
+                            className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
+                        >
+                            <Plus className="h-4 w-4 mr-2" />
+                            New Test Case
+                            <ChevronDown className="h-4 w-4 ml-2" />
+                        </button>
+
+                        {showNewTestDropdown && (
+                            <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-background border z-50">
+                                <div className="py-1">
+                                    <button
+                                        onClick={() => {
+                                            setShowNewTestDropdown(false)
+                                            navigate('/test-analysis')
+                                        }}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-foreground hover:bg-muted"
+                                    >
+                                        <Sparkles className="h-4 w-4 mr-2" />
+                                        AI Test Create
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setShowNewTestDropdown(false)
+                                            setShowUrlModal(true)
+                                        }}
+                                        className="flex items-center w-full px-4 py-2 text-sm text-foreground hover:bg-muted"
+                                    >
+                                        <Video className="h-4 w-4 mr-2" />
+                                        Record Test Case
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -371,6 +420,15 @@ export default function TestCases() {
                     </div>
                 )}
             </div>
+
+            {/* URL Input Modal for Recording Mode */}
+            <UrlInputModal
+                isOpen={showUrlModal}
+                onClose={() => setShowUrlModal(false)}
+                onSubmit={(url) => {
+                    navigate('/test-analysis', { state: { mode: 'record', startUrl: url } })
+                }}
+            />
         </div>
     )
 }

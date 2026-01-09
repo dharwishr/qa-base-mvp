@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import re
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -35,7 +37,12 @@ USE_REMOTE_BROWSER = True
 
 
 class StopExecutionException(Exception):
-	"""Raised when execution is stopped by user (pause or stop)."""
+	"""Raised when execution is stopped by user (terminal stop)."""
+	pass
+
+
+class PauseExecutionException(Exception):
+	"""Raised when execution is paused by user (resumable)."""
 	pass
 
 
@@ -295,6 +302,15 @@ class BrowserService:
 						result_success = result.error is None
 						result_error = result.error
 						extracted_content = result.extracted_content
+
+					# Enhance select_dropdown action_params with the actual option value
+					# Browser-use saves index (internal DOM ref) and text, but not the value attribute
+					# The value is available in extracted_content: "Selected option: X (value: Y)"
+					if action_name == "select_dropdown" and extracted_content:
+						value_match = re.search(r'\(value:\s*([^)]+)\)', extracted_content)
+						if value_match:
+							action_params = dict(action_params)  # Copy to avoid mutation
+							action_params["value"] = value_match.group(1).strip()
 
 					# Get interacted element info
 					element_xpath = None
@@ -619,8 +635,10 @@ class BrowserServiceSync:
 		self.browser_session_id: str | None = None  # Remote browser session ID
 		# Callback for step events (used by Celery task for event publishing)
 		self._step_callback: Callable[[dict], None] | None = None
-		# Stop request flag (checked between steps)
+		# Stop request flag (checked between steps) - terminal
 		self._stop_requested: bool = False
+		# Pause request flag (checked between steps) - resumable
+		self._pause_requested: bool = False
 
 	def _create_chat_message(self, content: str, msg_type: str = "system") -> None:
 		"""Helper to create a chat message for the session."""
@@ -656,11 +674,49 @@ class BrowserServiceSync:
 		from app.services.event_publisher import pop_user_prompts
 		return pop_user_prompts(self._session_id)
 
+	def _check_pause_requested(self) -> bool:
+		"""Check if pause has been requested via Redis flag."""
+		from app.services.event_publisher import check_pause_requested
+		return check_pause_requested(self._session_id)
+
+	def _save_pause_context(self, agent: "Agent") -> None:
+		"""Save agent context for resumption when paused."""
+		try:
+			from app.models import TestSession as TestSessionModel
+			# Extract context from agent's history
+			context = {
+				"step_number": self.current_step_number,
+				"paused_at": str(datetime.utcnow()),
+			}
+			# Get agent's last model output for memory/goals if available
+			if agent.history.history:
+				last_history = agent.history.history[-1]
+				if last_history.model_output and last_history.model_output.current_state:
+					context["memory"] = last_history.model_output.current_state.memory
+					context["next_goal"] = last_history.model_output.current_state.next_goal
+					context["thinking"] = last_history.model_output.current_state.thinking
+
+			self.db.query(TestSessionModel).filter(TestSessionModel.id == self._session_id).update(
+				{"pause_context": context}, synchronize_session=False
+			)
+			self.db.commit()
+			logger.info(f"Saved pause context for session {self._session_id}: step={self.current_step_number}")
+		except Exception as e:
+			logger.error(f"Error saving pause context: {e}")
+
 	async def on_step_start(self, agent: "Agent") -> None:
 		"""Called when a step starts."""
-		# Check if stop was requested
+		# Check if stop was requested (terminal)
 		if self._stop_requested:
 			logger.info(f"Stop requested before step {self.current_step_number + 1}, stopping agent")
+			agent.stop()
+			return
+
+		# Check if pause was requested via Redis (resumable)
+		if self._check_pause_requested():
+			logger.info(f"Pause requested before step {self.current_step_number + 1}, pausing agent")
+			self._pause_requested = True
+			self._save_pause_context(agent)
 			agent.stop()
 			return
 
@@ -751,6 +807,15 @@ class BrowserServiceSync:
 						result_success = result.error is None
 						result_error = result.error
 						extracted_content = result.extracted_content
+
+					# Enhance select_dropdown action_params with the actual option value
+					# Browser-use saves index (internal DOM ref) and text, but not the value attribute
+					# The value is available in extracted_content: "Selected option: X (value: Y)"
+					if action_name == "select_dropdown" and extracted_content:
+						value_match = re.search(r'\(value:\s*([^)]+)\)', extracted_content)
+						if value_match:
+							action_params = dict(action_params)  # Copy to avoid mutation
+							action_params["value"] = value_match.group(1).strip()
 
 					# Get interacted element info
 					element_xpath = None
@@ -937,6 +1002,24 @@ class BrowserServiceSync:
 				on_step_start=self.on_step_start,
 				on_step_end=self.on_step_end,
 			)
+
+			# Check if pause was requested - handle separately from normal completion
+			if self._pause_requested:
+				# Clear the pause flag from Redis
+				from app.services.event_publisher import clear_pause_requested
+				clear_pause_requested(self._session_id)
+
+				# Update session status to paused (resumable)
+				self._update_session_status("paused")
+				self._create_chat_message("Execution paused by user. You can record steps and then resume.")
+				logger.info(f"Test execution paused at step {self.current_step_number}")
+
+				return {
+					"success": False,
+					"paused": True,
+					"total_steps": len(history.history),
+					"browser_session_id": remote_session.id if remote_session else None,
+				}
 
 			# Check if successful
 			success = history.is_successful() if history.is_done() else False

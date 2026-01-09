@@ -486,6 +486,70 @@ def clear_cancelled(session_id: str) -> bool:
 
 
 # =====================================
+# Pause Execution (Resumable pause during AI execution)
+# =====================================
+
+def check_pause_requested(session_id: str) -> bool:
+    """Check if pause has been requested for this session via Redis flag.
+
+    This is different from stop_requested - pause allows resumption,
+    while stop is terminal.
+
+    Args:
+        session_id: The session ID to check
+
+    Returns:
+        True if pause was requested, False otherwise
+    """
+    try:
+        r = redis.from_url(settings.CELERY_BROKER_URL, decode_responses=True)
+        result = r.get(f"pause_execution:{session_id}")
+        return result is not None
+    except Exception as e:
+        logger.error(f"Failed to check pause flag in Redis: {e}")
+        return False
+
+
+def set_pause_requested(session_id: str, ttl_seconds: int = 300) -> bool:
+    """Set the pause flag for a session in Redis.
+
+    Args:
+        session_id: The session ID to set pause flag for
+        ttl_seconds: Time-to-live for the flag (default 5 minutes)
+
+    Returns:
+        True if flag was set successfully, False otherwise
+    """
+    try:
+        r = redis.from_url(settings.CELERY_BROKER_URL, decode_responses=True)
+        r.set(f"pause_execution:{session_id}", "1", ex=ttl_seconds)
+        logger.info(f"Set pause flag for session {session_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to set pause flag in Redis: {e}")
+        return False
+
+
+def clear_pause_requested(session_id: str) -> bool:
+    """Clear the pause flag for a session in Redis.
+
+    Args:
+        session_id: The session ID to clear pause flag for
+
+    Returns:
+        True if flag was cleared successfully, False otherwise
+    """
+    try:
+        r = redis.from_url(settings.CELERY_BROKER_URL, decode_responses=True)
+        r.delete(f"pause_execution:{session_id}")
+        logger.info(f"Cleared pause flag for session {session_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to clear pause flag in Redis: {e}")
+        return False
+
+
+# =====================================
 # User Prompt Injection (Hints during execution)
 # =====================================
 

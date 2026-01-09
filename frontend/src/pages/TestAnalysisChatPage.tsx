@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play, RefreshCw, Circle, CheckCircle, XCircle, PauseCircle, StopCircle, Clock, Loader2 } from 'lucide-react';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play, RefreshCw, Circle, CheckCircle, XCircle, PauseCircle, StopCircle, Clock, Loader2, Video } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
@@ -36,6 +36,7 @@ const STATUS_COLORS: Record<string, string> = {
   'failed': 'bg-red-100 text-red-700',
   'stopped': 'bg-orange-100 text-orange-700',
   'paused': 'bg-amber-100 text-amber-700',
+  'recording_ready': 'bg-purple-100 text-purple-700',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -49,6 +50,7 @@ const STATUS_LABELS: Record<string, string> = {
   'failed': 'Failed',
   'stopped': 'Stopped',
   'paused': 'Paused',
+  'recording_ready': 'Recording',
 };
 
 const getStatusIcon = (status: string) => {
@@ -60,6 +62,7 @@ const getStatusIcon = (status: string) => {
     case 'queued': return <Clock className="h-3 w-3" />;
     case 'paused': return <PauseCircle className="h-3 w-3" />;
     case 'stopped': return <StopCircle className="h-3 w-3" />;
+    case 'recording_ready': return <Video className="h-3 w-3" />;
     default: return <Circle className="h-3 w-3" />;
   }
 };
@@ -294,6 +297,37 @@ export default function TestAnalysisChatPage() {
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location.state, location.pathname, navigate]);
+
+  // Handle recording mode navigation state - create recording session
+  const [isInitializingRecording, setIsInitializingRecording] = useState(false);
+  useEffect(() => {
+    const initializeRecordingMode = async () => {
+      const state = location.state as { mode?: 'ai' | 'record'; startUrl?: string } | null;
+      if (state?.mode !== 'record' || !state?.startUrl || sessionId || isInitializingRecording || urlSessionId) {
+        return;
+      }
+
+      setIsInitializingRecording(true);
+      try {
+        // Create session in recording mode (no plan generation)
+        const newSession = await analysisApi.createRecordingSession(state.startUrl, selectedLlm);
+        // Load the created session
+        await loadExistingSession(newSession.id);
+        // Navigate to the session URL and clear the state
+        navigate(`/test-analysis/${newSession.id}`, { replace: true, state: {} });
+        toast.success('Recording session started');
+      } catch (e) {
+        console.error('Error initializing recording mode:', e);
+        toast.error(e instanceof Error ? e.message : 'Failed to start recording session');
+        // Clear the state to prevent re-triggering
+        navigate('/test-analysis', { replace: true, state: {} });
+      } finally {
+        setIsInitializingRecording(false);
+      }
+    };
+
+    initializeRecordingMode();
+  }, [location.state, sessionId, isInitializingRecording, urlSessionId, selectedLlm, loadExistingSession, navigate]);
 
   // Track previous isStopping state to detect when stop completes
   const wasStoppingRef = useRef(false);
@@ -535,6 +569,22 @@ export default function TestAnalysisChatPage() {
     >
       {/* Toast notifications */}
       <Toaster position="top-right" richColors />
+
+      {/* Recording mode initialization overlay */}
+      {isInitializingRecording && (
+        <div className="fixed inset-0 bg-background/80 flex items-center justify-center z-50">
+          <div className="text-center space-y-4 p-6 bg-background rounded-lg shadow-lg border">
+            <Video className="h-10 w-10 mx-auto text-purple-600 animate-pulse" />
+            <Loader2 className="h-6 w-6 animate-spin mx-auto text-purple-600" />
+            <div>
+              <p className="font-medium">Starting Recording Session</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Navigating to URL and starting browser...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Left Panel - Chat */}
       <div
@@ -805,6 +855,7 @@ export default function TestAnalysisChatPage() {
           browserSession={browserSession}
           headless={headless}
           isExecuting={isExecuting}
+          isWaitingForBrowser={sessionStatus === 'recording_ready' && !browserSession && !headless}
           screenshotUrl={screenshotUrl}
           selectedStepUrl={selectedStep?.url ?? undefined}
           messagesCount={messages.length}

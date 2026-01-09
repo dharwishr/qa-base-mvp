@@ -857,6 +857,8 @@ export function useExistingSession(): UseExistingSessionReturn {
       };
       await analysisApi.startRecording(sessionId, browserSession.id, mode);
       setIsRecording(true);
+      // Start polling for new steps during recording
+      startPolling();
       setMessages((prev) => [
         ...prev,
         createTimelineMessage('system', {
@@ -872,7 +874,7 @@ export function useExistingSession(): UseExistingSessionReturn {
         }),
       ]);
     }
-  }, [sessionId, browserSession?.id]);
+  }, [sessionId, browserSession?.id, startPolling]);
 
   // Stop recording user interactions
   const stopRecording = useCallback(async () => {
@@ -881,6 +883,8 @@ export function useExistingSession(): UseExistingSessionReturn {
     try {
       await analysisApi.stopRecording(sessionId);
       setIsRecording(false);
+      // Stop polling when recording stops
+      stopPolling();
       setMessages((prev) => [
         ...prev,
         createTimelineMessage('system', {
@@ -898,7 +902,7 @@ export function useExistingSession(): UseExistingSessionReturn {
         }),
       ]);
     }
-  }, [sessionId, loadSession]);
+  }, [sessionId, loadSession, stopPolling]);
 
   // Cleanup on unmount
   useEffect(() => {

@@ -22,6 +22,7 @@ interface BrowserPanelProps {
   } | null;
   headless: boolean;
   isExecuting: boolean;
+  isWaitingForBrowser?: boolean;  // True when browser is starting (e.g., recording mode)
   screenshotUrl: string | null;
   selectedStepUrl?: string;
   messagesCount: number;
@@ -51,6 +52,7 @@ export default function BrowserPanel({
   browserSession,
   headless,
   isExecuting,
+  isWaitingForBrowser = false,
   screenshotUrl,
   selectedStepUrl,
   messagesCount,
@@ -217,12 +219,12 @@ export default function BrowserPanel({
                       isInteractionEnabled={isInteractionEnabled}
                       onToggleInteraction={onToggleInteraction}
                     />
-                  ) : isExecuting ? (
+                  ) : isExecuting || isWaitingForBrowser ? (
                     <div className="h-full flex items-center justify-center">
                       <div className="text-center">
                         <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
                         <p className="text-sm text-muted-foreground">
-                          Starting live browser...
+                          {isWaitingForBrowser ? 'Starting browser and navigating to URL...' : 'Starting live browser...'}
                         </p>
                       </div>
                     </div>

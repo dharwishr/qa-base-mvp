@@ -359,10 +359,13 @@ class UserRecordingService:
         )
         self._binding_registered = True
 
-        # Register handler for binding calls (not async)
-        cdp_client.register.Runtime.bindingCalled(
-            self._on_binding_called,
-        )
+        # Register handler for binding calls
+        # NOTE: CDP register expects a sync callback, so we wrap the async handler
+        # to create a task for the async work (same pattern as browser-use watchdogs)
+        def on_binding_called_sync(event: dict[str, Any], session_id: str | None = None) -> None:
+            asyncio.create_task(self._on_binding_called(event, session_id))
+
+        cdp_client.register.Runtime.bindingCalled(on_binding_called_sync)
 
         # Inject recording script
         await self._inject_recording_script()

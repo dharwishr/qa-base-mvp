@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square, Circle, Hand, ChevronDown } from 'lucide-react'
+import { Monitor, Maximize2, Minimize2, RefreshCw, X, ExternalLink, Square, Circle, Hand, ChevronDown, Pause, StopCircle } from 'lucide-react'
 import type { RecordingMode } from '../types/analysis'
 
 interface LiveBrowserViewProps {
@@ -19,6 +19,9 @@ interface LiveBrowserViewProps {
     // Interaction props - allows browsing without recording
     isInteractionEnabled?: boolean
     onToggleInteraction?: () => void
+    // Pause/Stop AI execution
+    onPauseExecution?: () => Promise<void>
+    onStopExecution?: () => Promise<void>
 }
 
 // Recording mode labels for UI
@@ -43,6 +46,8 @@ export default function LiveBrowserView({
     currentRecordingMode = null,
     isInteractionEnabled = false,
     onToggleInteraction,
+    onPauseExecution,
+    onStopExecution,
 }: LiveBrowserViewProps) {
     const [isStopping, setIsStopping] = useState(false)
     const [isExpanded, setIsExpanded] = useState(false)
@@ -265,6 +270,31 @@ export default function LiveBrowserView({
                             )}
                         </div>
                     )}
+                    {/* AI Execution Controls - Pause/Stop (shown during AI execution) */}
+                    {isAIExecuting && (onPauseExecution || onStopExecution) && (
+                        <div className="flex items-center gap-1 border-l pl-2 ml-1">
+                            {onPauseExecution && (
+                                <button
+                                    onClick={onPauseExecution}
+                                    className="px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
+                                    title="Pause AI execution"
+                                >
+                                    <Pause className="h-3 w-3" />
+                                    Pause
+                                </button>
+                            )}
+                            {onStopExecution && (
+                                <button
+                                    onClick={onStopExecution}
+                                    className="px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 bg-red-100 text-red-700 hover:bg-red-200"
+                                    title="Stop AI execution"
+                                >
+                                    <StopCircle className="h-3 w-3" />
+                                    Stop
+                                </button>
+                            )}
+                        </div>
+                    )}
                     <button
                         onClick={handleRefresh}
                         className="p-1.5 rounded hover:bg-muted transition-colors"
@@ -344,11 +374,25 @@ export default function LiveBrowserView({
                         className="absolute inset-0 z-20 bg-transparent cursor-not-allowed"
                         title={isAIExecuting ? "AI is controlling the browser" : "Click 'Browse' or 'Record' to interact with the browser"}
                     >
-                        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+                        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-3">
                             {isAIExecuting ? (
                                 <>
-                                    <RefreshCw className="h-3 w-3 animate-spin" />
-                                    AI is working...
+                                    <div className="flex items-center gap-2">
+                                        <RefreshCw className="h-3 w-3 animate-spin" />
+                                        AI is working...
+                                    </div>
+                                    {onPauseExecution && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                onPauseExecution()
+                                            }}
+                                            className="flex items-center gap-1 px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-black rounded text-xs font-medium transition-colors cursor-pointer"
+                                        >
+                                            <Pause className="h-3 w-3" />
+                                            Pause
+                                        </button>
+                                    )}
                                 </>
                             ) : (
                                 <>

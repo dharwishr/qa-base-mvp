@@ -644,52 +644,72 @@ class CDPRunner(BaseRunner):
     async def _select_native_option_cdp(
         self, element, value: str, healer: 'CDPElementLocator'
     ) -> 'CDPElementLocator':
-        """Select option from native <select> element using CDP."""
+        """Select option from native <select> element using CDP.
+
+        Matches browser_use behavior with proper event dispatching for reactive frameworks.
+        """
         assert self._session_id
         cdp_client = self._page._client
         object_id = await element._get_remote_object_id()
 
         escaped_value = value.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
 
-        await cdp_client.send.Runtime.callFunctionOn(
+        result = await cdp_client.send.Runtime.callFunctionOn(
             params={
                 'functionDeclaration': f'''
                     function() {{
                         const targetValue = "{escaped_value}";
+                        const targetLower = targetValue.toLowerCase();
                         const options = Array.from(this.options);
 
-                        // Strategy 1: Match by value attribute
+                        // Strategy 1: Exact match by value attribute
                         let option = options.find(o => o.value === targetValue);
 
-                        // Strategy 2: Match by label (text content)
+                        // Strategy 2: Exact match by label (text content)
                         if (!option) {{
-                            option = options.find(o => o.text === targetValue || o.textContent.trim() === targetValue);
+                            option = options.find(o => o.text.trim() === targetValue || o.textContent.trim() === targetValue);
                         }}
 
-                        // Strategy 3: Case-insensitive match
+                        // Strategy 3: Case-insensitive exact match
                         if (!option) {{
-                            const lowerTarget = targetValue.toLowerCase();
                             option = options.find(o =>
-                                o.value.toLowerCase() === lowerTarget ||
-                                o.text.toLowerCase() === lowerTarget
+                                o.value.toLowerCase() === targetLower ||
+                                o.text.toLowerCase().trim() === targetLower
                             );
                         }}
 
-                        // Strategy 4: Partial match
+                        // Strategy 4: Partial match (case-insensitive)
                         if (!option) {{
-                            const lowerTarget = targetValue.toLowerCase();
                             option = options.find(o =>
-                                o.text.toLowerCase().includes(lowerTarget) ||
-                                lowerTarget.includes(o.text.toLowerCase().trim())
+                                o.text.toLowerCase().includes(targetLower) ||
+                                targetLower.includes(o.text.toLowerCase().trim())
                             );
                         }}
 
                         if (option) {{
+                            // Focus the element first (important for reactive frameworks)
+                            this.focus();
+
+                            // Set the value
                             this.value = option.value;
-                            this.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                            return true;
+                            option.selected = true;
+
+                            // Dispatch all necessary events for reactive frameworks
+                            // 1. input event - critical for Vue's v-model and Svelte's bind:value
+                            this.dispatchEvent(new Event('input', {{ bubbles: true, cancelable: true }}));
+
+                            // 2. change event - traditional form validation and framework reactivity
+                            this.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
+
+                            // 3. blur event - completes the interaction
+                            this.blur();
+
+                            return {{ success: true, selectedText: option.text.trim(), selectedValue: option.value }};
                         }}
-                        return false;
+
+                        // Return available options for debugging
+                        const availableOptions = options.map(o => o.text.trim()).filter(t => t);
+                        return {{ success: false, availableOptions: availableOptions }};
                     }}
                 ''',
                 'objectId': object_id,
@@ -698,23 +718,120 @@ class CDPRunner(BaseRunner):
             session_id=self._session_id,
         )
 
+        result_value = result.get('result', {}).get('value', {})
+        if result_value.get('success'):
+            healer.successful_selector = f"[NATIVE_SELECT] {result_value.get('selectedText', value)}"
+        else:
+            available = result_value.get('availableOptions', [])
+            logger.warning(f"Native select failed for '{value}'. Available options: {available[:10]}")
+
         return healer
 
     async def _select_custom_dropdown_cdp(
         self, element, value: str, _timeout: int, healer: 'CDPElementLocator'
     ) -> 'CDPElementLocator':
-        """Select option from custom dropdown (Select2, Choices.js, etc.) using CDP.
+        """Select option from custom dropdown (Select2, Choices.js, Semantic UI, ARIA, etc.) using CDP.
 
-        Works by clicking to open the dropdown, then clicking the matching option.
+        Matches browser_use behavior by:
+        1. First trying JavaScript-based selection for ARIA/Semantic UI dropdowns
+        2. Clicking to open the dropdown
+        3. Clicking the matching option with proper event dispatching
         """
         assert self._session_id and self._page
+
+        cdp_client = self._page._client
+        object_id = await element._get_remote_object_id()
+        escaped_value = value.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+
+        # First, try JavaScript-based selection on the element itself (ARIA/Semantic UI)
+        # This handles dropdowns that don't need clicking to open first
+        js_select_on_element = await cdp_client.send.Runtime.callFunctionOn(
+            params={
+                'functionDeclaration': f'''
+                    function() {{
+                        const targetText = "{escaped_value}";
+                        const targetTextLower = targetText.toLowerCase();
+
+                        // Check ARIA role
+                        const role = this.getAttribute('role');
+                        if (role === 'menu' || role === 'listbox' || role === 'combobox') {{
+                            const menuItems = this.querySelectorAll('[role="menuitem"], [role="option"]');
+
+                            for (const item of menuItems) {{
+                                if (item.textContent) {{
+                                    const itemTextLower = item.textContent.trim().toLowerCase();
+                                    const itemValueLower = (item.getAttribute('data-value') || '').toLowerCase();
+
+                                    if (itemTextLower === targetTextLower || itemValueLower === targetTextLower ||
+                                        itemTextLower.includes(targetTextLower) || targetTextLower.includes(itemTextLower)) {{
+                                        // Clear previous selections
+                                        menuItems.forEach(mi => {{
+                                            mi.setAttribute('aria-selected', 'false');
+                                            mi.classList.remove('selected');
+                                        }});
+
+                                        // Select this item
+                                        item.setAttribute('aria-selected', 'true');
+                                        item.classList.add('selected');
+                                        item.click();
+
+                                        return {{ success: true, method: 'aria', selectedText: item.textContent.trim() }};
+                                    }}
+                                }}
+                            }}
+                        }}
+
+                        // Check Semantic UI dropdown
+                        if (this.classList.contains('dropdown') || this.classList.contains('ui') ||
+                            this.classList.contains('selection')) {{
+                            const menuItems = this.querySelectorAll('.item, .option, [data-value]');
+
+                            for (const item of menuItems) {{
+                                if (item.textContent) {{
+                                    const itemTextLower = item.textContent.trim().toLowerCase();
+                                    const itemValueLower = (item.getAttribute('data-value') || '').toLowerCase();
+
+                                    if (itemTextLower === targetTextLower || itemValueLower === targetTextLower ||
+                                        itemTextLower.includes(targetTextLower) || targetTextLower.includes(itemTextLower)) {{
+                                        // Clear previous selections
+                                        menuItems.forEach(mi => mi.classList.remove('selected', 'active'));
+
+                                        // Select this item
+                                        item.classList.add('selected', 'active');
+
+                                        // Update dropdown text if there's a text element
+                                        const textElement = this.querySelector('.text');
+                                        if (textElement) {{
+                                            textElement.textContent = item.textContent.trim();
+                                        }}
+
+                                        // Trigger events
+                                        item.click();
+                                        this.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                                        return {{ success: true, method: 'semantic-ui', selectedText: item.textContent.trim() }};
+                                    }}
+                                }}
+                            }}
+                        }}
+
+                        return {{ success: false }};
+                    }}
+                ''',
+                'objectId': object_id,
+                'returnByValue': True,
+            },
+            session_id=self._session_id,
+        )
+
+        result_value = js_select_on_element.get('result', {}).get('value', {})
+        if result_value.get('success'):
+            healer.successful_selector = f"[CUSTOM_SELECT] JS {result_value.get('method')}: {result_value.get('selectedText', value)}"
+            return healer
 
         # Click to open the dropdown
         await element.click()
         await asyncio.sleep(0.3)  # Wait for animation
-
-        cdp_client = self._page._client
-        escaped_value = value.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
 
         # Use JavaScript to find and click the option in custom dropdown
         result = await cdp_client.send.Runtime.evaluate(
@@ -733,26 +850,42 @@ class CDPRunner(BaseRunner):
                             '.choices__item--choice',
                             // Bootstrap
                             '.dropdown-menu.show li',
+                            '.dropdown-menu:not(.d-none) li',
                             '.dropdown-item',
                             // Material UI
                             '.MuiMenuItem-root',
                             '[role="option"]',
+                            '[role="menuitem"]',
                             // Ant Design
                             '.ant-select-item-option',
-                            // Generic
+                            // Semantic UI
+                            '.menu.visible .item',
+                            '.ui.dropdown .menu .item',
+                            // Generic ARIA
                             '[role="listbox"] [role="option"]',
+                            '[role="menu"] [role="menuitem"]',
+                            // Generic
+                            'li[data-value]',
+                            'div[data-value]',
                         ];
 
                         for (const selector of selectors) {{
                             const options = document.querySelectorAll(selector);
                             for (const option of options) {{
+                                // Skip hidden options
+                                const style = window.getComputedStyle(option);
+                                if (style.display === 'none' || style.visibility === 'hidden') continue;
+
                                 const text = option.textContent.trim();
+                                const dataValue = (option.getAttribute('data-value') || '').toLowerCase();
+
                                 if (text === targetValue ||
                                     text.toLowerCase() === lowerTarget ||
+                                    dataValue === lowerTarget ||
                                     text.toLowerCase().includes(lowerTarget) ||
                                     lowerTarget.includes(text.toLowerCase())) {{
                                     option.click();
-                                    return {{ success: true, matched: text }};
+                                    return {{ success: true, matched: text, selector: selector }};
                                 }}
                             }}
                         }}
@@ -767,7 +900,7 @@ class CDPRunner(BaseRunner):
 
         result_value = result.get('result', {}).get('value', {})
         if result_value.get('success'):
-            healer.successful_selector = f"[CUSTOM_SELECT] matched: {result_value.get('matched', value)}"
+            healer.successful_selector = f"[CUSTOM_SELECT] {result_value.get('selector', 'matched')}: {result_value.get('matched', value)}"
             await asyncio.sleep(0.2)  # Wait for selection to register
             return healer
 
@@ -776,7 +909,7 @@ class CDPRunner(BaseRunner):
 
         raise Exception(
             f"Could not select '{value}' from custom dropdown. "
-            f"Tried Select2, Choices.js, Bootstrap, Material UI, and Ant Design selectors."
+            f"Tried Select2, Choices.js, Bootstrap, Material UI, Ant Design, and Semantic UI selectors."
         )
 
     async def _execute_press(self, step: PlaywrightStep):
@@ -969,11 +1102,30 @@ class CDPRunner(BaseRunner):
 
             elif assertion.assertion_type == "url_contains":
                 expected = assertion.expected_value or ""
+                pattern_type = assertion.pattern_type or "substring"
                 current_url = await self._page.get_url()
-                result["success"] = expected in current_url
-                result["selector_used"] = f"url contains {expected}"
+
+                if pattern_type == "regex":
+                    # Use raw regex pattern
+                    flags = re.IGNORECASE if not assertion.case_sensitive else 0
+                    result["success"] = bool(re.search(expected, current_url, flags))
+                    result["selector_used"] = f"url matches regex {expected}"
+                elif pattern_type == "wildcard":
+                    # Convert wildcard to regex: * -> .*, ? -> .
+                    wildcard_pattern = expected.replace("*", ".*").replace("?", ".")
+                    flags = re.IGNORECASE if not assertion.case_sensitive else 0
+                    result["success"] = bool(re.search(wildcard_pattern, current_url, flags))
+                    result["selector_used"] = f"url matches wildcard {expected}"
+                else:
+                    # Default substring matching
+                    if assertion.case_sensitive:
+                        result["success"] = expected in current_url
+                    else:
+                        result["success"] = expected.lower() in current_url.lower()
+                    result["selector_used"] = f"url contains {expected}"
+
                 if not result["success"]:
-                    result["error"] = f"URL '{current_url}' does not contain '{expected}'"
+                    result["error"] = f"URL '{current_url}' does not match pattern '{expected}' (pattern_type={pattern_type})"
 
             elif assertion.assertion_type == "url_equals":
                 expected = assertion.expected_value or ""
@@ -982,6 +1134,16 @@ class CDPRunner(BaseRunner):
                 result["selector_used"] = f"url equals {expected}"
                 if not result["success"]:
                     result["error"] = f"URL '{current_url}' does not equal '{expected}'"
+
+            elif assertion.assertion_type == "url_regex" or assertion.assertion_type == "url_matches":
+                # Explicit regex-based URL assertion
+                expected = assertion.expected_value or ""
+                current_url = await self._page.get_url()
+                flags = re.IGNORECASE if not assertion.case_sensitive else 0
+                result["success"] = bool(re.search(expected, current_url, flags))
+                result["selector_used"] = f"url matches regex {expected}"
+                if not result["success"]:
+                    result["error"] = f"URL '{current_url}' does not match regex '{expected}'"
 
             elif assertion.assertion_type == "value_equals":
                 assert step.selectors

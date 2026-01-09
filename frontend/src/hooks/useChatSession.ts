@@ -1815,12 +1815,13 @@ export function useChatSession(): UseChatSessionReturn {
 
       // If no stored chat messages, reconstruct from session data (backward compatibility)
       if (chatMessages.length === 0) {
-        // Add user message (original prompt)
+        // Add user message (original prompt) with session's created_at timestamp
+        // This ensures proper ordering when steps were created at the same time
         timelineMessages.push(
           createTimelineMessage('user', {
             content: session.prompt,
             mode: 'plan' as ChatMode,
-          })
+          }, session.created_at)
         );
 
         // Add plan if exists
@@ -1936,19 +1937,22 @@ export function useChatSession(): UseChatSessionReturn {
         const timeB = new Date(b.timestamp).getTime();
         const timeDiff = timeA - timeB;
 
-        // Special case: if a user message (mode='plan') and plan message are within 60 seconds,
-        // the user message should always come first (user prompt triggers plan generation).
-        // This handles the case where the user message was persisted AFTER the plan was generated.
+        // Special case: if a user message and plan/step messages are within 60 seconds,
+        // the user message should always come first (user prompt triggers plan generation or step creation).
+        // This handles the case where the user message was persisted AFTER the plan/step was generated,
+        // or when timestamps are identical due to fast execution (common in recording mode).
         const TIME_WINDOW_MS = 60000; // 60 seconds
         if (Math.abs(timeDiff) < TIME_WINDOW_MS) {
-          const aIsUserPlan = a.type === 'user' && 'mode' in a && a.mode === 'plan';
-          const bIsPlan = b.type === 'plan';
-          const bIsUserPlan = b.type === 'user' && 'mode' in b && b.mode === 'plan';
+          const aIsUser = a.type === 'user';
+          const bIsUser = b.type === 'user';
           const aIsPlan = a.type === 'plan';
+          const bIsPlan = b.type === 'plan';
+          const aIsStep = a.type === 'step';
+          const bIsStep = b.type === 'step';
 
-          // User message (plan mode) should come before plan message
-          if (aIsUserPlan && bIsPlan) return -1;
-          if (aIsPlan && bIsUserPlan) return 1;
+          // User message should come before plan or step messages
+          if (aIsUser && (bIsPlan || bIsStep)) return -1;
+          if ((aIsPlan || aIsStep) && bIsUser) return 1;
         }
 
         if (timeDiff !== 0) return timeDiff;

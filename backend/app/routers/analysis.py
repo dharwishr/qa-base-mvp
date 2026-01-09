@@ -11,7 +11,7 @@ from datetime import datetime
 
 from app.database import get_db
 from app.deps import AuthenticatedUser, get_current_user
-from app.models import AnalysisEvent, AnalysisPlan, TestSession, TestStep
+from app.models import AnalysisEvent, AnalysisPlan, StepAction, TestSession, TestStep
 from app.schemas import (
 	ActModeRequest,
 	ActModeResponse,
@@ -20,6 +20,7 @@ from app.schemas import (
 	ChatMessageCreate,
 	ChatMessageResponse,
 	ContinueSessionRequest,
+	CreateRecordingSessionRequest,
 	CreateSessionRequest,
 	ExecuteResponse,
 	ExecutionLogResponse,
@@ -166,8 +167,14 @@ async def update_session_title_async(session_id: str, prompt: str, llm_model: st
 		logger.error(f"[TITLE_UPDATE] Failed to update session title: {e}", exc_info=True)
 
 
-async def prewarm_browser_session_async(session_id: str, headless: bool) -> None:
-	"""Background task to pre-warm browser session after plan generation."""
+async def prewarm_browser_session_async(session_id: str, headless: bool, start_url: str | None = None) -> None:
+	"""Background task to pre-warm browser session after plan generation.
+
+	Args:
+		session_id: The test session ID
+		headless: Whether to run in headless mode
+		start_url: Optional URL to navigate to after browser is ready
+	"""
 	if headless:
 		return  # Headless uses local browser, no pre-warming needed
 
@@ -177,16 +184,35 @@ async def prewarm_browser_session_async(session_id: str, headless: bool) -> None
 
 		# Check if session already has a browser
 		existing_sessions = await orchestrator.list_sessions(phase=BrowserPhase.ANALYSIS)
-		if any(s.test_session_id == session_id for s in existing_sessions):
+		existing = next((s for s in existing_sessions if s.test_session_id == session_id), None)
+		if existing:
 			logger.info(f"[PREWARM] Browser session already exists for {session_id}")
-			return
+			browser_session = existing
+		else:
+			# Create pre-warmed session
+			browser_session = await orchestrator.create_session(
+				phase=BrowserPhase.ANALYSIS,
+				test_session_id=session_id,
+			)
+			logger.info(f"[PREWARM] Browser session pre-warmed for {session_id}: browser_id={browser_session.id}")
 
-		# Create pre-warmed session
-		browser_session = await orchestrator.create_session(
-			phase=BrowserPhase.ANALYSIS,
-			test_session_id=session_id,
-		)
-		logger.info(f"[PREWARM] Browser session pre-warmed for {session_id}: browser_id={browser_session.id}")
+		# Navigate to start URL if provided
+		if start_url and browser_session.cdp_url:
+			logger.info(f"[PREWARM] Navigating browser to: {start_url}")
+			try:
+				from playwright.async_api import async_playwright
+				async with async_playwright() as p:
+					browser = await p.chromium.connect_over_cdp(browser_session.cdp_url)
+					contexts = browser.contexts
+					if contexts:
+						pages = contexts[0].pages
+						if pages:
+							await pages[0].goto(start_url, wait_until="domcontentloaded", timeout=30000)
+							logger.info(f"[PREWARM] Successfully navigated to: {start_url}")
+			except Exception as nav_error:
+				logger.warning(f"[PREWARM] Failed to navigate to {start_url}: {nav_error}")
+				# Don't raise - navigation failure is non-fatal
+
 	except Exception as e:
 		logger.warning(f"[PREWARM] Failed to pre-warm browser for {session_id}: {e}")
 		# Don't raise - pre-warming is best-effort
@@ -345,6 +371,88 @@ async def create_session(
 			session_id=session.id,
 			headless=request.headless
 		))
+
+	return session
+
+
+@router.post("/sessions/recording", response_model=TestSessionResponse)
+async def create_recording_session(
+	request: CreateRecordingSessionRequest,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Create a new test session in recording mode, skipping plan generation.
+
+	This endpoint:
+	1. Creates a session with status 'recording_ready'
+	2. Creates a goto step with the start URL
+	3. Pre-warms the browser session for immediate recording
+
+	No plan is generated - the user will record all steps manually.
+	AI assistance (chat mode) can be enabled at any time during or after recording.
+	"""
+	from urllib.parse import urlparse
+
+	# Normalize URL - add https:// if no protocol
+	start_url = request.start_url.strip()
+	if not start_url.startswith(('http://', 'https://')):
+		start_url = 'https://' + start_url
+
+	# Generate title from URL domain
+	try:
+		parsed = urlparse(start_url)
+		title = f"Record: {parsed.netloc}"
+	except Exception:
+		title = f"Record: {start_url[:50]}"
+
+	# Create session - NO plan generation, status is recording_ready
+	session = TestSession(
+		prompt=f"Recording session starting at {start_url}",
+		title=title,
+		llm_model=request.llm_model,
+		headless=False,  # Recording requires visible browser
+		status="recording_ready",  # New status for recording mode
+		organization_id=current_user.organization_id,
+		user_id=current_user.id,
+	)
+	db.add(session)
+	db.commit()
+	db.refresh(session)
+
+	# Create initial goto step with the start URL
+	goto_step = TestStep(
+		session_id=session.id,
+		step_number=1,
+		status='completed',  # Already "executed" - browser will navigate here
+		url=start_url,
+		next_goal=f"Navigate to {start_url}",
+	)
+	db.add(goto_step)
+	db.flush()
+
+	# Create the goto action for the step
+	goto_action = StepAction(
+		step_id=goto_step.id,
+		action_index=0,
+		action_name='goto',
+		action_params={
+			'url': start_url,
+			'wait_for': 'domcontentloaded',
+		},
+		is_enabled=True,
+	)
+	db.add(goto_action)
+	db.commit()
+	db.refresh(session)
+
+	logger.info(f"Created recording session {session.id} for URL: {start_url}")
+
+	# Pre-warm browser session and navigate to start URL (non-blocking)
+	asyncio.create_task(prewarm_browser_session_async(
+		session_id=session.id,
+		headless=False,
+		start_url=start_url,
+	))
 
 	return session
 
@@ -772,6 +880,123 @@ async def stop_execution(
 	except Exception as e:
 		logger.error(f"Error stopping task for session {session_id}: {e}")
 		raise HTTPException(status_code=500, detail=f"Failed to stop task: {str(e)}")
+
+
+@router.post("/sessions/{session_id}/pause", response_model=StopResponse)
+async def pause_execution(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Pause a running test execution (resumable).
+
+	Unlike stop, pause allows the execution to be resumed later.
+	The browser session stays alive and the agent context is saved.
+	"""
+	from app.services.event_publisher import set_pause_requested
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Check if session is in a pausable state
+	if session.status not in ("queued", "running"):
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot pause session in status: {session.status}"
+		)
+
+	try:
+		# Set pause flag in Redis - agent will check this and pause gracefully
+		set_pause_requested(session_id)
+		logger.info(f"Set pause flag for session {session_id}")
+
+		# Note: We don't immediately update status here - the agent will update it
+		# when it detects the pause flag and saves context
+
+		return StopResponse(status="pausing", message="Pause requested. Execution will pause after current step.")
+	except Exception as e:
+		logger.error(f"Error pausing session {session_id}: {e}")
+		raise HTTPException(status_code=500, detail=f"Failed to pause: {str(e)}")
+
+
+@router.post("/sessions/{session_id}/resume", response_model=ExecuteResponse)
+async def resume_execution(
+	session_id: str,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Resume a paused test execution.
+
+	Continues execution from where it was paused.
+	Includes context about any steps recorded during the pause.
+	"""
+	from app.tasks.analysis import run_test_analysis
+	from app.services.event_publisher import clear_pause_requested
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Check if session is in a resumable state
+	if session.status != "paused":
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot resume session in status: {session.status}. Only paused sessions can be resumed."
+		)
+
+	if not session.plan:
+		raise HTTPException(status_code=400, detail="Session has no plan")
+
+	try:
+		# Clear any lingering pause flag
+		clear_pause_requested(session_id)
+
+		# Check if there are steps recorded after the pause
+		# Get the pause context to find when it was paused
+		pause_context = session.pause_context or {}
+		paused_at_step = pause_context.get("step_number", 0)
+
+		# Get steps recorded after pause (manually recorded steps)
+		recorded_steps = [s for s in session.steps if s.step_number > paused_at_step]
+
+		# If there are recorded steps, inject context hint for the AI
+		if recorded_steps:
+			from app.services.event_publisher import push_user_prompt
+			step_descriptions = []
+			for step in recorded_steps:
+				for action in step.actions:
+					desc = f"{action.action_name}"
+					if action.element_name:
+						desc += f" on '{action.element_name}'"
+					elif action.action_params and action.action_params.get("value"):
+						desc += f": '{action.action_params.get('value')[:50]}'"
+					step_descriptions.append(desc)
+
+			context_hint = (
+				f"IMPORTANT: While paused, the user manually recorded {len(recorded_steps)} step(s): "
+				f"{', '.join(step_descriptions)}. "
+				"The browser is now at the state after those actions. "
+				"Continue from the current browser state without repeating those actions."
+			)
+			push_user_prompt(session_id, context_hint)
+			logger.info(f"Injected resume context hint for {len(recorded_steps)} recorded steps")
+
+		# Queue new Celery task (it will continue from current step number)
+		task = run_test_analysis.delay(session_id)
+
+		session.celery_task_id = task.id
+		session.status = "queued"
+		# Clear pause context since we're resuming
+		session.pause_context = None
+		db.commit()
+
+		logger.info(f"Resumed execution for session {session_id}, new task: {task.id}")
+
+		return ExecuteResponse(task_id=task.id, status="queued")
+	except Exception as e:
+		logger.error(f"Error resuming session {session_id}: {e}")
+		raise HTTPException(status_code=500, detail=f"Failed to resume: {str(e)}")
 
 
 @router.get("/sessions/{session_id}/logs", response_model=list[ExecutionLogResponse])

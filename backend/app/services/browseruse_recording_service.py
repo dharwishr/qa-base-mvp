@@ -1240,7 +1240,7 @@ class BrowserUseRecordingService:
             return None
 
         try:
-            filename = f"{self.test_session.id}_{step_number}.png"
+            filename = f"{self._test_session_id}_{step_number}.png"
             screenshots_dir = Path(settings.SCREENSHOTS_DIR)
             screenshots_dir.mkdir(parents=True, exist_ok=True)
             filepath = screenshots_dir / filename
