@@ -5,6 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>QA Base</title>
+    <!-- Prevent flash of unstyled content for dark mode -->
+    <script>
+      (function() {
+        var stored = localStorage.getItem('theme-preference');
+        var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (stored === 'dark' || (!stored && prefersDark)) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
     <!-- Runtime config injection - must load before app -->
     <script src="/config.js"></script>
   </head>

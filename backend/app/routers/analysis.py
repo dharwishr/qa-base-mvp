@@ -23,6 +23,8 @@ from app.schemas import (
 	CreateSessionRequest,
 	ExecuteResponse,
 	ExecutionLogResponse,
+	InsertActionRequest,
+	InsertStepRequest,
 	RecordingStatusResponse,
 	RegeneratePlanRequest,
 	RejectPlanRequest,
@@ -1081,6 +1083,146 @@ async def toggle_action_enabled(
 
 	logger.info(f"Toggled action {action_id} enabled={request.enabled}")
 	return action
+
+
+# ============================================
+# Insert Action/Step Endpoints
+# ============================================
+
+@router.post("/steps/{step_id}/actions", response_model=StepActionResponse)
+async def insert_action(
+	step_id: str,
+	request: InsertActionRequest,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Insert a new action at a specific index within a step.
+
+	This endpoint:
+	1. Validates the step exists and user has access
+	2. Validates the session is in an editable state (completed/failed/stopped/paused)
+	3. Re-indexes existing actions at and after the insertion point
+	4. Creates the new action at the specified index
+	5. Returns the new action
+	"""
+	from app.models import StepAction
+
+	# Get the step
+	step = db.query(TestStep).filter(TestStep.id == step_id).first()
+	if not step:
+		raise HTTPException(status_code=404, detail="Step not found")
+
+	# Get the session to check status and organization access
+	session = db.query(TestSession).filter(TestSession.id == step.session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Check organization access
+	if session.organization_id != current_user.organization_id:
+		raise HTTPException(status_code=403, detail="Access denied")
+
+	# Validate session status - only allow edits in post-execution states
+	allowed_statuses = ('completed', 'failed', 'stopped', 'paused')
+	if session.status not in allowed_statuses:
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot insert actions when session is in '{session.status}' status. "
+				   f"Editing only allowed in: {', '.join(allowed_statuses)}"
+		)
+
+	# Re-index existing actions: increment action_index for all actions >= insertion point
+	db.query(StepAction).filter(
+		StepAction.step_id == step_id,
+		StepAction.action_index >= request.action_index
+	).update(
+		{StepAction.action_index: StepAction.action_index + 1},
+		synchronize_session=False
+	)
+
+	# Create the new action
+	new_action = StepAction(
+		step_id=step_id,
+		action_index=request.action_index,
+		action_name=request.action_name,
+		action_params=request.action_params,
+		is_enabled=True,
+	)
+	db.add(new_action)
+	db.commit()
+	db.refresh(new_action)
+
+	logger.info(f"Inserted action {new_action.id} at index {request.action_index} in step {step_id}")
+	return new_action
+
+
+@router.post("/sessions/{session_id}/steps", response_model=TestStepResponse)
+async def insert_step(
+	session_id: str,
+	request: InsertStepRequest,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Insert a new step with an action at a specific position.
+
+	This endpoint:
+	1. Validates the session exists and user has access
+	2. Validates the session is in an editable state (completed/failed/stopped/paused)
+	3. Re-indexes existing steps at and after the insertion point
+	4. Creates the new step at the specified position with the given action
+	5. Returns the new step with its action
+	"""
+	from app.models import StepAction
+
+	# Get the session
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	# Check organization access
+	if session.organization_id != current_user.organization_id:
+		raise HTTPException(status_code=403, detail="Access denied")
+
+	# Validate session status - only allow edits in post-execution states
+	allowed_statuses = ('completed', 'failed', 'stopped', 'paused')
+	if session.status not in allowed_statuses:
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot insert steps when session is in '{session.status}' status. "
+				   f"Editing only allowed in: {', '.join(allowed_statuses)}"
+		)
+
+	# Re-index existing steps: increment step_number for all steps >= insertion point
+	db.query(TestStep).filter(
+		TestStep.session_id == session_id,
+		TestStep.step_number >= request.step_number
+	).update(
+		{TestStep.step_number: TestStep.step_number + 1},
+		synchronize_session=False
+	)
+
+	# Create the new step
+	new_step = TestStep(
+		session_id=session_id,
+		step_number=request.step_number,
+		status='pending',
+	)
+	db.add(new_step)
+	db.flush()  # Get the step ID
+
+	# Create the action for the step
+	new_action = StepAction(
+		step_id=new_step.id,
+		action_index=0,
+		action_name=request.action_name,
+		action_params=request.action_params,
+		is_enabled=True,
+	)
+	db.add(new_action)
+	db.commit()
+	db.refresh(new_step)
+
+	logger.info(f"Inserted step {new_step.id} at position {request.step_number} in session {session_id}")
+	return new_step
 
 
 # ============================================

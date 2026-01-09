@@ -306,3 +306,16 @@ export interface RecordingStatusResponse {
   started_at: string | null;
   recording_mode: RecordingMode | null;
 }
+
+// Insert action/step request types
+export interface InsertActionRequest {
+  action_index: number;
+  action_name: string;
+  action_params: Record<string, unknown>;
+}
+
+export interface InsertStepRequest {
+  step_number: number;
+  action_name: string;
+  action_params: Record<string, unknown>;
+}

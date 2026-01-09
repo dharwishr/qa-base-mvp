@@ -229,6 +229,20 @@ class ToggleActionEnabledRequest(BaseModel):
 	enabled: bool = Field(..., description="Whether the action should be enabled for execution")
 
 
+class InsertActionRequest(BaseModel):
+	"""Request to insert a new action at a specific index within a step."""
+	action_index: int = Field(..., ge=0, description="Index where the action should be inserted")
+	action_name: str = Field(..., min_length=1, description="Action type (e.g., 'wait')")
+	action_params: dict[str, Any] | None = Field(None, description="Action parameters")
+
+
+class InsertStepRequest(BaseModel):
+	"""Request to insert a new step with an action at a specific position."""
+	step_number: int = Field(..., ge=1, description="Step number where to insert (1-based)")
+	action_name: str = Field(..., min_length=1, description="Action type (e.g., 'wait')")
+	action_params: dict[str, Any] | None = Field(None, description="Action parameters")
+
+
 # Response schemas
 class StepActionResponse(BaseModel):
 	id: str

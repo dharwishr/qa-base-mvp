@@ -490,6 +490,41 @@ export default function TestAnalysisChatPage() {
     }
   };
 
+  // Handle insert action (insert new action within a step)
+  const handleInsertAction = async (
+    stepId: string,
+    actionIndex: number,
+    actionName: string,
+    params: Record<string, unknown>
+  ) => {
+    await analysisApi.insertAction(stepId, {
+      action_index: actionIndex,
+      action_name: actionName,
+      action_params: params,
+    });
+    // Refresh the session to get updated action data
+    if (sessionId) {
+      await loadExistingSession(sessionId);
+    }
+  };
+
+  // Handle insert step (insert new step with action)
+  const handleInsertStep = async (
+    _sessionIdParam: string,
+    stepNumber: number,
+    actionName: string,
+    params: Record<string, unknown>
+  ) => {
+    if (!sessionId) return;
+    await analysisApi.insertStep(sessionId, {
+      step_number: stepNumber,
+      action_name: actionName,
+      action_params: params,
+    });
+    // Refresh the session to get updated step data
+    await loadExistingSession(sessionId);
+  };
+
   return (
     <div
       className={`flex h-[calc(100vh-3.5rem)] bg-background ${isResizing ? 'cursor-col-resize select-none' : ''
@@ -730,6 +765,9 @@ export default function TestAnalysisChatPage() {
           sessionStatus={sessionStatus ?? undefined}
           onActionUpdate={handleActionUpdate}
           onToggleActionEnabled={toggleActionEnabled}
+          onInsertAction={handleInsertAction}
+          onInsertStep={handleInsertStep}
+          sessionId={sessionId ?? undefined}
         />
 
         {/* Chat Input */}

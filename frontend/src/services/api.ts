@@ -1,4 +1,4 @@
-import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestStep, UndoResponse, PaginatedTestSessions } from '../types/analysis';
+import type { ActModeResponse, ChatMessage, ChatMessageCreate, ExecuteResponse, ExecutionLog, InsertActionRequest, InsertStepRequest, LlmModel, RecordingMode, RecordingStatusResponse, ReplayResponse, StepAction, TestPlan, TestSession, TestStep, UndoResponse, PaginatedTestSessions } from '../types/analysis';
 import type { PlanStep } from '../types/chat';
 import type { PlaywrightScript, PlaywrightScriptListItem, TestRun, RunStep, CreateScriptRequest, StartRunRequest, StartRunResponse, SystemSettings, NetworkRequest, ConsoleLog, ContainerPoolStats } from '../types/scripts';
 import type {
@@ -551,6 +551,38 @@ export const analysisApi = {
       }
     );
     return handleResponse<StepAction>(response);
+  },
+
+  /**
+   * Insert a new action at a specific index within a step.
+   * Re-indexes existing actions at and after the insertion point.
+   */
+  async insertAction(stepId: string, request: InsertActionRequest): Promise<StepAction> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/steps/${stepId}/actions`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(request),
+      }
+    );
+    return handleResponse<StepAction>(response);
+  },
+
+  /**
+   * Insert a new step with an action at a specific position.
+   * Re-indexes existing steps at and after the insertion point.
+   */
+  async insertStep(sessionId: string, request: InsertStepRequest): Promise<TestStep> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/sessions/${sessionId}/steps`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(request),
+      }
+    );
+    return handleResponse<TestStep>(response);
   },
 
   /**

@@ -153,7 +153,7 @@ class BrowserOrchestrator:
     CONTAINER_VNC_PORT = 5900  # VNC port
     CONTAINER_NOVNC_PORT = 7900  # noVNC web interface port
     DEFAULT_TTL_MINUTES = 30
-    DEFAULT_INACTIVITY_TIMEOUT_MINUTES = 5  # Kill browser after 5 min of inactivity
+    DEFAULT_INACTIVITY_TIMEOUT_MINUTES = 60  # Kill browser after 60 min of inactivity
     MAX_SESSIONS_PER_PHASE = 10
     
     def __init__(

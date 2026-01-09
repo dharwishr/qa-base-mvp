@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import ChatMessage from './ChatMessage';
+import InsertActionButton from '@/components/analysis/InsertActionButton';
 import type { TimelineMessage, RunTillEndPausedState, PlanStep } from '@/types/chat';
 
 interface ChatTimelineProps {
@@ -29,6 +30,10 @@ interface ChatTimelineProps {
   onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
   // Toggle action enabled props
   onToggleActionEnabled?: (actionId: string, enabled: boolean) => Promise<void>;
+  // Insert action/step props
+  onInsertAction?: (stepId: string, actionIndex: number, actionName: string, params: Record<string, unknown>) => Promise<void>;
+  onInsertStep?: (sessionId: string, stepNumber: number, actionName: string, params: Record<string, unknown>) => Promise<void>;
+  sessionId?: string;
 }
 
 export default function ChatTimeline({
@@ -53,6 +58,9 @@ export default function ChatTimeline({
   sessionStatus,
   onActionUpdate,
   onToggleActionEnabled,
+  onInsertAction,
+  onInsertStep,
+  sessionId,
 }: ChatTimelineProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -145,11 +153,13 @@ export default function ChatTimeline({
         // Calculate step index (1-based) for step messages
         let stepIndex: number | undefined;
         let startingActionNumber: number | undefined;
+        let isFirstStep = false;
         if (message.type === 'step') {
           const previousStepMessages = messages
             .slice(0, index)
             .filter((m) => m.type === 'step');
           stepIndex = previousStepMessages.length + 1;
+          isFirstStep = previousStepMessages.length === 0;
           // Calculate starting action number (sum of all actions in previous steps)
           startingActionNumber = previousStepMessages.reduce((sum, m) => {
             if (m.type === 'step') {
@@ -159,33 +169,47 @@ export default function ChatTimeline({
           }, 0);
         }
 
+        // Check if editing is allowed
+        const canEdit = sessionStatus ? ['completed', 'failed', 'stopped', 'paused'].includes(sessionStatus) : false;
+
         return (
-          <ChatMessage
-            key={message.id}
-            message={message}
-            onApprove={onApprove}
-            onReject={onReject}
-            onEditPlan={onEditPlan}
-            onStepSelect={onStepSelect}
-            isSelected={
-              message.type === 'step' && message.step.id === selectedStepId
-            }
-            onUndoToStep={onUndoToStep}
-            totalSteps={totalSteps}
-            simpleMode={simpleMode}
-            stepIndex={stepIndex}
-            startingActionNumber={startingActionNumber}
-            runTillEndPaused={runTillEndPaused}
-            skippedSteps={skippedSteps}
-            onSkipStep={onSkipStep}
-            onContinueRunTillEnd={onContinueRunTillEnd}
-            currentExecutingStepNumber={currentExecutingStepNumber}
-            onDeleteStep={onDeleteStep}
-            canDeleteSteps={canDeleteSteps}
-            sessionStatus={sessionStatus}
-            onActionUpdate={onActionUpdate}
-            onToggleActionEnabled={onToggleActionEnabled}
-          />
+          <div key={message.id}>
+            {/* Insert step button before first step */}
+            {simpleMode && isFirstStep && canEdit && sessionId && onInsertStep && (
+              <InsertActionButton
+                sessionId={sessionId}
+                insertAtStepNumber={1}
+                onInsertStep={onInsertStep}
+                mode="step"
+              />
+            )}
+            <ChatMessage
+              message={message}
+              onApprove={onApprove}
+              onReject={onReject}
+              onEditPlan={onEditPlan}
+              onStepSelect={onStepSelect}
+              isSelected={
+                message.type === 'step' && message.step.id === selectedStepId
+              }
+              onUndoToStep={onUndoToStep}
+              totalSteps={totalSteps}
+              simpleMode={simpleMode}
+              stepIndex={stepIndex}
+              startingActionNumber={startingActionNumber}
+              runTillEndPaused={runTillEndPaused}
+              skippedSteps={skippedSteps}
+              onSkipStep={onSkipStep}
+              onContinueRunTillEnd={onContinueRunTillEnd}
+              currentExecutingStepNumber={currentExecutingStepNumber}
+              onDeleteStep={onDeleteStep}
+              canDeleteSteps={canDeleteSteps}
+              sessionStatus={sessionStatus}
+              onActionUpdate={onActionUpdate}
+              onToggleActionEnabled={onToggleActionEnabled}
+              onInsertAction={onInsertAction}
+            />
+          </div>
         );
       })}
 

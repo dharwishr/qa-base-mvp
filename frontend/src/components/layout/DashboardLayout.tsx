@@ -14,6 +14,7 @@ import {
     ClipboardList
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
+import { ThemeToggle } from "@/components/ThemeToggle"
 
 // Sidebar Item Component
 const SidebarItem = ({
@@ -123,6 +124,7 @@ export default function DashboardLayout() {
                 </nav>
 
                 <div className="mt-auto p-2">
+                    <ThemeToggle />
                     <SidebarItem icon={LogOut} label="Logout" onClick={handleLogout} />
                 </div>
             </aside>

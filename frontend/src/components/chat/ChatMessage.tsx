@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { SimpleActionRow } from '@/components/analysis/StepList';
 import ActionEditDialog from '@/components/analysis/ActionEditDialog';
+import InsertActionButton from '@/components/analysis/InsertActionButton';
 import StepFailureOptions from '@/components/analysis/StepFailureOptions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -65,6 +66,8 @@ interface ChatMessageProps {
   onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
   // Toggle action enabled props
   onToggleActionEnabled?: (actionId: string, enabled: boolean) => Promise<void>;
+  // Insert action props
+  onInsertAction?: (stepId: string, actionIndex: number, actionName: string, params: Record<string, unknown>) => Promise<void>;
 }
 
 function formatTime(timestamp: string): string {
@@ -287,6 +290,7 @@ function StepMessageCard({
   sessionStatus,
   onActionUpdate,
   onToggleActionEnabled,
+  onInsertAction,
 }: {
   message: StepMessage;
   onStepSelect?: (stepId: string) => void;
@@ -306,6 +310,7 @@ function StepMessageCard({
   sessionStatus?: string;
   onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
   onToggleActionEnabled?: (actionId: string, enabled: boolean) => Promise<void>;
+  onInsertAction?: (stepId: string, actionIndex: number, actionName: string, params: Record<string, unknown>) => Promise<void>;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showUndoHint, setShowUndoHint] = useState(false);
@@ -384,58 +389,77 @@ function StepMessageCard({
             <SkipForward className="h-4 w-4" />
           </div>
         )}
-        <div className="space-y-1.5 w-full">
+        <div className="space-y-0 w-full">
+          {/* Insert button before first action */}
+          {canEdit && onInsertAction && (
+            <InsertActionButton
+              stepId={step.id}
+              insertAtIndex={0}
+              onInsertAction={onInsertAction}
+              mode="action"
+            />
+          )}
           {filteredActions.map((action, idx) => {
             const actionNumber = startingActionNumber + idx + 1;
             const isActionEnabled = action.is_enabled !== false; // Default to true if undefined
             return (
-              <div
-                key={action.id || idx}
-                className={`flex items-start gap-2 cursor-pointer rounded-lg transition-all ${
-                  !isActionEnabled ? 'opacity-50' : ''
-                } ${
-                  isCurrentlyExecuting
-                    ? 'bg-blue-50'
-                    : isSelected
-                      ? 'ring-2 ring-primary bg-primary/5'
-                      : 'hover:bg-muted/30'
-                }`}
-                onClick={() => onStepSelect?.(step.id)}
-              >
-                {/* Checkbox for enabling/disabling action in Execute tab */}
-                <Checkbox
-                  checked={isActionEnabled}
-                  onCheckedChange={(checked: boolean | 'indeterminate') => {
-                    onToggleActionEnabled?.(action.id, !!checked);
-                  }}
-                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                  className="mt-2.5 flex-shrink-0"
-                  title={isActionEnabled ? 'Click to disable this action in Execute' : 'Click to enable this action in Execute'}
-                />
-                <span className="font-mono text-muted-foreground text-sm w-6 pt-2 flex-shrink-0 text-right">
-                  {actionNumber}
-                </span>
-                <div className="flex-1">
-                  <SimpleActionRow
-                    action={action}
-                    canEdit={canEdit}
-                    onEdit={() => setEditingAction(action)}
-                  />
-                </div>
-                {/* Delete button - only show on first action row, when canDelete */}
-                {idx === 0 && canDelete && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteStep?.(step.id, step.step_number);
+              <div key={action.id || idx}>
+                <div
+                  className={`flex items-start gap-2 cursor-pointer rounded-lg transition-all ${
+                    !isActionEnabled ? 'opacity-50' : ''
+                  } ${
+                    isCurrentlyExecuting
+                      ? 'bg-blue-50'
+                      : isSelected
+                        ? 'ring-2 ring-primary bg-primary/5'
+                        : 'hover:bg-muted/30'
+                  }`}
+                  onClick={() => onStepSelect?.(step.id)}
+                >
+                  {/* Checkbox for enabling/disabling action in Execute tab */}
+                  <Checkbox
+                    checked={isActionEnabled}
+                    onCheckedChange={(checked: boolean | 'indeterminate') => {
+                      onToggleActionEnabled?.(action.id, !!checked);
                     }}
-                    title="Delete step"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                    className="mt-2.5 flex-shrink-0"
+                    title={isActionEnabled ? 'Click to disable this action in Execute' : 'Click to enable this action in Execute'}
+                  />
+                  <span className="font-mono text-muted-foreground text-sm w-6 pt-2 flex-shrink-0 text-right">
+                    {actionNumber}
+                  </span>
+                  <div className="flex-1">
+                    <SimpleActionRow
+                      action={action}
+                      canEdit={canEdit}
+                      onEdit={() => setEditingAction(action)}
+                    />
+                  </div>
+                  {/* Delete button - only show on first action row, when canDelete */}
+                  {idx === 0 && canDelete && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteStep?.(step.id, step.step_number);
+                      }}
+                      title="Delete step"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+                {/* Insert button after each action */}
+                {canEdit && onInsertAction && (
+                  <InsertActionButton
+                    stepId={step.id}
+                    insertAtIndex={action.action_index + 1}
+                    onInsertAction={onInsertAction}
+                    mode="action"
+                  />
                 )}
               </div>
             );
@@ -738,6 +762,7 @@ export default function ChatMessage({
   sessionStatus,
   onActionUpdate,
   onToggleActionEnabled,
+  onInsertAction,
 }: ChatMessageProps) {
   switch (message.type) {
     case 'user':
@@ -774,6 +799,7 @@ export default function ChatMessage({
           sessionStatus={sessionStatus}
           onActionUpdate={onActionUpdate}
           onToggleActionEnabled={onToggleActionEnabled}
+          onInsertAction={onInsertAction}
         />
       );
     case 'error':
