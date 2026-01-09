@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot, MousePointer, Type, Globe, Eye, Play, ArrowUp, ChevronUp, AlertTriangle, Pencil } from "lucide-react"
+import { ChevronDown, ChevronRight, ExternalLink, CheckCircle, XCircle, Clock, Trash2, Circle, Bot, MousePointer, Type, Globe, Eye, Play, ArrowUp, ChevronUp, AlertTriangle, Pencil, Wand2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useState } from "react"
 import type { TestStep as AnalysisTestStep, StepAction, SessionStatus } from "@/types/analysis"
@@ -19,6 +19,7 @@ interface StepListProps {
     onStepSelect?: (step: TestStep) => void
     onClear?: () => void
     onActionUpdate?: (stepId: string, updatedAction: StepAction) => void
+    onToggleAutoGenerate?: (actionId: string, enabled: boolean) => Promise<void>
     onDeleteStep?: (stepId: string) => Promise<void>
     isExecuting?: boolean
     simpleMode?: boolean
@@ -71,10 +72,11 @@ export interface SimpleActionRowProps {
     action: StepAction
     onTextUpdate?: (newText: string) => Promise<void>
     onEdit?: () => void
+    onToggleAutoGenerate?: (enabled: boolean) => Promise<void>
     canEdit?: boolean
 }
 
-export function SimpleActionRow({ action, onTextUpdate, onEdit, canEdit }: SimpleActionRowProps) {
+export function SimpleActionRow({ action, onTextUpdate, onEdit, onToggleAutoGenerate, canEdit }: SimpleActionRowProps) {
     const [selectorOpen, setSelectorOpen] = useState(false)
 
     // Check if this is a text input action (various naming conventions)
@@ -120,19 +122,6 @@ export function SimpleActionRow({ action, onTextUpdate, onEdit, canEdit }: Simpl
             <div
                 className="flex items-center gap-3 px-3 py-2 hover:bg-muted/30 transition-colors"
             >
-                {/* Status Icon */}
-                <div className="flex-shrink-0">
-                    {action.result_success !== null ? (
-                        action.result_success ? (
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                        ) : (
-                            <XCircle className="h-4 w-4 text-red-500" />
-                        )
-                    ) : (
-                        <Circle className="h-4 w-4 text-gray-300" />
-                    )}
-                </div>
-
                 {/* Action Type Icon */}
                 <div className="flex-shrink-0">
                     {getActionIcon(action.action_name)}
@@ -154,7 +143,9 @@ export function SimpleActionRow({ action, onTextUpdate, onEdit, canEdit }: Simpl
                     {isTypeTextAction && textValue !== null && (
                         <span className="flex items-center gap-1 text-sm">
                             <span className="text-muted-foreground">:</span>
-                            {onTextUpdate ? (
+                            {action.auto_generate_text ? (
+                                <span className="font-mono bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-xs border border-purple-200 italic">Auto-generated</span>
+                            ) : onTextUpdate ? (
                                 <EditableText
                                     value={textValue}
                                     onSave={onTextUpdate}
@@ -167,8 +158,13 @@ export function SimpleActionRow({ action, onTextUpdate, onEdit, canEdit }: Simpl
                     )}
 
                     {/* Show placeholder when input action has no text value yet */}
-                    {isTypeTextAction && textValue === null && (
+                    {isTypeTextAction && textValue === null && !action.auto_generate_text && (
                         <span className="text-xs text-muted-foreground italic">(no input value)</span>
+                    )}
+
+                    {/* Show auto-generate indicator when enabled and no text value */}
+                    {isTypeTextAction && textValue === null && action.auto_generate_text && (
+                        <span className="font-mono bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-xs border border-purple-200 italic">Auto-generated</span>
                     )}
 
                     {/* Selected option for select actions */}
@@ -179,6 +175,24 @@ export function SimpleActionRow({ action, onTextUpdate, onEdit, canEdit }: Simpl
                         </span>
                     )}
                 </div>
+
+                {/* Auto-generate Toggle Button - only for type_text actions */}
+                {isTypeTextAction && canEdit && onToggleAutoGenerate && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            onToggleAutoGenerate(!action.auto_generate_text)
+                        }}
+                        className={`flex-shrink-0 p-1 rounded transition-colors ${
+                            action.auto_generate_text
+                                ? 'bg-purple-100 hover:bg-purple-200'
+                                : 'hover:bg-purple-50'
+                        }`}
+                        title={action.auto_generate_text ? "Disable auto-generate" : "Enable auto-generate text"}
+                    >
+                        <Wand2 className={`h-4 w-4 ${action.auto_generate_text ? 'text-purple-600' : 'text-purple-400'}`} />
+                    </button>
+                )}
 
                 {/* Edit Button */}
                 {canEdit && onEdit && (
@@ -256,7 +270,7 @@ function StatusIcon({ status }: { status?: string }) {
     }
 }
 
-export default function StepList({ steps, selectedStepId, onStepSelect, onClear, onActionUpdate, onDeleteStep, isExecuting = false, simpleMode = false, sessionStatus }: StepListProps) {
+export default function StepList({ steps, selectedStepId, onStepSelect, onClear, onActionUpdate, onToggleAutoGenerate, onDeleteStep, isExecuting = false, simpleMode = false, sessionStatus }: StepListProps) {
     const [expandedSteps, setExpandedSteps] = useState<Set<string | number>>(new Set())
     const [stepToDelete, setStepToDelete] = useState<TestStep | null>(null)
     const [isDeleting, setIsDeleting] = useState(false)
@@ -265,8 +279,8 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
     // Check if editing is allowed based on session status
     const canEdit = sessionStatus ? EDITABLE_STATUSES.includes(sessionStatus) : false
 
-    // Handle action update (xpath, css_selector, text)
-    const handleActionUpdate = async (updates: { element_xpath?: string; css_selector?: string; text?: string }) => {
+    // Handle action update (xpath, css_selector, text, expected_value)
+    const handleActionUpdate = async (updates: { element_xpath?: string; css_selector?: string; text?: string; expected_value?: string }) => {
         if (!editingAction) return
         const updatedAction = await analysisApi.updateAction(editingAction.action.id, updates)
         onActionUpdate?.(editingAction.stepId, updatedAction)
@@ -385,6 +399,7 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                                                     onTextUpdate={handleTextUpdate}
                                                     canEdit={canEdit}
                                                     onEdit={() => setEditingAction({ action, stepId: String(step.id) })}
+                                                    onToggleAutoGenerate={onToggleAutoGenerate ? (enabled) => onToggleAutoGenerate(action.id, enabled) : undefined}
                                                 />
                                             </div>
                                             {onDeleteStep && (

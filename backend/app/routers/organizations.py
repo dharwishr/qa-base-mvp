@@ -173,19 +173,7 @@ async def add_user_to_organization(
 			detail="User is already a member of this organization"
 		)
 
-	# Cannot add another owner if one exists
-	if request.role == UserRole.OWNER:
-		existing_owner = db.query(UserOrganization).filter(
-			UserOrganization.organization_id == current_user.organization_id,
-			UserOrganization.role == "owner"
-		).first()
-		if existing_owner:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="Organization already has an owner. Transfer ownership first."
-			)
-
-	# Add user to organization
+	# Add user to organization (multiple owners are allowed)
 	user_org = UserOrganization(
 		user_id=user.id,
 		organization_id=current_user.organization_id,
@@ -232,14 +220,17 @@ async def update_user_role(
 			detail="User not found in this organization"
 		)
 
-	# If promoting to owner, demote current owner to member
-	if request.role == UserRole.OWNER:
-		current_owner_assoc = db.query(UserOrganization).filter(
+	# Prevent demoting the last owner
+	if user_org.role == "owner" and request.role == UserRole.MEMBER:
+		owner_count = db.query(UserOrganization).filter(
 			UserOrganization.organization_id == current_user.organization_id,
 			UserOrganization.role == "owner"
-		).first()
-		if current_owner_assoc:
-			current_owner_assoc.role = "member"
+		).count()
+		if owner_count <= 1:
+			raise HTTPException(
+				status_code=status.HTTP_400_BAD_REQUEST,
+				detail="Cannot demote the last owner. Assign another owner first."
+			)
 
 	user_org.role = request.role.value
 	db.commit()
@@ -282,6 +273,18 @@ async def remove_user_from_organization(
 			status_code=status.HTTP_404_NOT_FOUND,
 			detail="User not found in this organization"
 		)
+
+	# Prevent removing the last owner
+	if user_org.role == "owner":
+		owner_count = db.query(UserOrganization).filter(
+			UserOrganization.organization_id == current_user.organization_id,
+			UserOrganization.role == "owner"
+		).count()
+		if owner_count <= 1:
+			raise HTTPException(
+				status_code=status.HTTP_400_BAD_REQUEST,
+				detail="Cannot remove the last owner. Assign another owner first."
+			)
 
 	db.delete(user_org)
 	db.commit()

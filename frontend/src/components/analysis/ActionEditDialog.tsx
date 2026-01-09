@@ -7,7 +7,7 @@ import type { StepAction } from '@/types/analysis';
 interface ActionEditDialogProps {
   action: StepAction;
   isOpen: boolean;
-  onSave: (updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
+  onSave: (updates: { element_xpath?: string; css_selector?: string; text?: string; expected_value?: string }) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -20,12 +20,18 @@ export default function ActionEditDialog({
   const [xpath, setXpath] = useState('');
   const [cssSelector, setCssSelector] = useState('');
   const [text, setText] = useState('');
+  const [expectedValue, setExpectedValue] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Check if this is a text input action
   const isTextAction = ['type_text', 'input_text', 'type', 'input', 'fill'].includes(
     action.action_name?.toLowerCase() || ''
+  );
+
+  // Check if this is an assert action
+  const isAssertAction = ['assert', 'assert_text', 'assert_text_visible', 'assert_element_visible', 'assert_url', 'assert_value', 'verify'].some(
+    t => action.action_name?.toLowerCase().includes(t)
   );
 
   // Initialize form values when action changes
@@ -43,6 +49,14 @@ export default function ActionEditDialog({
         (action.action_params?.value as string) ||
         ''
       );
+      // Initialize expected value for assert actions
+      setExpectedValue(
+        (action.action_params?.expected_value as string) ||
+        (action.action_params?.expected_text as string) ||
+        (action.action_params?.expected_url as string) ||
+        (action.action_params?.text as string) ||
+        ''
+      );
       setError(null);
     }
   }, [action]);
@@ -52,7 +66,7 @@ export default function ActionEditDialog({
     setError(null);
 
     try {
-      const updates: { element_xpath?: string; css_selector?: string; text?: string } = {};
+      const updates: { element_xpath?: string; css_selector?: string; text?: string; expected_value?: string } = {};
 
       // Only include fields that changed
       const originalXpath = action.element_xpath || '';
@@ -65,6 +79,12 @@ export default function ActionEditDialog({
         (action.action_params?.text as string) ||
         (action.action_params?.value as string) ||
         '';
+      const originalExpectedValue =
+        (action.action_params?.expected_value as string) ||
+        (action.action_params?.expected_text as string) ||
+        (action.action_params?.expected_url as string) ||
+        (action.action_params?.text as string) ||
+        '';
 
       if (xpath !== originalXpath) {
         updates.element_xpath = xpath;
@@ -74,6 +94,9 @@ export default function ActionEditDialog({
       }
       if (isTextAction && text !== originalText) {
         updates.text = text;
+      }
+      if (isAssertAction && expectedValue !== originalExpectedValue) {
+        updates.expected_value = expectedValue;
       }
 
       if (Object.keys(updates).length > 0) {
@@ -149,6 +172,24 @@ export default function ActionEditDialog({
                 placeholder="Enter text value..."
                 disabled={isSaving}
               />
+            </div>
+          )}
+
+          {/* Expected Value Field - Only for assert actions */}
+          {isAssertAction && (
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">
+                Expected Value
+              </label>
+              <Input
+                value={expectedValue}
+                onChange={(e) => setExpectedValue(e.target.value)}
+                placeholder="Expected text, URL, or value to assert..."
+                disabled={isSaving}
+              />
+              <p className="text-xs text-muted-foreground">
+                The value that will be verified during assertion (e.g., expected text, URL pattern)
+              </p>
             </div>
           )}
 

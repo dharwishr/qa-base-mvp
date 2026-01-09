@@ -10,7 +10,7 @@ import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
 import DeleteStepDialog from '@/components/analysis/DeleteStepDialog';
 import PlanEditModal from '@/components/plan/PlanEditModal';
 import { useChatSession, type ReplayFailure } from '@/hooks/useChatSession';
-import { getScreenshotUrl, scriptsApi, analysisApi } from '@/services/api';
+import { getScreenshotUrl, scriptsApi, analysisApi, settingsApi } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
 import type { QueueFailure } from '@/types/chat';
 import type { PlaywrightScript } from '@/types/scripts';
@@ -269,10 +269,30 @@ export default function TestAnalysisChatPage() {
     selectedRunId,
     isStartingRun,
     toggleActionEnabled,
+    toggleAutoGenerateText,
     startSessionRun,
     refreshSessionRuns,
     selectRun,
   } = useChatSession();
+
+  // Fetch system settings to get the default model (only on mount, not when loading existing session)
+  useEffect(() => {
+    const fetchDefaultModel = async () => {
+      // Skip if we're loading an existing session (the session has its own model)
+      if (urlSessionId) return;
+
+      try {
+        const settings = await settingsApi.getSettings();
+        if (settings.default_analysis_model) {
+          setSelectedLlm(settings.default_analysis_model as LlmModel);
+        }
+      } catch (e) {
+        console.error('Error fetching system settings:', e);
+        // Keep the default model if fetch fails
+      }
+    };
+    fetchDefaultModel();
+  }, [urlSessionId, setSelectedLlm]);
 
   // Load existing session from URL parameter
   useEffect(() => {
@@ -815,6 +835,7 @@ export default function TestAnalysisChatPage() {
           sessionStatus={sessionStatus ?? undefined}
           onActionUpdate={handleActionUpdate}
           onToggleActionEnabled={toggleActionEnabled}
+          onToggleAutoGenerate={toggleAutoGenerateText}
           onInsertAction={handleInsertAction}
           onInsertStep={handleInsertStep}
           sessionId={sessionId ?? undefined}

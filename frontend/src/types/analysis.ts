@@ -11,6 +11,7 @@ export interface StepAction {
   element_xpath: string | null;
   element_name: string | null;
   is_enabled: boolean;  // Whether action should be included in script execution
+  auto_generate_text: boolean;  // Whether to auto-generate input text at runtime
 }
 
 export interface TestStep {

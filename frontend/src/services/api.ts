@@ -563,12 +563,18 @@ export const analysisApi = {
   },
 
   /**
-   * Update step action fields (xpath, css_selector, text).
+   * Update step action fields (xpath, css_selector, text, assertion params).
    * Only allowed when session is in post-execution state (completed, failed, stopped, paused).
    */
   async updateAction(
     actionId: string,
-    updates: { element_xpath?: string; css_selector?: string; text?: string }
+    updates: {
+      element_xpath?: string;
+      css_selector?: string;
+      text?: string;
+      expected_value?: string;
+      pattern_type?: string;
+    }
   ): Promise<StepAction> {
     const response = await fetch(
       `${API_BASE}/api/analysis/actions/${actionId}`,
@@ -588,6 +594,23 @@ export const analysisApi = {
   async toggleActionEnabled(actionId: string, enabled: boolean): Promise<StepAction> {
     const response = await fetch(
       `${API_BASE}/api/analysis/actions/${actionId}/enabled`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ enabled }),
+      }
+    );
+    return handleResponse<StepAction>(response);
+  },
+
+  /**
+   * Toggle whether an action's input text should be auto-generated at runtime.
+   * When auto_generate_text is true, the stored text is replaced with a dynamically
+   * generated value during test execution.
+   */
+  async toggleAutoGenerateText(actionId: string, enabled: boolean): Promise<StepAction> {
+    const response = await fetch(
+      `${API_BASE}/api/analysis/actions/${actionId}/auto-generate`,
       {
         method: 'PATCH',
         headers: getAuthHeaders(),

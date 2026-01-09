@@ -141,6 +141,12 @@ export interface RunStep {
   duration_ms: number | null;
   error_message: string | null;
   heal_attempts: HealAttempt[] | null;
+  // Additional context for Execute tab display
+  element_name: string | null;
+  element_xpath: string | null;
+  css_selector: string | null;
+  input_value: string | null;
+  is_password: boolean;
   created_at: string;
 }
 

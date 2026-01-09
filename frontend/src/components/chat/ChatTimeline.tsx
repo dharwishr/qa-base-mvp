@@ -30,6 +30,8 @@ interface ChatTimelineProps {
   onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
   // Toggle action enabled props
   onToggleActionEnabled?: (actionId: string, enabled: boolean) => Promise<void>;
+  // Toggle auto-generate text props
+  onToggleAutoGenerate?: (actionId: string, enabled: boolean) => Promise<void>;
   // Insert action/step props
   onInsertAction?: (stepId: string, actionIndex: number, actionName: string, params: Record<string, unknown>) => Promise<void>;
   onInsertStep?: (sessionId: string, stepNumber: number, actionName: string, params: Record<string, unknown>) => Promise<void>;
@@ -58,6 +60,7 @@ export default function ChatTimeline({
   sessionStatus,
   onActionUpdate,
   onToggleActionEnabled,
+  onToggleAutoGenerate,
   onInsertAction,
   onInsertStep,
   sessionId,
@@ -207,6 +210,7 @@ export default function ChatTimeline({
               sessionStatus={sessionStatus}
               onActionUpdate={onActionUpdate}
               onToggleActionEnabled={onToggleActionEnabled}
+              onToggleAutoGenerate={onToggleAutoGenerate}
               onInsertAction={onInsertAction}
             />
           </div>

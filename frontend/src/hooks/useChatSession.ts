@@ -152,6 +152,7 @@ interface UseChatSessionReturn {
   selectedRunId: string | null;
   isStartingRun: boolean;
   toggleActionEnabled: (actionId: string, enabled: boolean) => Promise<void>;
+  toggleAutoGenerateText: (actionId: string, enabled: boolean) => Promise<void>;
   startSessionRun: (config: StartRunRequest) => Promise<void>;
   refreshSessionRuns: () => Promise<void>;
   selectRun: (runId: string | null) => void;
@@ -167,7 +168,7 @@ export function useChatSession(): UseChatSessionReturn {
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
   const [browserSession, setBrowserSession] = useState<BrowserSessionInfo | null>(null);
   const [mode, setMode] = useState<ChatMode>('plan');
-  const [selectedLlm, setSelectedLlm] = useState<LlmModel>('gemini-2.5-flash');
+  const [selectedLlm, setSelectedLlm] = useState<LlmModel>('gemini-3.0-flash');
   const [headless, setHeadless] = useState(false); // Default to live browser view
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -2169,6 +2170,32 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, []);
 
+  // Toggle auto-generate text state for input actions
+  const toggleAutoGenerateText = useCallback(async (actionId: string, enabled: boolean) => {
+    try {
+      const updatedAction = await analysisApi.toggleAutoGenerateText(actionId, enabled);
+      // Update the action in local state (messages)
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.type !== 'step') return msg;
+          const updatedActions = msg.step.actions?.map((action) =>
+            action.id === actionId ? { ...action, auto_generate_text: updatedAction.auto_generate_text } : action
+          );
+          return {
+            ...msg,
+            step: {
+              ...msg.step,
+              actions: updatedActions,
+            },
+          };
+        })
+      );
+    } catch (e) {
+      console.error('Error toggling auto-generate text:', e);
+      throw e;
+    }
+  }, []);
+
   // Refresh session runs list
   const refreshSessionRuns = useCallback(async () => {
     if (!sessionId) return;
@@ -2308,6 +2335,7 @@ export function useChatSession(): UseChatSessionReturn {
     selectedRunId,
     isStartingRun,
     toggleActionEnabled,
+    toggleAutoGenerateText,
     startSessionRun,
     refreshSessionRuns,
     selectRun,

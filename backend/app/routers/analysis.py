@@ -45,6 +45,7 @@ from app.schemas import (
 	TestSessionResponse,
 	TestStepResponse,
 	ToggleActionEnabledRequest,
+	ToggleAutoGenerateTextRequest,
 	UndoRequest,
 	UndoResponse,
 	UpdatePlanRequest,
@@ -1359,6 +1360,33 @@ async def toggle_action_enabled(
 	db.refresh(action)
 
 	logger.info(f"Toggled action {action_id} enabled={request.enabled}")
+	return action
+
+
+@router.patch("/actions/{action_id}/auto-generate", response_model=StepActionResponse)
+async def toggle_auto_generate_text(
+	action_id: str,
+	request: ToggleAutoGenerateTextRequest,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Toggle whether an action's input text should be auto-generated at runtime.
+
+	When auto_generate_text is True, the stored input text value will be replaced
+	with a dynamically generated value during test execution. The generated value
+	format is based on the element name (e.g., email fields get email format).
+	"""
+	from app.models import StepAction
+
+	action = db.query(StepAction).filter(StepAction.id == action_id).first()
+	if not action:
+		raise HTTPException(status_code=404, detail="Action not found")
+
+	action.auto_generate_text = request.enabled
+	db.commit()
+	db.refresh(action)
+
+	logger.info(f"Toggled action {action_id} auto_generate_text={request.enabled}")
 	return action
 
 

@@ -226,6 +226,7 @@ class StepAction(Base):
 	element_xpath: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 	element_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
 	is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # Whether action should be included in script execution
+	auto_generate_text: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # Whether to auto-generate input text at runtime
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 	# Relationships
@@ -388,6 +389,12 @@ class RunStep(Base):
 	duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 	error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 	heal_attempts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+	# Additional context for Execute tab display
+	element_name: Mapped[str | None] = mapped_column(String(256), nullable=True)  # e.g., "User Name:", "Password:"
+	element_xpath: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # XPath selector
+	css_selector: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # CSS selector
+	input_value: Mapped[str | None] = mapped_column(Text, nullable=True)  # Input value for fill actions
+	is_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # Whether to mask value
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 	# Relationships

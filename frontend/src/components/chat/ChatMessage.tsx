@@ -66,6 +66,8 @@ interface ChatMessageProps {
   onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
   // Toggle action enabled props
   onToggleActionEnabled?: (actionId: string, enabled: boolean) => Promise<void>;
+  // Toggle auto-generate text props
+  onToggleAutoGenerate?: (actionId: string, enabled: boolean) => Promise<void>;
   // Insert action props
   onInsertAction?: (stepId: string, actionIndex: number, actionName: string, params: Record<string, unknown>) => Promise<void>;
 }
@@ -290,6 +292,7 @@ function StepMessageCard({
   sessionStatus,
   onActionUpdate,
   onToggleActionEnabled,
+  onToggleAutoGenerate,
   onInsertAction,
 }: {
   message: StepMessage;
@@ -310,6 +313,7 @@ function StepMessageCard({
   sessionStatus?: string;
   onActionUpdate?: (stepId: string, actionId: string, updates: { element_xpath?: string; css_selector?: string; text?: string }) => Promise<void>;
   onToggleActionEnabled?: (actionId: string, enabled: boolean) => Promise<void>;
+  onToggleAutoGenerate?: (actionId: string, enabled: boolean) => Promise<void>;
   onInsertAction?: (stepId: string, actionIndex: number, actionName: string, params: Record<string, unknown>) => Promise<void>;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -434,6 +438,7 @@ function StepMessageCard({
                       action={action}
                       canEdit={canEdit}
                       onEdit={() => setEditingAction(action)}
+                      onToggleAutoGenerate={onToggleAutoGenerate ? (enabled) => onToggleAutoGenerate(action.id, enabled) : undefined}
                     />
                   </div>
                   {/* Delete button - only show on first action row, when canDelete */}
@@ -762,6 +767,7 @@ export default function ChatMessage({
   sessionStatus,
   onActionUpdate,
   onToggleActionEnabled,
+  onToggleAutoGenerate,
   onInsertAction,
 }: ChatMessageProps) {
   switch (message.type) {
@@ -799,6 +805,7 @@ export default function ChatMessage({
           sessionStatus={sessionStatus}
           onActionUpdate={onActionUpdate}
           onToggleActionEnabled={onToggleActionEnabled}
+          onToggleAutoGenerate={onToggleAutoGenerate}
           onInsertAction={onInsertAction}
         />
       );

@@ -250,6 +250,11 @@ class ToggleActionEnabledRequest(BaseModel):
 	enabled: bool = Field(..., description="Whether the action should be enabled for execution")
 
 
+class ToggleAutoGenerateTextRequest(BaseModel):
+	"""Request to toggle auto-generate text state for input actions."""
+	enabled: bool = Field(..., description="Whether to auto-generate input text at runtime")
+
+
 class InsertActionRequest(BaseModel):
 	"""Request to insert a new action at a specific index within a step."""
 	action_index: int = Field(..., ge=0, description="Index where the action should be inserted")
@@ -276,6 +281,7 @@ class StepActionResponse(BaseModel):
 	element_xpath: str | None = None
 	element_name: str | None = None
 	is_enabled: bool = True  # Whether action should be included in script execution
+	auto_generate_text: bool = False  # Whether to auto-generate input text at runtime
 
 	class Config:
 		from_attributes = True
@@ -501,6 +507,12 @@ class RunStepResponse(BaseModel):
 	duration_ms: int | None = None
 	error_message: str | None = None
 	heal_attempts: list[dict[str, Any]] | None = None
+	# Additional context for Execute tab display
+	element_name: str | None = None
+	element_xpath: str | None = None
+	css_selector: str | None = None
+	input_value: str | None = None
+	is_password: bool = False
 	created_at: datetime
 
 	class Config:

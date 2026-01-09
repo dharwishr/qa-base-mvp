@@ -29,6 +29,7 @@ from app.services.runner_factory import create_runner
 from app.services.base_runner import StepResult
 from app.services.script_recorder import PlaywrightStep
 from app.services.live_logs import LiveLogsPublisher
+from app.services.text_generator import generate_auto_text
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +72,19 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
 
     elif "input" in action_name or "type" in action_name or "fill" in action_name:
         selectors = _build_selectors(action)
+        # Check if auto-generate text is enabled for this action
+        if action.auto_generate_text:
+            text_value = generate_auto_text(action.element_name)
+            logger.info(f"Auto-generated text for '{action.element_name}': {text_value}")
+        else:
+            text_value = params.get("text", "")
         return {
             "index": index,
             "action": "fill",
             "selectors": selectors,
-            "value": params.get("text", ""),
+            "value": text_value,
             "element_context": _build_element_context(action),
-            "description": f"Fill with '{params.get('text', '')[:20]}'",
+            "description": f"Fill with '{text_value[:20] if text_value else ''}'",
         }
 
     elif "scroll" in action_name:
@@ -319,6 +326,15 @@ def _build_element_context(action: StepAction) -> dict[str, Any] | None:
     }
 
 
+def _is_password_field(element_name: str | None, placeholder: str | None) -> bool:
+    """Check if a field appears to be a password field based on its name or placeholder."""
+    indicators = ['password', 'pwd', 'secret', 'passcode', 'pin']
+    for text in [element_name, placeholder]:
+        if text and any(ind in text.lower() for ind in indicators):
+            return True
+    return False
+
+
 def _extract_enabled_steps_from_session(db, session: TestSession) -> list[dict[str, Any]]:
     """Extract Playwright steps from session's enabled actions only.
 
@@ -463,6 +479,22 @@ async def _execute_session_run_async(run_id: str, task=None) -> dict:
             logger.debug(f"Run {run_id}: Starting step {step_index}")
 
         def on_step_complete(step_index: int, result: StepResult):
+            # Get original step data for additional context
+            step_data = steps_json[step_index] if step_index < len(steps_json) else {}
+            element_context = step_data.get('element_context', {}) or {}
+            selectors = step_data.get('selectors', {}) or {}
+
+            # Extract xpath (remove 'xpath=' prefix if present)
+            primary_selector = selectors.get('primary', '')
+            element_xpath = primary_selector[6:] if primary_selector.startswith('xpath=') else primary_selector
+
+            # Get CSS from fallbacks
+            css_selector = next((s for s in selectors.get('fallbacks', []) if s and not s.startswith('xpath=')), None)
+
+            # Detect password fields
+            element_name = element_context.get('text_content') or step_data.get('description')
+            is_password = _is_password_field(element_name, element_context.get('placeholder'))
+
             run_step = RunStep(
                 run_id=run_id,
                 step_index=step_index,
@@ -473,6 +505,12 @@ async def _execute_session_run_async(run_id: str, task=None) -> dict:
                 duration_ms=result.duration_ms,
                 error_message=result.error_message,
                 heal_attempts=[ha.__dict__ for ha in result.heal_attempts] if result.heal_attempts else None,
+                # Additional context for Execute tab display
+                element_name=element_name,
+                element_xpath=element_xpath if element_xpath else None,
+                css_selector=css_selector,
+                input_value=step_data.get('value') if result.action == 'fill' else None,
+                is_password=is_password,
             )
             db.add(run_step)
             db.commit()

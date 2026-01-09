@@ -13,9 +13,15 @@ import {
   Gauge,
   ChevronRight,
   ChevronDown,
-
+  ChevronUp,
   Zap,
   ArrowLeft,
+  // Action type icons
+  MousePointer,
+  Type,
+  Globe,
+  ArrowUp,
+  Eye,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -79,6 +85,84 @@ function StatusBadge({ status }: { status: string }) {
       <Icon className={`h-3 w-3 ${status === 'running' ? 'animate-spin' : ''}`} />
       {statusConfig.label}
     </span>
+  );
+}
+
+// Action type to icon mapping
+function getActionIcon(actionName: string) {
+  const iconClass = "h-4 w-4";
+  switch (actionName?.toLowerCase()) {
+    case 'click':
+      return <MousePointer className={`${iconClass} text-blue-500`} />;
+    case 'fill':
+      return <Type className={`${iconClass} text-green-500`} />;
+    case 'goto':
+      return <Globe className={`${iconClass} text-purple-500`} />;
+    case 'scroll':
+      return <ArrowUp className={`${iconClass} text-orange-500`} />;
+    case 'wait':
+      return <Clock className={`${iconClass} text-yellow-500`} />;
+    case 'assert':
+      return <Eye className={`${iconClass} text-cyan-500`} />;
+    default:
+      return <Play className={`${iconClass} text-gray-500`} />;
+  }
+}
+
+// Masked value display for passwords
+function MaskedValue({ value, isPassword }: { value: string | null; isPassword: boolean }) {
+  const [revealed, setRevealed] = useState(false);
+  if (!value) return null;
+
+  if (isPassword && !revealed) {
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); setRevealed(true); }}
+        className="font-mono bg-gray-100 dark:bg-gray-800 text-gray-500 px-1.5 py-0.5 rounded text-xs border hover:bg-gray-200 dark:hover:bg-gray-700"
+        title="Click to reveal"
+      >
+        {'*'.repeat(8)}
+      </button>
+    );
+  }
+  return (
+    <span className="font-mono bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded text-xs border border-blue-200 dark:border-blue-800">
+      "{value}"
+    </span>
+  );
+}
+
+// Expandable selector display
+function ExpandableSelector({ xpath, css }: { xpath: string | null; css: string | null }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!xpath && !css) return null;
+
+  return (
+    <div className="mt-1">
+      <button
+        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+        className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+      >
+        {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        {expanded ? 'Hide selectors' : 'Show selectors'}
+      </button>
+      {expanded && (
+        <div className="mt-1 p-2 bg-muted/30 rounded space-y-1 text-xs">
+          {xpath && (
+            <div className="flex items-start gap-2">
+              <span className="text-muted-foreground font-medium w-10 flex-shrink-0">XPath</span>
+              <code className="break-all bg-muted/50 px-1.5 py-0.5 rounded flex-1">{xpath}</code>
+            </div>
+          )}
+          {css && (
+            <div className="flex items-start gap-2">
+              <span className="text-muted-foreground font-medium w-10 flex-shrink-0">CSS</span>
+              <code className="break-all bg-muted/50 px-1.5 py-0.5 rounded flex-1">{css}</code>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -207,16 +291,33 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
                   )}
                 >
                   <div className="flex items-center gap-2">
-                    {step.status === 'passed' && <CheckCircle className="h-4 w-4 text-green-500" />}
-                    {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500" />}
-                    {step.status === 'healed' && <Zap className="h-4 w-4 text-purple-500" />}
-                    {step.status === 'running' && <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />}
-                    {step.status === 'pending' && <Clock className="h-4 w-4 text-gray-400" />}
-                    <span className="text-sm font-medium truncate flex-1">
-                      {idx + 1}. {step.action}
-                    </span>
+                    {/* Status icon */}
+                    {step.status === 'passed' && <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />}
+                    {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />}
+                    {step.status === 'healed' && <Zap className="h-4 w-4 text-purple-500 flex-shrink-0" />}
+                    {step.status === 'running' && <Loader2 className="h-4 w-4 text-blue-500 animate-spin flex-shrink-0" />}
+                    {step.status === 'pending' && <Clock className="h-4 w-4 text-gray-400 flex-shrink-0" />}
+
+                    {/* Action type icon */}
+                    <div className="flex-shrink-0">
+                      {getActionIcon(step.action)}
+                    </div>
+
+                    {/* Step content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium">{idx + 1}.</span>
+                        <span className="text-sm truncate">{step.element_name || step.action}</span>
+                        {step.action === 'fill' && step.input_value && (
+                          <MaskedValue value={step.input_value} isPassword={step.is_password} />
+                        )}
+                      </div>
+                      <ExpandableSelector xpath={step.element_xpath} css={step.css_selector} />
+                    </div>
+
+                    {/* Duration */}
                     {step.duration_ms && (
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-xs text-muted-foreground flex-shrink-0">
                         {formatDuration(step.duration_ms)}
                       </span>
                     )}
