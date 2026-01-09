@@ -290,6 +290,11 @@ class BrowserService:
 					# Get action name and params
 					action_data = action.model_dump(exclude_unset=True)
 					action_name = next(iter(action_data.keys()), "unknown")
+
+					# Skip find_text actions - AI navigation aid, not a QA test step
+					if action_name == "find_text":
+						continue
+
 					action_params = action_data.get(action_name, {})
 
 					# Get result for this action
@@ -795,6 +800,11 @@ class BrowserServiceSync:
 					# Get action name and params
 					action_data = action.model_dump(exclude_unset=True)
 					action_name = next(iter(action_data.keys()), "unknown")
+
+					# Skip find_text actions - AI navigation aid, not a QA test step
+					if action_name == "find_text":
+						continue
+
 					action_params = action_data.get(action_name, {})
 
 					# Get result for this action
