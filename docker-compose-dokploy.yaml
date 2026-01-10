@@ -32,6 +32,7 @@ services:
       start_period: 20s
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
       - "traefik.http.routers.qa-base-frontend.rule=Host(`xi-app.mvp-fra.x.qola.top`)"
       - "traefik.http.routers.qa-base-frontend.entrypoints=websecure"
       - "traefik.http.routers.qa-base-frontend.tls.certResolver=letsencrypt"
@@ -92,6 +93,7 @@ services:
       start_period: 40s
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
       - "traefik.http.routers.qa-base-backend.rule=Host(`api.mvp-fra.x.qola.top`)"
       - "traefik.http.routers.qa-base-backend.entrypoints=websecure"
       - "traefik.http.routers.qa-base-backend.tls.certResolver=letsencrypt"
