@@ -121,7 +121,7 @@ def execute_test_plan(self, session_id: str) -> dict:
             clear_stop_requested(session_id)
 
             # Update final status based on result
-            if result.get("status") == "paused":
+            if result.get("paused", False) or result.get("status") == "paused":
                 session.status = "paused"
                 publisher.execution_paused()
             elif result.get("status") == "cancelled":

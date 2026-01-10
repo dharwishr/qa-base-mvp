@@ -2574,7 +2574,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
 										# Check if execution completed
 										event_type = event_data.get("type", "")
-										if event_type in ["completed", "execution_failed", "execution_cancelled", "error"]:
+										if event_type in ["completed", "execution_failed", "execution_cancelled", "execution_paused", "error"]:
 											logger.info(f"Execution finished for session {session_id}: {event_type}")
 											break
 									except json.JSONDecodeError:
@@ -2729,8 +2729,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 					logger.info(f"Received pause_execution command for session {session_id}")
 					from app.services.browser_service import get_active_browser_service
 					from app.services.run_till_end_service import get_active_service as get_rte_service
+					from app.services.event_publisher import set_pause_requested
 
-					# Stop BrowserService execution
+					# Set Redis pause flag (for Celery tasks running in separate process)
+					set_pause_requested(session_id)
+					logger.info(f"Set Redis pause flag for session {session_id}")
+
+					# Also try to stop in-memory BrowserService (for WebSocket-based execution)
 					browser_service = get_active_browser_service(session_id)
 					if browser_service:
 						browser_service.request_stop()

@@ -245,10 +245,15 @@ def _build_selectors(sa: StepAction, params: dict) -> SelectorSet | None:
     """Build SelectorSet from StepAction data."""
     primary = None
     fallbacks = []
-    
+
     # Use xpath as primary selector
     if sa.element_xpath:
-        primary = f"xpath={sa.element_xpath}"
+        xpath = sa.element_xpath
+        # Ensure absolute xpaths have leading slash for Playwright compatibility
+        # browser-use generates xpaths like "html/body/..." without leading slash
+        if xpath.startswith("html"):
+            xpath = "/" + xpath
+        primary = f"xpath={xpath}"
     
     # Check for CSS selectors in params
     css_selectors = params.get("css_selectors", [])

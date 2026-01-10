@@ -272,11 +272,11 @@ export default function LiveBrowserView({
                     )}
                     {/* AI Execution Controls - Pause/Stop (shown during AI execution) */}
                     {isAIExecuting && (onPauseExecution || onStopExecution) && (
-                        <div className="flex items-center gap-1 border-l pl-2 ml-1">
+                        <div className="flex items-center gap-1 border-l border-border pl-2 ml-1">
                             {onPauseExecution && (
                                 <button
                                     onClick={onPauseExecution}
-                                    className="px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
+                                    className="px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 bg-yellow-500 text-white hover:bg-yellow-600 dark:bg-yellow-600 dark:hover:bg-yellow-700"
                                     title="Pause AI execution"
                                 >
                                     <Pause className="h-3 w-3" />
@@ -286,7 +286,7 @@ export default function LiveBrowserView({
                             {onStopExecution && (
                                 <button
                                     onClick={onStopExecution}
-                                    className="px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 bg-red-100 text-red-700 hover:bg-red-200"
+                                    className="px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700"
                                     title="Stop AI execution"
                                 >
                                     <StopCircle className="h-3 w-3" />

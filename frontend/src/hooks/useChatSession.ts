@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { analysisApi, scriptsApi, getWebSocketUrl } from '../services/api';
 import { getAuthToken } from '../contexts/AuthContext';
 import { config } from '../config';
@@ -135,6 +136,9 @@ interface UseChatSessionReturn {
   cancelRunTillEnd: () => void;
   // Stop AI execution (keeps browser alive)
   stopAIExecution: () => void;
+  // Resume AI execution after pause
+  resumeExecution: () => Promise<void>;
+  isResuming: boolean;
   // Existing session actions
   loadExistingSession: (id: string) => Promise<void>;
   replaySession: (startRecordingAfterReplay?: boolean, prepareOnly?: boolean) => Promise<void>;
@@ -205,6 +209,8 @@ export function useChatSession(): UseChatSessionReturn {
 
   // Stop AI execution state
   const [isStopping, setIsStopping] = useState(false);
+  // Resume AI execution state
+  const [isResuming, setIsResuming] = useState(false);
 
   // Plan editing state
   const [isEditingPlan, setIsEditingPlan] = useState(false);
@@ -1790,6 +1796,22 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, [sessionId]);
 
+  // Resume AI execution after pause
+  const resumeExecution = useCallback(async () => {
+    if (!sessionId) return;
+
+    setIsResuming(true);
+    try {
+      await analysisApi.resumeExecution(sessionId);
+      // Status will be updated via WebSocket when execution resumes
+    } catch (error) {
+      console.error('Failed to resume execution:', error);
+      toast.error('Failed to resume execution');
+    } finally {
+      setIsResuming(false);
+    }
+  }, [sessionId]);
+
   // Load an existing session
   const loadExistingSession = useCallback(async (id: string) => {
     setIsLoading(true);
@@ -2318,6 +2340,9 @@ export function useChatSession(): UseChatSessionReturn {
     cancelRunTillEnd,
     // Stop AI execution action
     stopAIExecution,
+    // Resume AI execution action
+    resumeExecution,
+    isResuming,
     // Existing session actions
     loadExistingSession,
     replaySession,

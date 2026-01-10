@@ -249,6 +249,10 @@ export default function TestAnalysisChatPage() {
     continueRunTillEnd,
     // Stop AI execution
     stopAIExecution,
+    stopExecution,
+    // Resume AI execution
+    resumeExecution,
+    isResuming,
     // Existing session
     isLoading,
     isReplaying,
@@ -638,24 +642,58 @@ export default function TestAnalysisChatPage() {
 
           {/* Row 2: Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Stop Button - Stops AI execution, keeps browser alive */}
+            {/* Pause Button - Pauses AI execution, keeps browser alive, resumable */}
             {(isExecuting || isRunningTillEnd || isStopping) && (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={stopAIExecution}
                 disabled={isStopping}
-                className="h-7 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 disabled:opacity-70"
+                className="h-7 text-xs border-yellow-500 text-yellow-600 hover:bg-yellow-50 disabled:opacity-70"
               >
                 {isStopping ? (
                   <>
                     <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                    Stopping...
+                    Pausing...
                   </>
                 ) : (
                   <>
-                    <Square className="h-3 w-3 mr-1" />
-                    Stop
+                    <PauseCircle className="h-3 w-3 mr-1" />
+                    Pause
+                  </>
+                )}
+              </Button>
+            )}
+            {/* Stop Button - Fully stops AI execution */}
+            {(isExecuting || isRunningTillEnd) && !isStopping && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={stopExecution}
+                className="h-7 text-xs border-red-500 text-red-600 hover:bg-red-50"
+              >
+                <Square className="h-3 w-3 mr-1" />
+                Stop
+              </Button>
+            )}
+            {/* Resume Button - Shows when execution is paused */}
+            {sessionStatus === 'paused' && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={resumeExecution}
+                disabled={isResuming}
+                className="h-7 text-xs border-green-500 text-green-600 hover:bg-green-50 disabled:opacity-70"
+              >
+                {isResuming ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Resuming...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-3 w-3 mr-1" />
+                    Resume
                   </>
                 )}
               </Button>

@@ -731,14 +731,53 @@ class PlaywrightRunner(BaseRunner):
 	) -> SelfHealingLocator:
 		"""Select option from native <select> element.
 
-		Uses JavaScript-based selection to ensure proper event dispatching
-		for reactive frameworks (Vue, Svelte, React, etc.).
+		Uses Playwright's native select_option() which performs real browser selection,
+		falling back to JavaScript-based selection for edge cases where native methods fail.
 		"""
 		assert self._page
 		short_timeout = min(timeout // 3, 5000)
 		value_lower = value.lower()
 
-		# Use JavaScript for proper event dispatching (matching browser_use behavior)
+		# STRATEGY 1: Try Playwright's native select_option by value (most reliable)
+		# This performs real browser selection with proper event dispatching
+		try:
+			await locator.select_option(value=value, timeout=short_timeout)
+			healer.successful_selector = f"[NATIVE_SELECT] Playwright value: {value}"
+			return healer
+		except Exception as e:
+			logger.debug(f"select_option by value failed: {e}")
+
+		# STRATEGY 2: Try by label (visible text)
+		try:
+			await locator.select_option(label=value, timeout=short_timeout)
+			healer.successful_selector = f"[NATIVE_SELECT] Playwright label: {value}"
+			return healer
+		except Exception as e:
+			logger.debug(f"select_option by label failed: {e}")
+
+		# STRATEGY 3: Try partial/case-insensitive label match
+		try:
+			options = await locator.locator("option").all_text_contents()
+			for option_text in options:
+				option_lower = option_text.strip().lower()
+				if value_lower == option_lower or value_lower in option_lower or option_lower in value_lower:
+					await locator.select_option(label=option_text.strip(), timeout=short_timeout)
+					healer.successful_selector = f"[NATIVE_SELECT] Playwright partial match: {option_text.strip()}"
+					return healer
+		except Exception as e:
+			logger.debug(f"Partial label match failed: {e}")
+
+		# STRATEGY 4: Try by index if value is numeric
+		if value.isdigit():
+			try:
+				await locator.select_option(index=int(value), timeout=short_timeout)
+				healer.successful_selector = f"[NATIVE_SELECT] Playwright index: {value}"
+				return healer
+			except Exception as e:
+				logger.debug(f"select_option by index failed: {e}")
+
+		# STRATEGY 5: JavaScript fallback for edge cases where Playwright methods fail
+		# (e.g., custom dropdown implementations that look like native selects)
 		select_script = """
 		(element, targetText) => {
 			const options = Array.from(element.options);
@@ -776,50 +815,17 @@ class PlaywrightRunner(BaseRunner):
 		try:
 			result = await locator.evaluate(select_script, value)
 			if result.get('success'):
-				healer.successful_selector = f"[NATIVE_SELECT] JS selection: {result.get('selectedText', value)}"
+				healer.successful_selector = f"[NATIVE_SELECT] JS fallback: {result.get('selectedText', value)}"
 				return healer
 			else:
 				available = result.get('availableOptions', [])
 				logger.warning(f"JS selection failed. Available options: {available[:10]}")
 		except Exception as e:
-			logger.debug(f"JS-based selection failed: {e}, falling back to Playwright methods")
+			logger.debug(f"JS-based selection failed: {e}")
 
-		# Fallback: Try Playwright's native methods
-		# Strategy 1: Try by value attribute
-		try:
-			await locator.select_option(value=value, timeout=short_timeout)
-			return healer
-		except Exception:
-			pass
-
-		# Strategy 2: Try by label (visible text) - case insensitive
-		try:
-			await locator.select_option(label=value, timeout=short_timeout)
-			return healer
-		except Exception:
-			pass
-
-		# Strategy 3: Try partial/case-insensitive label match
-		try:
-			options = await locator.locator("option").all_text_contents()
-			for option_text in options:
-				option_lower = option_text.strip().lower()
-				if value_lower == option_lower or value_lower in option_lower or option_lower in value_lower:
-					await locator.select_option(label=option_text.strip(), timeout=short_timeout)
-					return healer
-		except Exception:
-			pass
-
-		# Strategy 4: Try by index if value is numeric
-		if value.isdigit():
-			try:
-				await locator.select_option(index=int(value), timeout=short_timeout)
-				return healer
-			except Exception:
-				pass
-
-		# Final attempt with full timeout
+		# Final attempt with full timeout using Playwright native method
 		await locator.select_option(value=value, timeout=timeout)
+		healer.successful_selector = f"[NATIVE_SELECT] Playwright final: {value}"
 		return healer
 
 	async def _select_custom_dropdown(
