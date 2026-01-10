@@ -1,14 +1,13 @@
 # ============================================
-# QA Base - Docker Compose for Coolify Deployment
+# QA Base - Docker Compose for Dokploy Deployment
 # ============================================
-# Documentation: https://coolify.io/docs/knowledge-base/docker/compose
+# Documentation: https://docs.dokploy.com/docs/core/docker-compose
 
 services:
   # ============================================
   # Frontend - React/Vite served via nginx
   # ============================================
-  # Coolify: Set "Ports Exposes" to 80
-  # Coolify: Set domain to your frontend URL (e.g., qa-base.yourdomain.com)
+  # Domain: xi-app.mvp-fra.x.qola.top (configured via Traefik)
   frontend:
     build:
       context: ./frontend
@@ -16,9 +15,11 @@ services:
       args:
         - VITE_API_URL=${VITE_API_URL}
     ports:
-      - "3006:80"
+      - 80
     environment:
       - VITE_API_URL=${VITE_API_URL}
+    networks:
+      - dokploy-network
     depends_on:
       backend:
         condition: service_healthy
@@ -29,18 +30,23 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.qa-base-frontend.rule=Host(`xi-app.mvp-fra.x.qola.top`)"
+      - "traefik.http.routers.qa-base-frontend.entrypoints=websecure"
+      - "traefik.http.routers.qa-base-frontend.tls.certResolver=letsencrypt"
+      - "traefik.http.services.qa-base-frontend.loadbalancer.server.port=80"
 
   # ============================================
   # Backend - FastAPI Application
   # ============================================
-  # Coolify: Set "Ports Exposes" to 8000
-  # Coolify: Set domain to your backend URL (e.g., api.qa-base.yourdomain.com)
+  # Domain: api.mvp-fra.x.qola.top (configured via Traefik)
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
     ports:
-      - "8006:8000"
+      - 8000
     environment:
       # Application Settings
       - DEBUG=${DEBUG:-false}
@@ -58,7 +64,7 @@ services:
       # Default Organization
       - DEFAULT_ORG_NAME=${DEFAULT_ORG_NAME:-XiTester}
       - DEFAULT_ORG_DESCRIPTION=${DEFAULT_ORG_DESCRIPTION:-Default organization}
-      # LLM API Keys (set in Coolify UI)
+      # LLM API Keys (set in Dokploy UI)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_API_SECRET=${GEMINI_API_SECRET}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
@@ -72,7 +78,7 @@ services:
       - videos:/app/data/videos
       - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for browser orchestration
     networks:
-      - default
+      - dokploy-network
       - qa-browser-network
     depends_on:
       redis:
@@ -84,6 +90,12 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.qa-base-backend.rule=Host(`api.mvp-fra.x.qola.top`)"
+      - "traefik.http.routers.qa-base-backend.entrypoints=websecure"
+      - "traefik.http.routers.qa-base-backend.tls.certResolver=letsencrypt"
+      - "traefik.http.services.qa-base-backend.loadbalancer.server.port=8000"
 
   # ============================================
   # Celery Worker - Async Task Processing
@@ -116,7 +128,7 @@ services:
       - videos:/app/data/videos
       - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for browser orchestration
     networks:
-      - default
+      - dokploy-network
       - qa-browser-network
     depends_on:
       redis:
@@ -165,8 +177,8 @@ volumes:
 # Networks
 # ============================================
 networks:
-  default:
-    driver: bridge
+  dokploy-network:
+    external: true
   qa-browser-network:
     driver: bridge
     name: qa-browser-network
