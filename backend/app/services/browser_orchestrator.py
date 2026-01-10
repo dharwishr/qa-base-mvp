@@ -64,6 +64,11 @@ class BrowserSession:
     test_session_id: str | None = None
     test_run_id: str | None = None
     error_message: str | None = None
+    # User/Organization tracking - who started this browser session
+    user_id: str | None = None
+    organization_id: str | None = None
+    user_name: str | None = None  # Cached for display without DB lookup
+    organization_name: str | None = None  # Cached for display without DB lookup
     
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -87,6 +92,10 @@ class BrowserSession:
             "test_session_id": self.test_session_id,
             "test_run_id": self.test_run_id,
             "error_message": self.error_message,
+            "user_id": self.user_id,
+            "organization_id": self.organization_id,
+            "user_name": self.user_name,
+            "organization_name": self.organization_name,
         }
     
     @property
@@ -209,21 +218,29 @@ class BrowserOrchestrator:
         phase: BrowserPhase,
         test_session_id: str | None = None,
         test_run_id: str | None = None,
+        user_id: str | None = None,
+        organization_id: str | None = None,
+        user_name: str | None = None,
+        organization_name: str | None = None,
     ) -> BrowserSession:
         """
         Create a new browser session with an isolated container.
-        
+
         Args:
             phase: Whether this is for analysis or execution
             test_session_id: Associated test session ID (for analysis)
             test_run_id: Associated test run ID (for execution)
-            
+            user_id: ID of the user who started this session
+            organization_id: ID of the organization
+            user_name: Name of the user (cached for display)
+            organization_name: Name of the organization (cached for display)
+
         Returns:
             BrowserSession with connection details
         """
         session_id = str(uuid4())
         now = datetime.utcnow()
-        
+
         session = BrowserSession(
             id=session_id,
             phase=phase,
@@ -233,6 +250,10 @@ class BrowserOrchestrator:
             expires_at=now + self.session_ttl,
             test_session_id=test_session_id,
             test_run_id=test_run_id,
+            user_id=user_id,
+            organization_id=organization_id,
+            user_name=user_name,
+            organization_name=organization_name,
         )
         
         self._sessions[session_id] = session
@@ -302,6 +323,10 @@ class BrowserOrchestrator:
                     "browser_phase": session.phase.value,
                     "test_session_id": session.test_session_id or "",
                     "test_run_id": session.test_run_id or "",
+                    "user_id": session.user_id or "",
+                    "organization_id": session.organization_id or "",
+                    "user_name": session.user_name or "",
+                    "organization_name": session.organization_name or "",
                 },
                 network=self.network_name,
                 shm_size="2g",  # Shared memory for Chrome
@@ -546,7 +571,12 @@ class BrowserOrchestrator:
                     phase_str = container.labels.get("browser_phase", "analysis")
                     test_session_id = container.labels.get("test_session_id")
                     test_run_id = container.labels.get("test_run_id")
-                    
+                    # Extract user/org info from labels
+                    user_id = container.labels.get("user_id") or None
+                    organization_id = container.labels.get("organization_id") or None
+                    user_name = container.labels.get("user_name") or None
+                    organization_name = container.labels.get("organization_name") or None
+
                     # Get port mappings
                     container.reload()
                     network_settings = container.attrs.get("NetworkSettings", {})
@@ -583,6 +613,10 @@ class BrowserOrchestrator:
                         novnc_host=container_ip if self._running_in_docker and container_ip else "127.0.0.1",
                         test_session_id=test_session_id,
                         test_run_id=test_run_id,
+                        user_id=user_id,
+                        organization_id=organization_id,
+                        user_name=user_name,
+                        organization_name=organization_name,
                     )
                     
                     # Fetch the actual WebSocket URL from the browser

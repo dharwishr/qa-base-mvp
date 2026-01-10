@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Square, Settings2, Bot, Monitor, EyeOff, ArrowLeft, FileCode, List, LayoutList, ExternalLink } from 'lucide-react';
+import { Square, Settings2, Bot, Monitor, EyeOff, ArrowLeft, List, LayoutList } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
 import ChatInput from '@/components/chat/ChatInput';
@@ -8,9 +8,8 @@ import LiveBrowserView from '@/components/LiveBrowserView';
 import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
 import ReplayFailureDialog from '@/components/analysis/ReplayFailureDialog';
 import { useExistingSession } from '@/hooks/useExistingSession';
-import { getScreenshotUrl, scriptsApi } from '@/services/api';
+import { getScreenshotUrl } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
-import type { PlaywrightScript } from '@/types/scripts';
 
 const LLM_OPTIONS: { value: LlmModel; label: string }[] = [
   { value: 'browser-use-llm', label: 'Browser Use LLM' },
@@ -27,7 +26,6 @@ export default function ExistingSessionPage() {
   const navigate = useNavigate();
   const {
     messages,
-    sessionStatus,
     currentSession,
     browserSession,
     mode,
@@ -66,8 +64,7 @@ export default function ExistingSessionPage() {
   const [undoTargetStep, setUndoTargetStep] = useState<number | null>(null);
   const [isUndoing, setIsUndoing] = useState(false);
   const [simpleMode, setSimpleMode] = useState(false);
-  const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null);
-  const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+
   const [isInteractionEnabled, setIsInteractionEnabled] = useState(false);
 
   // Load session on mount
@@ -77,24 +74,7 @@ export default function ExistingSessionPage() {
     }
   }, [sessionId, loadSession]);
 
-  // Check for existing script linked to this session
-  useEffect(() => {
-    const checkForLinkedScript = async () => {
-      if (!sessionId) return;
-      try {
-        const scripts = await scriptsApi.listScripts();
-        const existingScript = scripts.find(s => s.session_id === sessionId);
-        setLinkedScript(existingScript || null);
-      } catch (e) {
-        console.error('Error checking for linked script:', e);
-      }
-    };
-    checkForLinkedScript();
-  }, [sessionId]);
 
-  // Determine if "Generate Script" button should show
-  const canGenerateScript = sessionStatus === 'completed' &&
-    messages.some(m => m.type === 'step');
 
   // Get session title
   const sessionTitle = currentSession?.title || 'Test Analysis';
@@ -228,17 +208,7 @@ export default function ExistingSessionPage() {
                 Stop
               </Button>
             )}
-            {linkedScript ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => navigate(`/scripts/${linkedScript.id}`)}
-                className="h-7 text-xs"
-              >
-                <ExternalLink className="h-3 w-3 mr-1" />
-                Open Script
-              </Button>
-            ) : canGenerateScript && (
+            {/* {!linkedScript && canGenerateScript && (
               <Button
                 size="sm"
                 variant="outline"
@@ -268,7 +238,7 @@ export default function ExistingSessionPage() {
                 <FileCode className="h-3 w-3 mr-1" />
                 {isGeneratingScript ? 'Generating...' : 'Generate Script'}
               </Button>
-            )}
+            )} */}
           </div>
         </div>
 

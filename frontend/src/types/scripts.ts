@@ -147,6 +147,7 @@ export interface RunStep {
   css_selector: string | null;
   input_value: string | null;
   is_password: boolean;
+  source_action_id: string | null;  // Links to the source StepAction for highlighting
   created_at: string;
 }
 

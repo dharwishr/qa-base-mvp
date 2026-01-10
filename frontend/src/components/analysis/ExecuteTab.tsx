@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Play,
   RefreshCw,
@@ -16,6 +16,7 @@ import {
   ChevronUp,
   Zap,
   ArrowLeft,
+  Terminal,
   // Action type icons
   MousePointer,
   Type,
@@ -24,9 +25,12 @@ import {
   Eye,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ScreenshotWithZoom } from '@/components/ui/screenshot-fullscreen-modal';
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { cn } from '@/lib/utils';
 import { runsApi, getScreenshotUrl } from '@/services/api';
 import type { TestRun, RunStep, StartRunRequest, BrowserType, Resolution } from '@/types/scripts';
+import ConsoleLogsModal from './ConsoleLogsModal';
 
 interface ExecuteTabProps {
   sessionId: string | null;
@@ -37,6 +41,7 @@ interface ExecuteTabProps {
   onRefreshRuns: () => Promise<void>;
   isStartingRun: boolean;
   className?: string;
+  onActionClick?: (sourceActionId: string | null) => void;
 }
 
 const BROWSERS: { value: BrowserType; label: string }[] = [
@@ -166,13 +171,20 @@ function ExpandableSelector({ xpath, css }: { xpath: string | null; css: string 
   );
 }
 
-// Run Detail View - shows steps, screenshots, etc.
-function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
+// Run Detail View - shows steps, screenshots, video, etc.
+function RunDetailView({ run, onBack, onActionClick }: { run: TestRun; onBack: () => void; onActionClick?: (sourceActionId: string | null) => void }) {
   const [steps, setSteps] = useState<RunStep[]>([]);
   const [isLoadingSteps, setIsLoadingSteps] = useState(false);
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null);
   // Local run state for real-time updates (merged with prop)
   const [localRun, setLocalRun] = useState<TestRun>(run);
+  const [isScreenshotFullscreen, setIsScreenshotFullscreen] = useState(false);
+  // Console logs modal state
+  const [isConsoleLogsOpen, setIsConsoleLogsOpen] = useState(false);
+  // Tab state for switching between steps and video
+  const [activeTab, setActiveTab] = useState<'steps' | 'video'>('steps');
+  // Track previous step count to detect additions
+  const prevStepCountRef = useRef(0);
 
   // Update local run when prop changes
   useEffect(() => {
@@ -219,6 +231,20 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
     }
   }, [run.id, localRun.status]);
 
+  // Auto-select the latest step when new steps come in during execution
+  useEffect(() => {
+    const currentCount = steps.length;
+    const prevCount = prevStepCountRef.current;
+
+    // Only auto-select when steps are ADDED (not on deletion) and run is in progress
+    if (currentCount > prevCount && currentCount > 0 &&
+      (localRun.status === 'running' || localRun.status === 'pending')) {
+      setSelectedStepIndex(currentCount - 1); // Select last step (0-indexed)
+    }
+
+    prevStepCountRef.current = currentCount;
+  }, [steps.length, localRun.status]);
+
   const selectedStep = selectedStepIndex !== null ? steps[selectedStepIndex] : null;
 
   return (
@@ -238,24 +264,54 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
               {localRun.browser_type} | {localRun.resolution_width}x{localRun.resolution_height}
             </div>
           </div>
+          {/* Watch Recording button */}
+          {localRun.recording_enabled && localRun.video_path && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setActiveTab('video')}
+              className="h-8"
+            >
+              <Video className="h-4 w-4 mr-1.5" />
+              Watch Recording
+            </Button>
+          )}
+          {/* Console Logs button */}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setIsConsoleLogsOpen(true)}
+            className="h-8"
+          >
+            <Terminal className="h-4 w-4 mr-1.5" />
+            Console Logs
+          </Button>
         </div>
 
         {/* Stats */}
         <div className="grid grid-cols-5 gap-2 mt-3">
           <div className="text-center p-2 bg-background rounded border">
-            <div className="text-lg font-semibold">{localRun.total_steps || steps.length}</div>
+            <div className="text-lg font-semibold">
+              {localRun.total_steps || steps.length} <span className="text-sm font-normal text-muted-foreground">Steps</span>
+            </div>
             <div className="text-xs text-muted-foreground">Total</div>
           </div>
           <div className="text-center p-2 bg-green-50 rounded border border-green-200">
-            <div className="text-lg font-semibold text-green-600">{localRun.passed_steps || 0}</div>
+            <div className="text-lg font-semibold text-green-600">
+              {localRun.passed_steps || 0} <span className="text-sm font-normal opacity-80">Steps</span>
+            </div>
             <div className="text-xs text-green-600">Passed</div>
           </div>
           <div className="text-center p-2 bg-red-50 rounded border border-red-200">
-            <div className="text-lg font-semibold text-red-600">{localRun.failed_steps || 0}</div>
+            <div className="text-lg font-semibold text-red-600">
+              {localRun.failed_steps || 0} <span className="text-sm font-normal opacity-80">Steps</span>
+            </div>
             <div className="text-xs text-red-600">Failed</div>
           </div>
           <div className="text-center p-2 bg-purple-50 rounded border border-purple-200">
-            <div className="text-lg font-semibold text-purple-600">{localRun.healed_steps || 0}</div>
+            <div className="text-lg font-semibold text-purple-600">
+              {localRun.healed_steps || 0} <span className="text-sm font-normal opacity-80">Steps</span>
+            </div>
             <div className="text-xs text-purple-600">Healed</div>
           </div>
           <div className="text-center p-2 bg-background rounded border">
@@ -265,92 +321,164 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
         </div>
       </div>
 
-      {/* Steps List and Screenshot */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Steps List */}
-        <div className="w-1/2 border-r overflow-y-auto">
-          {isLoadingSteps ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : steps.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              {localRun.status === 'running' ? 'Waiting for steps...' : 'No steps recorded'}
-            </div>
-          ) : (
-            <div className="p-2 space-y-1">
-              {steps.map((step, idx) => (
-                <button
-                  key={step.id}
-                  onClick={() => setSelectedStepIndex(idx)}
-                  className={cn(
-                    'w-full text-left px-3 py-2 rounded-lg transition-colors',
-                    selectedStepIndex === idx
-                      ? 'bg-primary/10 border border-primary/30'
-                      : 'hover:bg-muted/50'
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    {/* Status icon */}
-                    {step.status === 'passed' && <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />}
-                    {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />}
-                    {step.status === 'healed' && <Zap className="h-4 w-4 text-purple-500 flex-shrink-0" />}
-                    {step.status === 'running' && <Loader2 className="h-4 w-4 text-blue-500 animate-spin flex-shrink-0" />}
-                    {step.status === 'pending' && <Clock className="h-4 w-4 text-gray-400 flex-shrink-0" />}
+      {/* Tab Navigation - only show if video is available */}
+      {localRun.recording_enabled && localRun.video_path && (
+        <div className="flex border-b">
+          <button
+            onClick={() => setActiveTab('steps')}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
+              activeTab === 'steps'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <CheckCircle className="h-4 w-4" />
+            Steps
+            <span className="ml-1 px-1.5 py-0.5 text-xs bg-muted rounded">{steps.length}</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('video')}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
+              activeTab === 'video'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Video className="h-4 w-4" />
+            Video
+          </button>
+        </div>
+      )}
 
-                    {/* Action type icon */}
-                    <div className="flex-shrink-0">
-                      {getActionIcon(step.action)}
-                    </div>
+      {/* Tab Content */}
+      {activeTab === 'steps' ? (
+        /* Steps List and Screenshot */
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          {/* Steps List */}
+          <ResizablePanel defaultSize={50} minSize={25}>
+            <div className="h-full border-r overflow-y-auto">
+              {isLoadingSteps ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : steps.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                  {localRun.status === 'running' ? 'Waiting for steps...' : 'No steps recorded'}
+                </div>
+              ) : (
+                <div className="p-2 space-y-1">
+                  {steps.map((step, idx) => (
+                    <button
+                      key={step.id}
+                      onClick={() => {
+                        setSelectedStepIndex(idx);
+                        // Emit the source_action_id for highlighting in analysis view
+                        if (onActionClick) {
+                          onActionClick(step.source_action_id);
+                        }
+                      }}
+                      className={cn(
+                        'w-full text-left px-3 py-2 rounded-lg transition-colors',
+                        selectedStepIndex === idx
+                          ? 'bg-primary/10 border border-primary/30'
+                          : 'hover:bg-muted/50'
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        {/* Status icon */}
+                        {step.status === 'passed' && <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />}
+                        {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />}
+                        {step.status === 'healed' && <Zap className="h-4 w-4 text-purple-500 flex-shrink-0" />}
+                        {step.status === 'running' && <Loader2 className="h-4 w-4 text-blue-500 animate-spin flex-shrink-0" />}
+                        {step.status === 'pending' && <Clock className="h-4 w-4 text-gray-400 flex-shrink-0" />}
 
-                    {/* Step content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium">{idx + 1}.</span>
-                        <span className="text-sm truncate">{step.element_name || step.action}</span>
-                        {step.action === 'fill' && step.input_value && (
-                          <MaskedValue value={step.input_value} isPassword={step.is_password} />
+                        {/* Action type icon */}
+                        <div className="flex-shrink-0">
+                          {getActionIcon(step.action)}
+                        </div>
+
+                        {/* Step content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium">{idx + 1}.</span>
+                            <span className="text-sm truncate">{step.element_name || step.action}</span>
+                            {step.action === 'fill' && step.input_value && (
+                              <MaskedValue value={step.input_value} isPassword={step.is_password} />
+                            )}
+                          </div>
+                          <ExpandableSelector xpath={step.element_xpath} css={step.css_selector} />
+                        </div>
+
+                        {/* Duration */}
+                        {step.duration_ms && (
+                          <span className="text-xs text-muted-foreground flex-shrink-0">
+                            {formatDuration(step.duration_ms)}
+                          </span>
                         )}
                       </div>
-                      <ExpandableSelector xpath={step.element_xpath} css={step.css_selector} />
-                    </div>
-
-                    {/* Duration */}
-                    {step.duration_ms && (
-                      <span className="text-xs text-muted-foreground flex-shrink-0">
-                        {formatDuration(step.duration_ms)}
-                      </span>
-                    )}
-                  </div>
-                  {step.error_message && (
-                    <div className="mt-1 text-xs text-red-600 truncate">
-                      {step.error_message}
-                    </div>
-                  )}
-                </button>
-              ))}
+                      {step.error_message && (
+                        <div className="mt-1 text-xs text-red-600 truncate">
+                          {step.error_message}
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </ResizablePanel>
 
-        {/* Screenshot Preview */}
-        <div className="w-1/2 flex items-center justify-center p-4 bg-muted/20">
-          {selectedStep?.screenshot_path ? (
-            <img
-              src={getScreenshotUrl(selectedStep.screenshot_path)}
-              alt={`Step ${selectedStepIndex !== null ? selectedStepIndex + 1 : ''} screenshot`}
-              className="max-w-full max-h-full object-contain rounded shadow"
-            />
-          ) : (
-            <div className="text-center text-muted-foreground">
-              <Camera className="h-12 w-12 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">
-                {selectedStep ? 'No screenshot available' : 'Select a step to view screenshot'}
+          <ResizableHandle withHandle />
+
+          {/* Screenshot Preview */}
+          <ResizablePanel defaultSize={50} minSize={25}>
+            <div className="h-full flex items-center justify-center p-4 bg-muted/20">
+              {selectedStep?.screenshot_path ? (
+                <ScreenshotWithZoom
+                  imageUrl={getScreenshotUrl(selectedStep.screenshot_path)}
+                  alt={`Step ${selectedStepIndex !== null ? selectedStepIndex + 1 : ''} screenshot`}
+                  className="max-w-full max-h-full object-contain rounded shadow"
+                  isOpen={isScreenshotFullscreen}
+                  onOpenChange={setIsScreenshotFullscreen}
+                />
+              ) : (
+                <div className="text-center text-muted-foreground">
+                  <Camera className="h-12 w-12 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">
+                    {selectedStep ? 'No screenshot available' : 'Select a step to view screenshot'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        /* Video Player */
+        <div className="flex-1 flex items-center justify-center p-6 bg-muted/20">
+          {localRun.video_path ? (
+            <div className="w-full max-w-4xl">
+              <video
+                controls
+                className="w-full rounded-lg border shadow-lg"
+                src={getScreenshotUrl(`videos/${localRun.video_path.split('/').pop()}`)}
+                autoPlay={false}
+              >
+                Your browser does not support the video tag.
+              </video>
+              <p className="text-xs text-muted-foreground text-center mt-2">
+                Test run recording
               </p>
             </div>
+          ) : (
+            <div className="text-center text-muted-foreground">
+              <Video className="h-12 w-12 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">No video recording available</p>
+            </div>
           )}
         </div>
-      </div>
+      )}
 
       {/* Error message */}
       {localRun.error_message && (
@@ -358,6 +486,13 @@ function RunDetailView({ run, onBack }: { run: TestRun; onBack: () => void }) {
           <strong>Error:</strong> {localRun.error_message}
         </div>
       )}
+
+      {/* Console Logs Modal */}
+      <ConsoleLogsModal
+        isOpen={isConsoleLogsOpen}
+        onClose={() => setIsConsoleLogsOpen(false)}
+        runId={run.id}
+      />
     </div>
   );
 }
@@ -371,6 +506,7 @@ export default function ExecuteTab({
   onRefreshRuns,
   isStartingRun,
   className,
+  onActionClick,
 }: ExecuteTabProps) {
   // Run config state
   const [browserType, setBrowserType] = useState<BrowserType>('chromium');
@@ -407,7 +543,7 @@ export default function ExecuteTab({
   if (selectedRun) {
     return (
       <div className={className}>
-        <RunDetailView run={selectedRun} onBack={() => onSelectRun(null)} />
+        <RunDetailView run={selectedRun} onBack={() => onSelectRun(null)} onActionClick={onActionClick} />
       </div>
     );
   }
@@ -442,8 +578,8 @@ export default function ExecuteTab({
                     key={browser.value}
                     onClick={() => setBrowserType(browser.value)}
                     className={`p-2 rounded border text-xs font-medium transition-colors ${browserType === browser.value
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-border hover:border-primary/50'
+                      ? 'border-primary bg-primary/5 text-primary'
+                      : 'border-border hover:border-primary/50'
                       }`}
                   >
                     {browser.label}
@@ -461,8 +597,8 @@ export default function ExecuteTab({
                     key={res.value}
                     onClick={() => setResolution(res.value)}
                     className={`p-2 rounded border text-xs transition-colors ${resolution === res.value
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-border hover:border-primary/50'
+                      ? 'border-primary bg-primary/5 text-primary'
+                      : 'border-border hover:border-primary/50'
                       }`}
                   >
                     <div className="font-medium">{res.label}</div>

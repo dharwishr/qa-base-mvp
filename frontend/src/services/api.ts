@@ -200,6 +200,19 @@ export const analysisApi = {
   },
 
   /**
+   * Generate a plan for an existing session that was reset.
+   * This is used to regenerate a plan without creating a new session.
+   */
+  async generatePlanForSession(sessionId: string, prompt: string, llmModel: LlmModel = 'gemini-3.0-flash'): Promise<TestSession> {
+    const response = await fetch(`${API_BASE}/api/analysis/sessions/${sessionId}/generate-plan`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ prompt, llm_model: llmModel }),
+    });
+    return handleResponse<TestSession>(response);
+  },
+
+  /**
    * Delete a single step and renumber remaining steps.
    */
   async deleteStep(stepId: string): Promise<void> {
@@ -944,6 +957,11 @@ export interface BrowserSession {
   test_session_id: string | null;
   test_run_id: string | null;
   error_message: string | null;
+  // User/Organization tracking - who started this browser session
+  user_id: string | null;
+  organization_id: string | null;
+  user_name: string | null;
+  organization_name: string | null;
 }
 
 export const browserApi = {

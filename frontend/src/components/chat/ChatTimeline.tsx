@@ -13,6 +13,9 @@ interface ChatTimelineProps {
   onEditPlan?: (planId: string, planText: string, planSteps: PlanStep[]) => void;
   onStepSelect?: (stepId: string) => void;
   selectedStepId?: string | null;
+  onActionSelect?: (actionId: string) => void;
+  selectedActionId?: string | null;
+  highlightedActionId?: string | null;
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
   simpleMode?: boolean;
@@ -47,6 +50,9 @@ export default function ChatTimeline({
   onEditPlan,
   onStepSelect,
   selectedStepId,
+  onActionSelect,
+  selectedActionId,
+  highlightedActionId,
   onUndoToStep,
   totalSteps = 0,
   simpleMode = false,
@@ -92,8 +98,16 @@ export default function ChatTimeline({
   }, [messages]);
 
   // Auto-scroll when messages change (new message, content update, or loading state)
+  // Track previous messages length to detect deletions
+  const prevMessagesLengthRef = useRef(messages.length);
+
+  // Auto-scroll when messages change (new message, content update, or loading state)
   useEffect(() => {
-    scrollToBottom();
+    // Only scroll if messages were added or updated, not if deleted (length decreased)
+    if (messages.length >= prevMessagesLengthRef.current || isLoading) {
+      scrollToBottom();
+    }
+    prevMessagesLengthRef.current = messages.length;
   }, [messages.length, lastMessageSignature, isLoading, scrollToBottom]);
 
   // Auto-scroll to failed step when Run Till End pauses
@@ -195,6 +209,9 @@ export default function ChatTimeline({
               isSelected={
                 message.type === 'step' && message.step.id === selectedStepId
               }
+              onActionSelect={onActionSelect}
+              selectedActionId={selectedActionId}
+              highlightedActionId={highlightedActionId}
               onUndoToStep={onUndoToStep}
               totalSteps={totalSteps}
               simpleMode={simpleMode}

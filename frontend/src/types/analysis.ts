@@ -12,6 +12,7 @@ export interface StepAction {
   element_name: string | null;
   is_enabled: boolean;  // Whether action should be included in script execution
   auto_generate_text: boolean;  // Whether to auto-generate input text at runtime
+  screenshot_path: string | null;  // Screenshot captured after this action
 }
 
 export interface TestStep {
@@ -76,6 +77,11 @@ export interface TestSessionListItem {
   updated_at: string;
   step_count: number;
   user_name: string | null;
+  last_run_status: string | null;
+  total_runs: number;
+  passed_runs: number;
+  failed_runs: number;
+  healed_runs: number;
 }
 
 export interface PaginatedResponse<T> {

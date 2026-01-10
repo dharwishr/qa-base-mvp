@@ -620,6 +620,13 @@ export default function SettingsPage() {
                                                 </span>
                                             </div>
                                             <div className="text-xs text-muted-foreground mt-1">
+                                                {session.user_name && (
+                                                    <span className="font-medium text-foreground">Started by: {session.user_name}</span>
+                                                )}
+                                                {session.organization_name && (
+                                                    <span> ({session.organization_name})</span>
+                                                )}
+                                                {(session.user_name || session.organization_name) && <span> • </span>}
                                                 {session.test_session_id && (
                                                     <span>Test: {session.test_session_id.substring(0, 8)}... • </span>
                                                 )}

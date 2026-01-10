@@ -24,7 +24,7 @@ import InsertActionButton from '@/components/analysis/InsertActionButton';
 import StepFailureOptions from '@/components/analysis/StepFailureOptions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import type {
   TimelineMessage,
   UserMessage,
@@ -47,6 +47,9 @@ interface ChatMessageProps {
   onEditPlan?: (planId: string, planText: string, planSteps: PlanStep[]) => void;
   onStepSelect?: (stepId: string) => void;
   isSelected?: boolean;
+  onActionSelect?: (actionId: string) => void;
+  selectedActionId?: string | null;
+  highlightedActionId?: string | null;
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
   simpleMode?: boolean;
@@ -277,6 +280,9 @@ function StepMessageCard({
   message,
   onStepSelect,
   isSelected,
+  onActionSelect,
+  selectedActionId,
+  highlightedActionId,
   onUndoToStep,
   totalSteps = 0,
   simpleMode = false,
@@ -298,6 +304,9 @@ function StepMessageCard({
   message: StepMessage;
   onStepSelect?: (stepId: string) => void;
   isSelected?: boolean;
+  onActionSelect?: (actionId: string) => void;
+  selectedActionId?: string | null;
+  highlightedActionId?: string | null;
   onUndoToStep?: (stepNumber: number) => void;
   totalSteps?: number;
   simpleMode?: boolean;
@@ -393,7 +402,7 @@ function StepMessageCard({
             <SkipForward className="h-4 w-4" />
           </div>
         )}
-        <div className="space-y-0 w-full">
+        <div className="space-y-2 w-full">
           {/* Insert button before first action */}
           {canEdit && onInsertAction && (
             <InsertActionButton
@@ -409,31 +418,36 @@ function StepMessageCard({
             return (
               <div key={action.id || idx}>
                 <div
-                  className={`flex items-start gap-2 cursor-pointer rounded-lg transition-all ${
-                    !isActionEnabled ? 'opacity-50' : ''
-                  } ${
-                    isCurrentlyExecuting
+                  className={`flex items-center gap-2 cursor-pointer rounded-lg transition-all min-h-[40px] ${!isActionEnabled ? 'opacity-60' : ''
+                    } ${isCurrentlyExecuting
                       ? 'bg-blue-50'
-                      : isSelected
-                        ? 'ring-2 ring-primary bg-primary/5'
-                        : 'hover:bg-muted/30'
-                  }`}
-                  onClick={() => onStepSelect?.(step.id)}
+                      : highlightedActionId === action.id
+                        ? 'bg-amber-100 dark:bg-amber-900/30 ring-2 ring-amber-400'
+                        : selectedActionId === action.id
+                          ? 'ring-2 ring-primary bg-primary/5'
+                          : isSelected && !selectedActionId
+                            ? 'bg-primary/5'
+                            : 'hover:bg-muted/30'
+                    }`}
+                  onClick={() => {
+                    onStepSelect?.(step.id);
+                    onActionSelect?.(action.id);
+                  }}
                 >
-                  {/* Checkbox for enabling/disabling action in Execute tab */}
-                  <Checkbox
+                  {/* Toggle switch for enabling/disabling action in Execute tab */}
+                  <Switch
                     checked={isActionEnabled}
-                    onCheckedChange={(checked: boolean | 'indeterminate') => {
-                      onToggleActionEnabled?.(action.id, !!checked);
+                    onCheckedChange={(checked: boolean) => {
+                      onToggleActionEnabled?.(action.id, checked);
                     }}
                     onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                    className="mt-2.5 flex-shrink-0"
+                    className="flex-shrink-0"
                     title={isActionEnabled ? 'Click to disable this action in Execute' : 'Click to enable this action in Execute'}
                   />
-                  <span className="font-mono text-muted-foreground text-sm w-6 pt-2 flex-shrink-0 text-right">
+                  <span className={`font-mono text-muted-foreground text-sm w-6 flex-shrink-0 text-right ${!isActionEnabled ? 'line-through' : ''}`}>
                     {actionNumber}
                   </span>
-                  <div className="flex-1">
+                  <div className={`flex-1 ${!isActionEnabled ? 'line-through decoration-muted-foreground' : ''}`}>
                     <SimpleActionRow
                       action={action}
                       canEdit={canEdit}
@@ -602,23 +616,22 @@ function StepMessageCard({
                           return (
                             <div
                               key={action.id || idx}
-                              className={`text-xs p-2 rounded flex items-center gap-2 ${
-                                !isActionEnabled ? 'opacity-50' : ''
-                              } ${action.result_success
-                                ? 'bg-green-50'
-                                : action.result_error
-                                  ? 'bg-red-50'
-                                  : 'bg-muted/50'
+                              className={`text-xs p-2 rounded flex items-center gap-2 ${!isActionEnabled ? 'opacity-60' : ''
+                                } ${action.result_success
+                                  ? 'bg-green-50'
+                                  : action.result_error
+                                    ? 'bg-red-50'
+                                    : 'bg-muted/50'
                                 }`}
                             >
-                              {/* Checkbox for enabling/disabling action */}
-                              <Checkbox
+                              {/* Toggle switch for enabling/disabling action */}
+                              <Switch
                                 checked={isActionEnabled}
-                                onCheckedChange={(checked: boolean | 'indeterminate') => {
-                                  onToggleActionEnabled?.(action.id, !!checked);
+                                onCheckedChange={(checked: boolean) => {
+                                  onToggleActionEnabled?.(action.id, checked);
                                 }}
                                 onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                                className="h-3.5 w-3.5 flex-shrink-0"
+                                className="flex-shrink-0"
                               />
                               {action.result_success !== null &&
                                 (action.result_success ? (
@@ -626,9 +639,9 @@ function StepMessageCard({
                                 ) : (
                                   <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
                                 ))}
-                              <span className="font-mono">{action.action_name}</span>
+                              <span className={`font-mono ${!isActionEnabled ? 'line-through' : ''}`}>{action.action_name}</span>
                               {action.element_name && (
-                                <span className="text-muted-foreground">
+                                <span className={`text-muted-foreground ${!isActionEnabled ? 'line-through' : ''}`}>
                                   → {action.element_name}
                                 </span>
                               )}
@@ -752,6 +765,9 @@ export default function ChatMessage({
   onEditPlan,
   onStepSelect,
   isSelected,
+  onActionSelect,
+  selectedActionId,
+  highlightedActionId,
   onUndoToStep,
   totalSteps,
   simpleMode,
@@ -790,6 +806,9 @@ export default function ChatMessage({
           message={message}
           onStepSelect={onStepSelect}
           isSelected={isSelected}
+          onActionSelect={onActionSelect}
+          selectedActionId={selectedActionId}
+          highlightedActionId={highlightedActionId}
           onUndoToStep={onUndoToStep}
           totalSteps={totalSteps}
           simpleMode={simpleMode}

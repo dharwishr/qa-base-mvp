@@ -228,6 +228,15 @@ class ContinueSessionRequest(BaseModel):
 	)
 
 
+class GeneratePlanRequest(BaseModel):
+	"""Request to generate a plan for an existing reset session."""
+	prompt: str = Field(..., min_length=1, description="The QA task prompt")
+	llm_model: str = Field(
+		default="gemini-3.0-flash",
+		description="LLM model for browser automation"
+	)
+
+
 class UpdateStepActionTextRequest(BaseModel):
 	"""Request to update the text value for a type_text action."""
 	text: str = Field(..., description="The new text value for the action")
@@ -282,6 +291,7 @@ class StepActionResponse(BaseModel):
 	element_name: str | None = None
 	is_enabled: bool = True  # Whether action should be included in script execution
 	auto_generate_text: bool = False  # Whether to auto-generate input text at runtime
+	screenshot_path: str | None = None  # Screenshot captured after this action
 
 	class Config:
 		from_attributes = True
@@ -348,6 +358,11 @@ class TestSessionListResponse(BaseModel):
 	step_count: int = 0
 	user_name: str | None = None
 	user_email: str | None = None
+	last_run_status: str | None = None
+	total_runs: int = 0
+	passed_runs: int = 0
+	failed_runs: int = 0
+	healed_runs: int = 0
 
 	class Config:
 		from_attributes = True
@@ -513,6 +528,7 @@ class RunStepResponse(BaseModel):
 	css_selector: str | None = None
 	input_value: str | None = None
 	is_password: bool = False
+	source_action_id: str | None = None  # Links to the source StepAction in analysis
 	created_at: datetime
 
 	class Config:

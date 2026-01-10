@@ -120,7 +120,7 @@ export function SimpleActionRow({ action, onTextUpdate, onEdit, onToggleAutoGene
     return (
         <div className="border rounded-lg bg-background overflow-hidden">
             <div
-                className="flex items-center gap-3 px-3 py-2 hover:bg-muted/30 transition-colors"
+                className="flex items-center gap-3 px-3 h-[40px] hover:bg-muted/30 transition-colors"
             >
                 {/* Action Type Icon */}
                 <div className="flex-shrink-0">
@@ -183,11 +183,10 @@ export function SimpleActionRow({ action, onTextUpdate, onEdit, onToggleAutoGene
                             e.stopPropagation()
                             onToggleAutoGenerate(!action.auto_generate_text)
                         }}
-                        className={`flex-shrink-0 p-1 rounded transition-colors ${
-                            action.auto_generate_text
-                                ? 'bg-purple-100 hover:bg-purple-200'
-                                : 'hover:bg-purple-50'
-                        }`}
+                        className={`flex-shrink-0 p-1 rounded transition-colors ${action.auto_generate_text
+                            ? 'bg-purple-100 hover:bg-purple-200'
+                            : 'hover:bg-purple-50'
+                            }`}
                         title={action.auto_generate_text ? "Disable auto-generate" : "Enable auto-generate text"}
                     >
                         <Wand2 className={`h-4 w-4 ${action.auto_generate_text ? 'text-purple-600' : 'text-purple-400'}`} />
@@ -360,7 +359,7 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                     )}
                 </div>
             </div>
-            <div className="flex-1 overflow-auto p-4 space-y-3">
+            <div className={`flex-1 overflow-auto p-4 ${simpleMode ? 'space-y-2' : 'space-y-3'}`}>
                 {steps.map((step, index) => {
                     const isExpanded = expandedSteps.has(step.id)
                     const showDetails = hasDetails(step)
@@ -380,43 +379,36 @@ export default function StepList({ steps, selectedStepId, onStepSelect, onClear,
                         if (filteredActions.length === 0) {
                             return null // Skip steps without relevant actions in simple mode
                         }
-                        return (
-                            <div key={step.id} className="space-y-1.5">
-                                {filteredActions.map((action, actionIdx) => {
-                                    const handleTextUpdate = async (newText: string) => {
-                                        const updatedAction = await analysisApi.updateActionText(action.id, newText)
-                                        onActionUpdate?.(String(step.id), updatedAction)
-                                    }
-                                    const actionNumber = getActionNumber(index, actionIdx)
-                                    return (
-                                        <div key={action.id || actionIdx} className="flex items-start gap-2 group">
-                                            <span className="font-mono text-muted-foreground text-sm w-6 pt-2 flex-shrink-0 text-right">
-                                                {actionNumber}
-                                            </span>
-                                            <div className="flex-1">
-                                                <SimpleActionRow
-                                                    action={action}
-                                                    onTextUpdate={handleTextUpdate}
-                                                    canEdit={canEdit}
-                                                    onEdit={() => setEditingAction({ action, stepId: String(step.id) })}
-                                                    onToggleAutoGenerate={onToggleAutoGenerate ? (enabled) => onToggleAutoGenerate(action.id, enabled) : undefined}
-                                                />
-                                            </div>
-                                            {onDeleteStep && (
-                                                <button
-                                                    onClick={(e) => handleDeleteClick(e, step)}
-                                                    disabled={isExecuting}
-                                                    className="p-1.5 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0 mt-1 opacity-0 group-hover:opacity-100"
-                                                    title={isExecuting ? "Cannot delete while executing" : "Delete step"}
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                </button>
-                                            )}
+
+                        // Render each action as a flat item (no step grouping)
+                        return filteredActions.map((action, actionIdx) => {
+                            const handleTextUpdate = async (newText: string) => {
+                                const updatedAction = await analysisApi.updateActionText(action.id, newText)
+                                onActionUpdate?.(String(step.id), updatedAction)
+                            }
+                            const actionNumber = getActionNumber(index, actionIdx)
+                            return (
+                                <div
+                                    key={action.id || `${step.id}-${actionIdx}`}
+                                    className="flex items-center gap-2 group h-[44px]"
+                                >
+                                    <span className="font-mono text-muted-foreground text-sm w-6 flex-shrink-0 text-right">
+                                        {actionNumber}
+                                    </span>
+                                    <div className="flex-1 h-full flex items-center">
+                                        <div className="w-full">
+                                            <SimpleActionRow
+                                                action={action}
+                                                onTextUpdate={handleTextUpdate}
+                                                canEdit={canEdit}
+                                                onEdit={() => setEditingAction({ action, stepId: String(step.id) })}
+                                                onToggleAutoGenerate={onToggleAutoGenerate ? (enabled) => onToggleAutoGenerate(action.id, enabled) : undefined}
+                                            />
                                         </div>
-                                    )
-                                })}
-                            </div>
-                        )
+                                    </div>
+                                </div>
+                            )
+                        })
                     }
 
                     // Detailed Mode (default): Show full step cards with expandable details

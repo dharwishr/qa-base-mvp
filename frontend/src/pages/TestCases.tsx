@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
-import { Plus, RefreshCw, Trash2, Pencil, Check, X, Search, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Video } from "lucide-react"
+import { Plus, RefreshCw, Trash2, Pencil, Check, X, Search, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Video, CheckCircle2, XCircle, Wrench } from "lucide-react"
 import { analysisApi } from "@/services/api"
 import type { TestSessionListItem, LlmModel } from "@/types/analysis"
 import UrlInputModal from "@/components/UrlInputModal"
@@ -23,6 +23,22 @@ const STATUS_LABELS: Record<string, string> = {
     'completed': 'Completed',
     'failed': 'Failed',
     'recording_ready': 'Recording',
+}
+
+const RUN_STATUS_COLORS: Record<string, string> = {
+    'pending': 'bg-gray-100 text-gray-700',
+    'running': 'bg-yellow-100 text-yellow-700',
+    'passed': 'bg-green-100 text-green-700',
+    'failed': 'bg-red-100 text-red-700',
+    'healed': 'bg-blue-100 text-blue-700',
+}
+
+const RUN_STATUS_LABELS: Record<string, string> = {
+    'pending': 'Pending',
+    'running': 'Running',
+    'passed': 'Passed',
+    'failed': 'Failed',
+    'healed': 'Healed',
 }
 
 const LLM_LABELS: Record<LlmModel, string> = {
@@ -291,7 +307,8 @@ export default function TestCases() {
                             <thead>
                                 <tr className="border-b bg-muted/50">
                                     <th className="text-left py-3 px-4 font-medium text-sm">Title</th>
-                                    <th className="text-left py-3 px-4 font-medium text-sm">Status</th>
+                                    <th className="text-left py-3 px-4 font-medium text-sm">Analysis Status</th>
+                                    <th className="text-left py-3 px-4 font-medium text-sm">Run Status</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">LLM</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Steps</th>
                                     <th className="text-left py-3 px-4 font-medium text-sm">Created By</th>
@@ -361,6 +378,32 @@ export default function TestCases() {
                                             <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-100 text-gray-700'}`}>
                                                 {STATUS_LABELS[session.status] || session.status}
                                             </span>
+                                        </td>
+                                        <td className="py-3 px-4">
+                                            <div className="flex items-center gap-2">
+                                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${session.total_runs === 0
+                                                        ? 'bg-gray-100 text-gray-500'
+                                                        : (RUN_STATUS_COLORS[session.last_run_status || ''] || 'bg-gray-100 text-gray-700')
+                                                    }`}>
+                                                    {session.total_runs === 0
+                                                        ? 'No Run'
+                                                        : (RUN_STATUS_LABELS[session.last_run_status || ''] || session.last_run_status || '-')}
+                                                </span>
+                                                <div className="flex items-center gap-1.5 text-xs">
+                                                    <span className={`flex items-center gap-0.5 ${session.passed_runs > 0 ? 'text-green-600' : 'text-gray-400'}`} title="Passed runs">
+                                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                                        {session.passed_runs}
+                                                    </span>
+                                                    <span className={`flex items-center gap-0.5 ${session.failed_runs > 0 ? 'text-red-600' : 'text-gray-400'}`} title="Failed runs">
+                                                        <XCircle className="h-3.5 w-3.5" />
+                                                        {session.failed_runs}
+                                                    </span>
+                                                    <span className={`flex items-center gap-0.5 ${session.healed_runs > 0 ? 'text-blue-600' : 'text-gray-400'}`} title="Healed runs">
+                                                        <Wrench className="h-3.5 w-3.5" />
+                                                        {session.healed_runs}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </td>
                                         <td className="py-3 px-4 text-sm text-muted-foreground">
                                             {LLM_LABELS[session.llm_model] || session.llm_model}

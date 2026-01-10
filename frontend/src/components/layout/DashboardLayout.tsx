@@ -7,7 +7,6 @@ import {
     PlayCircle,
     FileText,
     Boxes,
-    Zap,
     Compass,
     FlaskConical,
     Building2,
@@ -86,12 +85,14 @@ export default function DashboardLayout() {
                         active={activePath.startsWith('/test-cases')}
                         onClick={() => navigate('/test-cases')}
                     />
+                    {/* Scripts section hidden - use Test Case Execute tab instead
                     <SidebarItem
                         icon={Zap}
                         label="Scripts"
                         active={activePath.startsWith('/scripts')}
                         onClick={() => navigate('/scripts')}
                     />
+                    */}
                     <SidebarItem
                         icon={ClipboardList}
                         label="Test Plans"
@@ -141,12 +142,12 @@ export default function DashboardLayout() {
                                 activePath.includes('/test-cases') ? 'Test Cases' :
                                     activePath.includes('/test-analysis') ? 'Test Analysis' :
                                         activePath.includes('/test-plan') ? 'Test Plans' :
-                                            activePath.includes('/scripts') ? 'Test Scripts' :
-                                                activePath.includes('/discovery') ? 'Module Discovery' :
-                                                    activePath.includes('/benchmark') ? 'LLM Benchmark' :
-                                                        activePath.includes('/organization') ? 'Organization' :
-                                                            activePath.includes('/settings') ? 'Settings' :
-                                                                'SmartTester'}
+                                            // activePath.includes('/scripts') ? 'Test Scripts' :
+                                            activePath.includes('/discovery') ? 'Module Discovery' :
+                                                activePath.includes('/benchmark') ? 'LLM Benchmark' :
+                                                    activePath.includes('/organization') ? 'Organization' :
+                                                        activePath.includes('/settings') ? 'Settings' :
+                                                            'SmartTester'}
                     </h1>
                 </header>
                 <main className="flex-1 overflow-auto">

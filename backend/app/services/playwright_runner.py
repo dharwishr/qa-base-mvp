@@ -293,6 +293,9 @@ class PlaywrightRunner(BaseRunner):
 				"width": self._resolution[0],
 				"height": self._resolution[1]
 			}
+			logger.info(f"Video recording enabled for run {run_id}, dir: {self._video_dir}")
+		else:
+			logger.info(f"Video recording disabled (recording_enabled={self._recording_enabled}, run_id={run_id})")
 
 		return options
 
@@ -552,20 +555,25 @@ class PlaywrightRunner(BaseRunner):
 				result.duration_ms = int(duration)
 
 			# Finalize video and get path (need to close context first)
+			logger.info(f"Video finalization: recording_enabled={self._recording_enabled}, has_page={self._page is not None}")
 			if self._recording_enabled and self._page:
 				try:
 					video = self._page.video
+					logger.info(f"Video object from page: {video}")
 					if video:
 						# Close context to finalize video file
 						if self._context:
+							logger.info("Closing context to finalize video file...")
 							await self._context.close()
 							self._context = None
 						# Get the video path
 						self._video_path = await video.path()
 						result.video_path = str(self._video_path)
-						logger.info(f"Video recorded to: {self._video_path}")
+						logger.info(f"Video recorded successfully to: {self._video_path}")
+					else:
+						logger.warning("No video object on page - video recording may not have started")
 				except Exception as e:
-					logger.warning(f"Could not finalize video: {e}")
+					logger.error(f"Could not finalize video: {e}", exc_info=True)
 
 		return result
 	

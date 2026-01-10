@@ -13,14 +13,19 @@ Endpoints:
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 import httpx
 import websockets
 
+from app.database import get_db
+from app.deps import AuthenticatedUser, get_current_user
+from app.models import BrowserSessionLog, Organization
 from app.services.browser_orchestrator import (
     BrowserOrchestrator,
     BrowserSession,
@@ -58,6 +63,11 @@ class BrowserSessionResponse(BaseModel):
     test_session_id: str | None = None
     test_run_id: str | None = None
     error_message: str | None = None
+    # User/Organization tracking
+    user_id: str | None = None
+    organization_id: str | None = None
+    user_name: str | None = None
+    organization_name: str | None = None
 
     @classmethod
     def from_session(cls, session: BrowserSession, request: Request | None = None) -> "BrowserSessionResponse":
@@ -90,6 +100,10 @@ class BrowserSessionResponse(BaseModel):
             test_session_id=session.test_session_id,
             test_run_id=session.test_run_id,
             error_message=session.error_message,
+            user_id=session.user_id,
+            organization_id=session.organization_id,
+            user_name=session.user_name,
+            organization_name=session.organization_name,
         )
 
 
@@ -101,6 +115,8 @@ class BrowserSessionResponse(BaseModel):
 async def create_browser_session(
     request_body: CreateBrowserSessionRequest,
     request: Request,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Create a new isolated browser session."""
     try:
@@ -110,15 +126,39 @@ async def create_browser_session(
             status_code=400,
             detail=f"Invalid phase: {request_body.phase}. Must be 'analysis' or 'execution'"
         )
-    
+
+    # Get organization name for display
+    organization = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    organization_name = organization.name if organization else None
+
     orchestrator = get_orchestrator()
-    
+
     try:
         session = await orchestrator.create_session(
             phase=phase,
             test_session_id=request_body.test_session_id,
             test_run_id=request_body.test_run_id,
+            user_id=current_user.id,
+            organization_id=current_user.organization_id,
+            user_name=current_user.name,
+            organization_name=organization_name,
         )
+
+        # Log browser session to database
+        browser_session_log = BrowserSessionLog(
+            session_id=session.id,
+            organization_id=current_user.organization_id,
+            user_id=current_user.id,
+            phase=phase.value,
+            status="ready" if session.status == BrowserSessionStatus.READY else "started",
+            container_id=session.container_id,
+            container_name=session.container_name,
+            test_session_id=request_body.test_session_id,
+            test_run_id=request_body.test_run_id,
+        )
+        db.add(browser_session_log)
+        db.commit()
+
         return BrowserSessionResponse.from_session(session, request)
     except Exception as e:
         logger.error(f"Failed to create browser session: {e}")

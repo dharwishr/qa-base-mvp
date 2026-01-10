@@ -302,11 +302,29 @@ class BrowserService:
 					result_success = None
 					result_error = None
 					extracted_content = None
+					action_screenshot_filename = None
 
 					if result:
 						result_success = result.error is None
 						result_error = result.error
 						extracted_content = result.extracted_content
+
+						# Handle action-level screenshot
+						if hasattr(result, 'action_screenshot_path') and result.action_screenshot_path:
+							from app.config import settings
+							temp_screenshot_path = Path(result.action_screenshot_path)
+							if temp_screenshot_path.exists():
+								action_screenshot_filename = f"{self._session_id}_{self.current_step_number}_action_{idx}.png"
+								dest_dir = Path(settings.SCREENSHOTS_DIR)
+								dest_dir.mkdir(parents=True, exist_ok=True)
+								dest_path = dest_dir / action_screenshot_filename
+								shutil.copy2(temp_screenshot_path, dest_path)
+								# Clean up temp file
+								try:
+									temp_screenshot_path.unlink()
+								except Exception:
+									pass
+								logger.debug(f"Action screenshot saved to {dest_path}")
 
 					# Enhance select_dropdown action_params with the actual option value
 					# Browser-use saves index (internal DOM ref) and text, but not the value attribute
@@ -336,6 +354,7 @@ class BrowserService:
 						extracted_content=extracted_content,
 						element_xpath=element_xpath,
 						element_name=element_name,
+						screenshot_path=action_screenshot_filename,
 					)
 					self.db.add(step_action)
 					self.db.flush()  # Get the action ID
@@ -351,6 +370,7 @@ class BrowserService:
 							extracted_content=extracted_content,
 							element_xpath=element_xpath,
 							element_name=element_name,
+							screenshot_path=action_screenshot_filename,
 						)
 					)
 
@@ -812,11 +832,29 @@ class BrowserServiceSync:
 					result_success = None
 					result_error = None
 					extracted_content = None
+					action_screenshot_filename = None
 
 					if result:
 						result_success = result.error is None
 						result_error = result.error
 						extracted_content = result.extracted_content
+
+						# Handle action-level screenshot
+						if hasattr(result, 'action_screenshot_path') and result.action_screenshot_path:
+							from app.config import settings
+							temp_screenshot_path = Path(result.action_screenshot_path)
+							if temp_screenshot_path.exists():
+								action_screenshot_filename = f"{self._session_id}_{self.current_step_number}_action_{idx}.png"
+								dest_dir = Path(settings.SCREENSHOTS_DIR)
+								dest_dir.mkdir(parents=True, exist_ok=True)
+								dest_path = dest_dir / action_screenshot_filename
+								shutil.copy2(temp_screenshot_path, dest_path)
+								# Clean up temp file
+								try:
+									temp_screenshot_path.unlink()
+								except Exception:
+									pass
+								logger.debug(f"Action screenshot saved to {dest_path}")
 
 					# Enhance select_dropdown action_params with the actual option value
 					# Browser-use saves index (internal DOM ref) and text, but not the value attribute
@@ -846,6 +884,7 @@ class BrowserServiceSync:
 						extracted_content=extracted_content,
 						element_xpath=element_xpath,
 						element_name=element_name,
+						screenshot_path=action_screenshot_filename,
 					)
 					self.db.add(step_action)
 
@@ -880,6 +919,7 @@ class BrowserServiceSync:
 								"extracted_content": a.extracted_content,
 								"element_xpath": a.element_xpath,
 								"element_name": a.element_name,
+								"screenshot_path": a.screenshot_path,
 							}
 							for a in actions
 						],

@@ -24,6 +24,7 @@ from app.schemas import (
 	CreateSessionRequest,
 	ExecuteResponse,
 	ExecutionLogResponse,
+	GeneratePlanRequest,
 	InsertActionRequest,
 	InsertStepRequest,
 	RecordingStatusResponse,
@@ -168,14 +169,30 @@ async def update_session_title_async(session_id: str, prompt: str, llm_model: st
 		logger.error(f"[TITLE_UPDATE] Failed to update session title: {e}", exc_info=True)
 
 
-async def prewarm_browser_session_async(session_id: str, headless: bool, start_url: str | None = None) -> None:
+async def prewarm_browser_session_async(
+	session_id: str,
+	headless: bool,
+	start_url: str | None = None,
+	user_id: str | None = None,
+	organization_id: str | None = None,
+	user_name: str | None = None,
+	organization_name: str | None = None,
+) -> None:
 	"""Background task to pre-warm browser session after plan generation.
 
 	Args:
 		session_id: The test session ID
 		headless: Whether to run in headless mode
 		start_url: Optional URL to navigate to after browser is ready
+		user_id: ID of the user who started this session
+		organization_id: ID of the organization
+		user_name: Name of the user (cached for display)
+		organization_name: Name of the organization (cached for display)
 	"""
+	from app.database import SessionLocal
+	from app.models import BrowserSessionLog
+	from app.services.browser_orchestrator import BrowserSessionStatus
+
 	if headless:
 		return  # Headless uses local browser, no pre-warming needed
 
@@ -190,12 +207,37 @@ async def prewarm_browser_session_async(session_id: str, headless: bool, start_u
 			logger.info(f"[PREWARM] Browser session already exists for {session_id}")
 			browser_session = existing
 		else:
-			# Create pre-warmed session
+			# Create pre-warmed session with user/org info
 			browser_session = await orchestrator.create_session(
 				phase=BrowserPhase.ANALYSIS,
 				test_session_id=session_id,
+				user_id=user_id,
+				organization_id=organization_id,
+				user_name=user_name,
+				organization_name=organization_name,
 			)
 			logger.info(f"[PREWARM] Browser session pre-warmed for {session_id}: browser_id={browser_session.id}")
+
+			# Log browser session to database
+			db = SessionLocal()
+			try:
+				browser_session_log = BrowserSessionLog(
+					session_id=browser_session.id,
+					organization_id=organization_id,
+					user_id=user_id,
+					phase=BrowserPhase.ANALYSIS.value,
+					status="ready" if browser_session.status == BrowserSessionStatus.READY else "started",
+					container_id=browser_session.container_id,
+					container_name=browser_session.container_name,
+					test_session_id=session_id,
+				)
+				db.add(browser_session_log)
+				db.commit()
+				logger.info(f"[PREWARM] Browser session logged to database: {browser_session.id}")
+			except Exception as db_error:
+				logger.warning(f"[PREWARM] Failed to log browser session to database: {db_error}")
+			finally:
+				db.close()
 
 		# Navigate to start URL if provided
 		if start_url and browser_session.cdp_url:
@@ -236,23 +278,70 @@ async def list_sessions(
 		page: Page number (1-indexed, default 1)
 		page_size: Items per page (default 20, max 100)
 	"""
-	from sqlalchemy import func, or_
-	from app.models import User
+	from sqlalchemy import func, or_, select, case
+	from app.models import User, TestRun
 	import math
 
 	# Validate pagination params
 	page = max(1, page)
 	page_size = min(max(1, page_size), 100)
 
-	# Base query with join for step count and user info
+	# Subquery to get the latest test run status for each session
+	latest_run_subquery = (
+		select(
+			TestRun.session_id,
+			TestRun.status.label('last_run_status'),
+			func.row_number().over(
+				partition_by=TestRun.session_id,
+				order_by=TestRun.created_at.desc()
+			).label('rn')
+		)
+		.where(TestRun.session_id.isnot(None))
+		.subquery()
+	)
+
+	# Filter to only get the most recent run (row number = 1)
+	latest_run = (
+		select(
+			latest_run_subquery.c.session_id,
+			latest_run_subquery.c.last_run_status
+		)
+		.where(latest_run_subquery.c.rn == 1)
+		.subquery()
+	)
+
+	# Subquery to get run statistics for each session
+	run_stats = (
+		select(
+			TestRun.session_id,
+			func.count(TestRun.id).label('total_runs'),
+			func.sum(case((TestRun.status == 'passed', 1), else_=0)).label('passed_runs'),
+			func.sum(case((TestRun.status == 'failed', 1), else_=0)).label('failed_runs'),
+			func.sum(case((TestRun.status == 'healed', 1), else_=0)).label('healed_runs')
+		)
+		.where(TestRun.session_id.isnot(None))
+		.group_by(TestRun.session_id)
+		.subquery()
+	)
+
+	# Base query with join for step count, user info, last run status, and run statistics
 	base_query = db.query(
 		TestSession,
 		func.count(TestStep.id).label('step_count'),
 		User.name.label('user_name'),
-		User.email.label('user_email')
+		User.email.label('user_email'),
+		latest_run.c.last_run_status.label('last_run_status'),
+		func.coalesce(run_stats.c.total_runs, 0).label('total_runs'),
+		func.coalesce(run_stats.c.passed_runs, 0).label('passed_runs'),
+		func.coalesce(run_stats.c.failed_runs, 0).label('failed_runs'),
+		func.coalesce(run_stats.c.healed_runs, 0).label('healed_runs')
 	).filter(
 		TestSession.organization_id == current_user.organization_id
-	).outerjoin(TestStep).outerjoin(User, TestSession.user_id == User.id)
+	).outerjoin(TestStep).outerjoin(User, TestSession.user_id == User.id).outerjoin(
+		latest_run, TestSession.id == latest_run.c.session_id
+	).outerjoin(
+		run_stats, TestSession.id == run_stats.c.session_id
+	)
 
 	# Apply search filter if provided
 	if search:
@@ -286,7 +375,8 @@ async def list_sessions(
 
 	# Apply grouping, ordering, and pagination
 	sessions = base_query.group_by(
-		TestSession.id, User.name, User.email
+		TestSession.id, User.name, User.email, latest_run.c.last_run_status,
+		run_stats.c.total_runs, run_stats.c.passed_runs, run_stats.c.failed_runs, run_stats.c.healed_runs
 	).order_by(
 		TestSession.created_at.desc()
 	).offset((page - 1) * page_size).limit(page_size).all()
@@ -296,7 +386,7 @@ async def list_sessions(
 
 	# Convert to response format
 	items = []
-	for session, step_count, user_name, user_email in sessions:
+	for session, step_count, user_name, user_email, last_run_status, total_runs, passed_runs, failed_runs, healed_runs in sessions:
 		items.append(TestSessionListResponse(
 			id=session.id,
 			prompt=session.prompt,
@@ -307,7 +397,12 @@ async def list_sessions(
 			updated_at=session.updated_at,
 			step_count=step_count,
 			user_name=user_name,
-			user_email=user_email
+			user_email=user_email,
+			last_run_status=last_run_status,
+			total_runs=total_runs,
+			passed_runs=passed_runs,
+			failed_runs=failed_runs,
+			healed_runs=healed_runs
 		))
 
 	return PaginatedTestSessionsResponse(
@@ -367,10 +462,19 @@ async def create_session(
 
 	# Pre-warm browser session in background if not headless (saves 2-5s on approval)
 	if not request.headless:
+		# Get organization name for display in browser session
+		from app.models import Organization
+		organization = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+		organization_name = organization.name if organization else None
+
 		logger.info(f"[PREWARM] Spawning browser pre-warm task for session: {session.id}")
 		asyncio.create_task(prewarm_browser_session_async(
 			session_id=session.id,
-			headless=request.headless
+			headless=request.headless,
+			user_id=current_user.id,
+			organization_id=current_user.organization_id,
+			user_name=current_user.name,
+			organization_name=organization_name,
 		))
 
 	return session
@@ -448,11 +552,20 @@ async def create_recording_session(
 
 	logger.info(f"Created recording session {session.id} for URL: {start_url}")
 
+	# Get organization name for display in browser session
+	from app.models import Organization
+	organization = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+	organization_name = organization.name if organization else None
+
 	# Pre-warm browser session and navigate to start URL (non-blocking)
 	asyncio.create_task(prewarm_browser_session_async(
 		session_id=session.id,
 		headless=False,
 		start_url=start_url,
+		user_id=current_user.id,
+		organization_id=current_user.organization_id,
+		user_name=current_user.name,
+		organization_name=organization_name,
 	))
 
 	return session
@@ -1078,13 +1191,12 @@ async def reset_session(
 	1. Delete all steps and their actions
 	2. Delete all chat messages
 	3. Delete the plan
-	4. Delete execution logs
-	5. Reset the session status to 'idle'
+	4. Reset the session status to 'idle'
 
-	The session ID, title, and original prompt are preserved so the user
-	can edit and re-run the test case.
+	The session ID, title, original prompt, and execution logs are preserved
+	so the user can edit and re-run the test case while retaining run history.
 	"""
-	from app.models import ChatMessage, ExecutionLog, StepAction
+	from app.models import ChatMessage, StepAction
 
 	session = db.query(TestSession).filter(TestSession.id == session_id).first()
 	if not session:
@@ -1100,14 +1212,11 @@ async def reset_session(
 	# 3. Delete all chat messages
 	db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete(synchronize_session=False)
 
-	# 4. Delete execution logs
-	db.query(ExecutionLog).filter(ExecutionLog.session_id == session_id).delete(synchronize_session=False)
-
-	# 5. Delete the plan if exists
+	# 4. Delete the plan if exists
 	if session.plan:
 		db.query(AnalysisPlan).filter(AnalysisPlan.session_id == session_id).delete(synchronize_session=False)
 
-	# 6. Reset session state (keep title and prompt for user to edit)
+	# 5. Reset session state (keep title and prompt for user to edit)
 	session.status = "idle"
 	session.celery_task_id = None
 
@@ -1115,6 +1224,69 @@ async def reset_session(
 	db.refresh(session)
 
 	logger.info(f"Reset session {session_id} to initial state (kept title and prompt)")
+	return session
+
+
+@router.post("/sessions/{session_id}/generate-plan", response_model=TestSessionResponse)
+async def generate_plan_for_session(
+	session_id: str,
+	request: GeneratePlanRequest,
+	db: Session = Depends(get_db),
+	current_user: AuthenticatedUser = Depends(get_current_user),
+):
+	"""Generate a plan for an existing session that was reset.
+
+	This endpoint is used after a session has been reset to generate a new plan
+	without creating a new session. The session must be in 'idle' status.
+	"""
+	from app.tasks.plan_generation import generate_test_plan
+
+	session = db.query(TestSession).filter(TestSession.id == session_id).first()
+	if not session:
+		raise HTTPException(status_code=404, detail="Session not found")
+
+	if session.status != "idle":
+		raise HTTPException(
+			status_code=400,
+			detail=f"Cannot generate plan for session in status: {session.status}. Session must be in 'idle' status."
+		)
+
+	# Update session with new prompt and LLM model
+	session.prompt = request.prompt
+	session.llm_model = request.llm_model
+	session.status = "generating_plan"
+	db.commit()
+
+	# Queue plan generation via Celery
+	logger.info(f"[CELERY] Queueing plan generation task for existing session: {session_id}")
+	task = generate_test_plan.delay(
+		session_id=session.id,
+		llm_model=request.llm_model,
+		generate_title=False,  # Keep existing title
+	)
+
+	# Store task ID for tracking
+	session.plan_task_id = task.id
+	db.commit()
+	db.refresh(session)
+
+	logger.info(f"[CELERY] Plan generation task queued: task_id={task.id}, session_id={session.id}")
+
+	# Pre-warm browser session in background if not headless
+	if not session.headless:
+		from app.models import Organization
+		organization = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+		organization_name = organization.name if organization else None
+
+		logger.info(f"[PREWARM] Spawning browser pre-warm task for session: {session.id}")
+		asyncio.create_task(prewarm_browser_session_async(
+			session_id=session.id,
+			headless=session.headless,
+			user_id=current_user.id,
+			organization_id=current_user.organization_id,
+			organization_name=organization_name
+		))
+
 	return session
 
 

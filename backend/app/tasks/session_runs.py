@@ -58,6 +58,7 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
             "url": params.get("url", url),
             "wait_for": "domcontentloaded",
             "description": f"Navigate to {params.get('url', url)}",
+            "source_action_id": action.id,
         }
 
     elif "click" in action_name:
@@ -68,6 +69,7 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
             "selectors": selectors,
             "element_context": _build_element_context(action),
             "description": action.element_name or "Click element",
+            "source_action_id": action.id,
         }
 
     elif "input" in action_name or "type" in action_name or "fill" in action_name:
@@ -85,6 +87,7 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
             "value": text_value,
             "element_context": _build_element_context(action),
             "description": f"Fill with '{text_value[:20] if text_value else ''}'",
+            "source_action_id": action.id,
         }
 
     elif "scroll" in action_name:
@@ -94,6 +97,7 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
             "direction": "down" if params.get("down", True) else "up",
             "amount": int(params.get("pages", 1) * 500),
             "description": "Scroll page",
+            "source_action_id": action.id,
         }
 
     elif "wait" in action_name:
@@ -102,6 +106,7 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
             "action": "wait",
             "timeout": params.get("seconds", 1) * 1000,
             "description": f"Wait {params.get('seconds', 1)} seconds",
+            "source_action_id": action.id,
         }
 
     elif "select" in action_name:
@@ -112,6 +117,7 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
             "selectors": selectors,
             "value": params.get("value", ""),
             "description": f"Select '{params.get('value', '')}'",
+            "source_action_id": action.id,
         }
 
     elif "press" in action_name or "key" in action_name:
@@ -120,6 +126,7 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
             "action": "press",
             "key": params.get("key", "Enter"),
             "description": f"Press {params.get('key', 'Enter')}",
+            "source_action_id": action.id,
         }
 
     elif "hover" in action_name:
@@ -130,6 +137,7 @@ def _convert_action_to_playwright_step(action: StepAction, index: int, url: str 
             "selectors": selectors,
             "element_context": _build_element_context(action),
             "description": action.element_name or "Hover element",
+            "source_action_id": action.id,
         }
 
     # Handle assertion/verification actions
@@ -235,6 +243,7 @@ def _convert_assert_action(action: StepAction, index: int) -> dict[str, Any] | N
                 "pattern_type": pattern_type,
             },
             "description": f"Assert text visible: '{expected_text[:40]}...'" if len(expected_text) > 40 else f"Assert text visible: '{expected_text}'",
+            "source_action_id": action.id,
         }
 
     # Assert element visible
@@ -248,6 +257,7 @@ def _convert_assert_action(action: StepAction, index: int) -> dict[str, Any] | N
             },
             "element_context": element_context,
             "description": action.element_name or "Assert element is visible",
+            "source_action_id": action.id,
         }
 
     # Assert URL
@@ -265,6 +275,7 @@ def _convert_assert_action(action: StepAction, index: int) -> dict[str, Any] | N
                 "pattern_type": pattern_type,
             },
             "description": f"Assert URL {'contains' if not exact_match else 'equals'}: {expected_url}",
+            "source_action_id": action.id,
         }
 
     # Generic assertion (fallback)
@@ -284,6 +295,7 @@ def _convert_assert_action(action: StepAction, index: int) -> dict[str, Any] | N
             "pattern_type": pattern_type,
         },
         "description": action.element_name or "Verify assertion",
+        "source_action_id": action.id,
     }
 
 
@@ -478,8 +490,7 @@ async def _execute_session_run_async(run_id: str, task=None) -> dict:
             current_step_index[0] = step_index
             logger.debug(f"Run {run_id}: Starting step {step_index}")
 
-        def on_step_complete(step_index: int, result: StepResult):
-            # Get original step data for additional context
+            # Get step data for context
             step_data = steps_json[step_index] if step_index < len(steps_json) else {}
             element_context = step_data.get('element_context', {}) or {}
             selectors = step_data.get('selectors', {}) or {}
@@ -495,24 +506,71 @@ async def _execute_session_run_async(run_id: str, task=None) -> dict:
             element_name = element_context.get('text_content') or step_data.get('description')
             is_password = _is_password_field(element_name, element_context.get('placeholder'))
 
+            # Create RunStep with 'running' status immediately
             run_step = RunStep(
                 run_id=run_id,
                 step_index=step_index,
-                action=result.action,
-                status=result.status,
-                selector_used=result.selector_used,
-                screenshot_path=result.screenshot_path,
-                duration_ms=result.duration_ms,
-                error_message=result.error_message,
-                heal_attempts=[ha.__dict__ for ha in result.heal_attempts] if result.heal_attempts else None,
-                # Additional context for Execute tab display
+                action=step_data.get('action', 'unknown'),
+                status='running',
                 element_name=element_name,
                 element_xpath=element_xpath if element_xpath else None,
                 css_selector=css_selector,
-                input_value=step_data.get('value') if result.action == 'fill' else None,
+                input_value=step_data.get('value') if step_data.get('action') == 'fill' else None,
                 is_password=is_password,
+                source_action_id=step_data.get('source_action_id'),
             )
             db.add(run_step)
+            db.commit()
+            live_publisher.publish_step_update(step_index, 'running', step_data.get('action', 'unknown'), None)
+
+        def on_step_complete(step_index: int, result: StepResult):
+            # Get original step data for additional context
+            step_data = steps_json[step_index] if step_index < len(steps_json) else {}
+
+            # Find the existing RunStep created in on_step_start
+            existing_run_step = db.query(RunStep).filter(
+                RunStep.run_id == run_id,
+                RunStep.step_index == step_index
+            ).first()
+
+            if existing_run_step:
+                # Update existing record
+                existing_run_step.action = result.action
+                existing_run_step.status = result.status
+                existing_run_step.selector_used = result.selector_used
+                existing_run_step.screenshot_path = result.screenshot_path
+                existing_run_step.duration_ms = result.duration_ms
+                existing_run_step.error_message = result.error_message
+                existing_run_step.heal_attempts = [ha.__dict__ for ha in result.heal_attempts] if result.heal_attempts else None
+            else:
+                # Fallback: create new (shouldn't happen normally)
+                element_context = step_data.get('element_context', {}) or {}
+                selectors = step_data.get('selectors', {}) or {}
+                primary_selector = selectors.get('primary', '')
+                element_xpath = primary_selector[6:] if primary_selector.startswith('xpath=') else primary_selector
+                css_selector = next((s for s in selectors.get('fallbacks', []) if s and not s.startswith('xpath=')), None)
+                element_name = element_context.get('text_content') or step_data.get('description')
+                is_password = _is_password_field(element_name, element_context.get('placeholder'))
+
+                run_step = RunStep(
+                    run_id=run_id,
+                    step_index=step_index,
+                    action=result.action,
+                    status=result.status,
+                    selector_used=result.selector_used,
+                    screenshot_path=result.screenshot_path,
+                    duration_ms=result.duration_ms,
+                    error_message=result.error_message,
+                    heal_attempts=[ha.__dict__ for ha in result.heal_attempts] if result.heal_attempts else None,
+                    element_name=element_name,
+                    element_xpath=element_xpath if element_xpath else None,
+                    css_selector=css_selector,
+                    input_value=step_data.get('value') if result.action == 'fill' else None,
+                    is_password=is_password,
+                    source_action_id=step_data.get('source_action_id'),
+                )
+                db.add(run_step)
+
             db.commit()
             live_publisher.publish_step_update(step_index, result.status, result.action, result.error_message)
             logger.debug(f"Run {run_id}: Step {step_index} completed with status {result.status}")
@@ -610,6 +668,21 @@ async def _execute_session_run_async(run_id: str, task=None) -> dict:
 
     except Exception as e:
         logger.error(f"Session run {run_id} failed: {e}")
+
+        # Mark any 'running' steps as 'failed'
+        try:
+            running_steps = db.query(RunStep).filter(
+                RunStep.run_id == run_id,
+                RunStep.status == 'running'
+            ).all()
+            for step in running_steps:
+                step.status = 'failed'
+                step.error_message = str(e)
+            if running_steps:
+                db.commit()
+                logger.info(f"Marked {len(running_steps)} running steps as failed for run {run_id}")
+        except Exception as step_err:
+            logger.error(f"Failed to update running steps: {step_err}")
 
         # Update run status to failed
         try:

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, FileCode, List, LayoutList, ExternalLink, Play, RefreshCw, Circle, CheckCircle, XCircle, PauseCircle, StopCircle, Clock, Loader2, Video } from 'lucide-react';
+import { RotateCcw, Square, Settings2, Bot, Monitor, EyeOff, AlertCircle, X, List, LayoutList, Play, RefreshCw, Circle, CheckCircle, XCircle, PauseCircle, StopCircle, Clock, Loader2, Video } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import { Button } from '@/components/ui/button';
 import ChatTimeline from '@/components/chat/ChatTimeline';
@@ -10,10 +10,9 @@ import UndoConfirmDialog from '@/components/analysis/UndoConfirmDialog';
 import DeleteStepDialog from '@/components/analysis/DeleteStepDialog';
 import PlanEditModal from '@/components/plan/PlanEditModal';
 import { useChatSession, type ReplayFailure } from '@/hooks/useChatSession';
-import { getScreenshotUrl, scriptsApi, analysisApi, settingsApi } from '@/services/api';
+import { getScreenshotUrl, analysisApi, settingsApi } from '@/services/api';
 import type { LlmModel } from '@/types/analysis';
 import type { QueueFailure } from '@/types/chat';
-import type { PlaywrightScript } from '@/types/scripts';
 
 const LLM_OPTIONS: { value: LlmModel; label: string }[] = [
   { value: 'browser-use-llm', label: 'Browser Use LLM' },
@@ -226,7 +225,6 @@ export default function TestAnalysisChatPage() {
     endBrowserSession,
     clearQueueAndProceed,
     processRemainingQueue,
-    generateScript,
     undoToStep,
     confirmUndo,
     cancelUndo,
@@ -364,9 +362,7 @@ export default function TestAnalysisChatPage() {
     wasStoppingRef.current = isStopping;
   }, [isStopping, sessionStatus]);
 
-  // Determine if "Generate Script" button should show
-  const canGenerateScript = (sessionStatus === 'completed' || sessionStatus === 'stopped') &&
-    messages.some(m => m.type === 'step');
+
 
   // Get session title
   const sessionTitle = currentSession?.title || 'Test Analysis';
@@ -376,11 +372,13 @@ export default function TestAnalysisChatPage() {
   const [isResizing, setIsResizing] = useState(false);
   const [isInteractionEnabled, setIsInteractionEnabled] = useState(false);
   const [simpleMode, setSimpleMode] = useState(true);
-  const [linkedScript, setLinkedScript] = useState<Pick<PlaywrightScript, 'id' | 'session_id'> | null>(null);
+
   const [stepToDelete, setStepToDelete] = useState<{ id: string; stepNumber: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [initialInputValue, setInitialInputValue] = useState<string | undefined>(undefined);
   const [pendingRunTillEnd, setPendingRunTillEnd] = useState(false); // Flag to start Run Till End after browser is ready
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(null); // Selected action for action-level screenshot
+  const [highlightedActionId, setHighlightedActionId] = useState<string | null>(null); // Highlighted action from Execute tab click
 
   // Handle reset button click - clears data and populates input with original prompt
   const handleReset = useCallback(async () => {
@@ -406,7 +404,6 @@ export default function TestAnalysisChatPage() {
       }
     }
 
-    setLinkedScript(null);
     // Navigate to base URL with the original prompt in state
     navigate('/test-analysis', {
       replace: true,
@@ -445,23 +442,7 @@ export default function TestAnalysisChatPage() {
     }
   }, [browserSession, startRunTillEnd, replaySession]);
 
-  // Check for existing script linked to this session
-  useEffect(() => {
-    const checkForLinkedScript = async () => {
-      if (!sessionId) {
-        setLinkedScript(null);
-        return;
-      }
-      try {
-        const scripts = await scriptsApi.listScripts();
-        const existingScript = scripts.find(s => s.session_id === sessionId);
-        setLinkedScript(existingScript || null);
-      } catch (e) {
-        console.error('Error checking for linked script:', e);
-      }
-    };
-    checkForLinkedScript();
-  }, [sessionId]);
+
 
   // Get selected step for screenshot display
   const selectedStep = messages
@@ -469,9 +450,20 @@ export default function TestAnalysisChatPage() {
     .map((m) => (m.type === 'step' ? m.step : null))
     .find((s) => s?.id === selectedStepId);
 
-  const screenshotUrl = selectedStep?.screenshot_path
-    ? getScreenshotUrl(selectedStep.screenshot_path)
-    : null;
+  // Get selected action for action-level screenshot
+  const selectedAction = selectedStep?.actions?.find(a => a.id === selectedActionId);
+
+  // Screenshot URL: prioritize action screenshot, fallback to step screenshot
+  const screenshotUrl = selectedAction?.screenshot_path
+    ? getScreenshotUrl(selectedAction.screenshot_path)
+    : selectedStep?.screenshot_path
+      ? getScreenshotUrl(selectedStep.screenshot_path)
+      : null;
+
+  // Clear action selection when step changes
+  useEffect(() => {
+    setSelectedActionId(null);
+  }, [selectedStepId]);
 
   // Handle page unload - end browser session
   useEffect(() => {
@@ -731,17 +723,7 @@ export default function TestAnalysisChatPage() {
                 )}
               </Button>
             )}
-            {linkedScript ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => navigate(`/scripts/${linkedScript.id}`)}
-                className="h-7 text-xs"
-              >
-                <ExternalLink className="h-3 w-3 mr-1" />
-                Open Script
-              </Button>
-            ) : canGenerateScript && (
+            {/* {!linkedScript && canGenerateScript && (
               <Button
                 size="sm"
                 variant="outline"
@@ -764,7 +746,7 @@ export default function TestAnalysisChatPage() {
                 <FileCode className="h-3 w-3 mr-1" />
                 Generate Script
               </Button>
-            )}
+            )} */}
           </div>
         </div>
 
@@ -860,6 +842,9 @@ export default function TestAnalysisChatPage() {
           onEditPlan={openPlanEditor}
           onStepSelect={setSelectedStepId}
           selectedStepId={selectedStepId}
+          onActionSelect={setSelectedActionId}
+          selectedActionId={selectedActionId}
+          highlightedActionId={highlightedActionId}
           onUndoToStep={undoToStep}
           totalSteps={totalSteps}
           simpleMode={simpleMode}
@@ -932,6 +917,7 @@ export default function TestAnalysisChatPage() {
           onStartSessionRun={startSessionRun}
           onRefreshRuns={refreshSessionRuns}
           isStartingRun={isStartingRun}
+          onActionClick={setHighlightedActionId}
           className="flex-1"
         />
       </div>

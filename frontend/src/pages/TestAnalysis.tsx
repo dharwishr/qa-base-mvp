@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
-import { List, LayoutList, FileCode, Loader2, ExternalLink, Pause, Play, Video } from "lucide-react"
+import { List, LayoutList, FileCode, Loader2, Pause, Play, Video } from "lucide-react"
 import StepList, { type TestStep as DisplayTestStep } from "@/components/analysis/StepList"
 import ConfigPanel from "@/components/analysis/ConfigPanel"
 import BrowserPreview from "@/components/analysis/BrowserPreview"
@@ -111,12 +111,21 @@ export default function TestAnalysis() {
         description: step.next_goal || `Step ${step.step_number}`,
     }))
 
-    // Auto-select the latest step when new steps come in
+    // Track previous step count to detect additions vs deletions
+    const prevStepCountRef = useRef(0)
+
+    // Auto-select the latest step ONLY when new steps come in (not on deletion)
     useEffect(() => {
-        if (displaySteps.length > 0) {
+        const currentCount = displaySteps.length
+        const prevCount = prevStepCountRef.current
+
+        // Only auto-select when steps are ADDED, not when deleted
+        if (currentCount > prevCount && currentCount > 0) {
             const latestStep = displaySteps[displaySteps.length - 1]
             setSelectedStepId(latestStep.id)
         }
+
+        prevStepCountRef.current = currentCount
     }, [displaySteps.length])
 
     // Get the selected step data
@@ -245,12 +254,14 @@ export default function TestAnalysis() {
         setAnalysisState('generating_plan')
 
         try {
-            const newSession = await analysisApi.createSession(prompt, selectedLlm, headless)
-            setSession(newSession)
+            // Create a new session for the analysis
+            const updatedSession = await analysisApi.createSession(prompt, selectedLlm, headless)
 
-            if (newSession.status === 'plan_ready') {
+            setSession(updatedSession)
+
+            if (updatedSession.status === 'plan_ready') {
                 setAnalysisState('plan_ready')
-            } else if (newSession.status === 'failed') {
+            } else if (updatedSession.status === 'failed') {
                 setAnalysisState('failed')
                 setError('Failed to generate plan')
             }
@@ -280,14 +291,14 @@ export default function TestAnalysis() {
         }
     }
 
-    // Reset to try again - clears steps/messages from backend, keeps prompt for editing
+    // Reset to try again - clears steps/messages from backend, preserves session for reuse
     const handleReset = async () => {
         // If there's a session, reset it in the backend first
         if (session?.id) {
             try {
                 const resetSession = await analysisApi.resetSession(session.id)
-                // Set the original prompt in the input box for editing
-                setPrompt(resetSession.prompt || "")
+                // Keep the session object (now in idle state) for reuse
+                setSession(resetSession)
             } catch (e) {
                 console.error('Error resetting session:', e)
                 // Continue with frontend reset even if backend fails
@@ -297,8 +308,8 @@ export default function TestAnalysis() {
         // Clear the subscription state (steps, status, etc.)
         clear()
 
-        // Reset frontend state but keep the prompt (already set above)
-        setSession(null)
+        // Reset frontend state - clear prompt and other UI state
+        setPrompt("")
         setAnalysisState('idle')
         setError(null)
         setSelectedStepId(null)
@@ -352,13 +363,6 @@ export default function TestAnalysis() {
             setError(e instanceof Error ? e.message : 'Failed to generate script')
         } finally {
             setGeneratingScript(false)
-        }
-    }
-
-    // Open linked script
-    const handleOpenScript = () => {
-        if (linkedScript) {
-            navigate(`/scripts/${linkedScript.id}`)
         }
     }
 
@@ -627,25 +631,15 @@ export default function TestAnalysis() {
                                 </CardHeader>
                                 <CardContent className="p-4 pt-2">
                                     <div className="flex gap-2">
-                                        {displaySteps.length > 0 && (
-                                            linkedScript ? (
-                                                <Button
-                                                    onClick={handleOpenScript}
-                                                    className="flex-1 gap-2 bg-orange-600 hover:bg-orange-700 text-white"
-                                                >
-                                                    <ExternalLink className="h-4 w-4" />
-                                                    View Script
-                                                </Button>
-                                            ) : (
-                                                <Button
-                                                    onClick={handleGenerateScript}
-                                                    disabled={generatingScript}
-                                                    className="flex-1 gap-2 bg-orange-600 hover:bg-orange-700 text-white"
-                                                >
-                                                    {generatingScript ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCode className="h-4 w-4" />}
-                                                    Save as Script
-                                                </Button>
-                                            )
+                                        {displaySteps.length > 0 && !linkedScript && (
+                                            <Button
+                                                onClick={handleGenerateScript}
+                                                disabled={generatingScript}
+                                                className="flex-1 gap-2 bg-orange-600 hover:bg-orange-700 text-white"
+                                            >
+                                                {generatingScript ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCode className="h-4 w-4" />}
+                                                Save as Script
+                                            </Button>
                                         )}
                                         <Button
                                             onClick={handleReset}
@@ -672,15 +666,7 @@ export default function TestAnalysis() {
                                 </CardHeader>
                                 <CardContent className="p-4 pt-2">
                                     <div className="flex gap-2">
-                                        {linkedScript ? (
-                                            <Button
-                                                onClick={handleOpenScript}
-                                                className="flex-1 gap-2 bg-green-600 hover:bg-green-700 text-white"
-                                            >
-                                                <ExternalLink className="h-4 w-4" />
-                                                View Script
-                                            </Button>
-                                        ) : (
+                                        {!linkedScript && (
                                             <Button
                                                 onClick={handleGenerateScript}
                                                 disabled={generatingScript}

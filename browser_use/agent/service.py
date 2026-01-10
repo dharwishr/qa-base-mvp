@@ -2446,6 +2446,19 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 						{'action': action_name, 'step': self.state.n_steps},
 					)
 
+				# Capture action-level screenshot after each action (except done actions)
+				if not result.is_done and self.browser_session is not None:
+					try:
+						screenshot_bytes = await self.browser_session.take_screenshot()
+						# Save to temp file with unique name
+						temp_dir = Path(tempfile.gettempdir())
+						action_screenshot_path = temp_dir / f"action_{self.state.n_steps}_{i}_{uuid7str()}.png"
+						action_screenshot_path.write_bytes(screenshot_bytes)
+						result.action_screenshot_path = str(action_screenshot_path)
+						self.logger.debug(f'Captured action screenshot: {action_screenshot_path}')
+					except Exception as screenshot_error:
+						self.logger.warning(f'Failed to capture action screenshot: {screenshot_error}')
+
 				results.append(result)
 
 				if results[-1].is_done or results[-1].error or i == total_actions - 1:

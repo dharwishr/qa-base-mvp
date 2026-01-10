@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Trash2, Filter, RefreshCw, ChevronDown } from 'lucide-react';
+import { Download, Trash2, Filter, RefreshCw, ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -50,6 +50,7 @@ export default function LogsView({
   const [filterText, setFilterText] = useState('');
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Filter logs
   const filteredLogs = logs.filter((log) => {
@@ -177,7 +178,7 @@ export default function LogsView({
             variant="ghost"
             size="sm"
             className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-            onClick={onClear}
+            onClick={() => setShowDeleteConfirm(true)}
             disabled={logs.length === 0}
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -245,6 +246,56 @@ export default function LogsView({
         >
           Scroll to bottom
         </button>
+      )}
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowDeleteConfirm(false)}
+          />
+          {/* Modal */}
+          <div className="relative bg-background border rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+            <button
+              className="absolute top-3 right-3 text-muted-foreground hover:text-foreground"
+              onClick={() => setShowDeleteConfirm(false)}
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-full bg-destructive/10">
+                  <Trash2 className="h-5 w-5 text-destructive" />
+                </div>
+                <h3 className="text-lg font-semibold">Clear Logs</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Are you sure you want to clear all logs? This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-2 mt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowDeleteConfirm(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    onClear?.();
+                    setShowDeleteConfirm(false);
+                  }}
+                >
+                  Delete
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

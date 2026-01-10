@@ -137,6 +137,9 @@ class ActionResult(BaseModel):
 	# Metadata for observability (e.g., click coordinates)
 	metadata: dict | None = None
 
+	# Action-level screenshot path (temp file path captured after action execution)
+	action_screenshot_path: str | None = None
+
 	# Deprecated
 	include_in_memory: bool = False  # whether to include in extracted_content inside long_term_memory
 

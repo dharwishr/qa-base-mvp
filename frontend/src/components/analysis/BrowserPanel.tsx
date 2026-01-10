@@ -3,6 +3,7 @@ import { Monitor, Image, FileText, Play, FlaskConical } from 'lucide-react';
 import LiveBrowserView from '@/components/LiveBrowserView';
 import LogsView, { type LogEntry } from './LogsView';
 import ExecuteTab from './ExecuteTab';
+import { ScreenshotWithZoom } from '@/components/ui/screenshot-fullscreen-modal';
 import { cn } from '@/lib/utils';
 import { analysisApi } from '@/services/api';
 import type { RecordingMode } from '@/types/analysis';
@@ -44,6 +45,7 @@ interface BrowserPanelProps {
   onStartSessionRun: (config: StartRunRequest) => Promise<void>;
   onRefreshRuns: () => Promise<void>;
   isStartingRun: boolean;
+  onActionClick?: (sourceActionId: string | null) => void;
   className?: string;
 }
 
@@ -70,12 +72,14 @@ export default function BrowserPanel({
   onStartSessionRun,
   onRefreshRuns,
   isStartingRun,
+  onActionClick,
   className,
 }: BrowserPanelProps) {
   const [mainTab, setMainTab] = useState<MainTabType>('analysis');
   const [analysisTab, setAnalysisTab] = useState<AnalysisTabType>('browser');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [isScreenshotFullscreen, setIsScreenshotFullscreen] = useState(false);
 
   // Fetch logs from backend
   const fetchLogs = useCallback(async () => {
@@ -242,10 +246,10 @@ export default function BrowserPanel({
 
               {/* Screenshot Tab */}
               {analysisTab === 'screenshot' && (
-                <div className="h-full flex items-center justify-center p-4">
-                  <div className="w-full max-w-4xl mx-auto">
+                <div className="h-full flex flex-col p-2">
+                  <div className="w-full h-full flex flex-col">
                     {/* Browser chrome */}
-                    <div className="bg-muted/50 rounded-t-lg border border-b-0 p-2 flex items-center gap-2">
+                    <div className="bg-muted/50 rounded-t-lg border border-b-0 p-2 flex items-center gap-2 flex-shrink-0">
                       <div className="flex gap-1.5">
                         <div className="w-3 h-3 rounded-full bg-red-400" />
                         <div className="w-3 h-3 rounded-full bg-yellow-400" />
@@ -257,15 +261,17 @@ export default function BrowserPanel({
                     </div>
 
                     {/* Content area */}
-                    <div className="border rounded-b-lg bg-background min-h-[400px] flex items-center justify-center relative overflow-hidden">
+                    <div className="border rounded-b-lg bg-background flex-1 flex items-center justify-center relative overflow-hidden">
                       {screenshotUrl ? (
-                        <img
-                          src={screenshotUrl}
+                        <ScreenshotWithZoom
+                          imageUrl={screenshotUrl}
                           alt="Screenshot"
-                          className="max-w-full max-h-[500px] object-contain"
+                          className="w-full h-full object-contain"
                           onError={(e) => {
                             (e.target as HTMLImageElement).style.display = 'none';
                           }}
+                          isOpen={isScreenshotFullscreen}
+                          onOpenChange={setIsScreenshotFullscreen}
                         />
                       ) : (
                         <div className="text-center text-muted-foreground">
@@ -308,6 +314,7 @@ export default function BrowserPanel({
             onStartRun={onStartSessionRun}
             onRefreshRuns={onRefreshRuns}
             isStartingRun={isStartingRun}
+            onActionClick={onActionClick}
             className="h-full"
           />
         )}

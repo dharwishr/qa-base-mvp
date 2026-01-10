@@ -227,6 +227,7 @@ class StepAction(Base):
 	element_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
 	is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # Whether action should be included in script execution
 	auto_generate_text: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # Whether to auto-generate input text at runtime
+	screenshot_path: Mapped[str | None] = mapped_column(String(512), nullable=True)  # Screenshot captured after this action
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 	# Relationships
@@ -395,6 +396,7 @@ class RunStep(Base):
 	css_selector: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # CSS selector
 	input_value: Mapped[str | None] = mapped_column(Text, nullable=True)  # Input value for fill actions
 	is_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # Whether to mask value
+	source_action_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # Links to StepAction.id for mapping Execute -> Analysis
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 	# Relationships
@@ -630,6 +632,44 @@ class SystemSettings(Base):
 	updated_at: Mapped[datetime] = mapped_column(
 		DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
 	)
+
+
+class BrowserSessionLog(Base):
+	"""Persistent log of browser sessions started during test case analysis.
+
+	Tracks who (user and organization) started each browser docker session.
+	This provides an audit trail and allows viewing historical browser session data.
+	"""
+
+	__tablename__ = "browser_session_logs"
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+	session_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)  # Browser session ID from orchestrator
+	organization_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True
+	)
+	user_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+	)
+	phase: Mapped[str] = mapped_column(String(20), nullable=False)  # analysis | execution
+	status: Mapped[str] = mapped_column(String(20), nullable=False, default="started")  # started | ready | stopped | error
+	container_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+	container_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+	test_session_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("test_sessions.id", ondelete="SET NULL"), nullable=True, index=True
+	)
+	test_run_id: Mapped[str | None] = mapped_column(
+		String(36), ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True, index=True
+	)
+	started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+	stopped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+	# Relationships
+	organization: Mapped["Organization | None"] = relationship("Organization")
+	user: Mapped["User | None"] = relationship("User")
+	test_session: Mapped["TestSession | None"] = relationship("TestSession")
+	test_run: Mapped["TestRun | None"] = relationship("TestRun")
 
 
 # ============================================

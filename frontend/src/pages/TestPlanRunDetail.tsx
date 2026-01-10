@@ -79,39 +79,34 @@ export default function TestPlanRunDetail() {
     const [error, setError] = useState<string | null>(null)
     const [cancelling, setCancelling] = useState(false)
 
-    const fetchRunDetail = async () => {
+    const fetchRunDetail = async (isInitialLoad = false) => {
         if (!runId) return
-        setLoading(true)
+        if (isInitialLoad) {
+            setLoading(true)
+        }
         try {
             const data = await testPlansApi.getRunDetail(runId)
             setRunDetail(data)
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to load run details')
         } finally {
-            setLoading(false)
+            if (isInitialLoad) {
+                setLoading(false)
+            }
         }
     }
 
     useEffect(() => {
-        fetchRunDetail()
-
-        // Poll for updates if running
-        const interval = setInterval(() => {
-            if (runDetail?.status === 'running' || runDetail?.status === 'queued' || runDetail?.status === 'pending') {
-                fetchRunDetail()
-            }
-        }, 5000)
-
-        return () => clearInterval(interval)
+        fetchRunDetail(true)
     }, [runId])
 
-    // Refresh when status changes to running
+    // Poll for updates if running/queued/pending
     useEffect(() => {
-        if (runDetail?.status === 'running' || runDetail?.status === 'queued') {
-            const interval = setInterval(fetchRunDetail, 3000)
+        if (runDetail?.status === 'running' || runDetail?.status === 'queued' || runDetail?.status === 'pending') {
+            const interval = setInterval(() => fetchRunDetail(false), 5000)
             return () => clearInterval(interval)
         }
-    }, [runDetail?.status])
+    }, [runDetail?.status, runId])
 
     const handleCancel = async () => {
         if (!runId || !confirm('Cancel this run?')) return
@@ -194,7 +189,7 @@ export default function TestPlanRunDetail() {
                         </button>
                     )}
                     <button
-                        onClick={fetchRunDetail}
+                        onClick={() => fetchRunDetail()}
                         className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background hover:bg-accent h-9 px-4"
                     >
                         <RefreshCw className="h-4 w-4 mr-2" />
