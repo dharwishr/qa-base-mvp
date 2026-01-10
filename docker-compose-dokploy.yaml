@@ -30,13 +30,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=dokploy-network"
-      - "traefik.http.routers.qa-base-frontend.rule=Host(`xi-app.mvp-fra.x.qola.top`)"
-      - "traefik.http.routers.qa-base-frontend.entrypoints=websecure"
-      - "traefik.http.routers.qa-base-frontend.tls.certResolver=letsencrypt"
-      - "traefik.http.services.qa-base-frontend.loadbalancer.server.port=80"
+    # Traefik labels are managed by Dokploy UI via the Domains tab
+    # Do NOT add manual labels here - use Dokploy's domain management instead
 
   # ============================================
   # Backend - FastAPI Application
@@ -91,13 +86,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=dokploy-network"
-      - "traefik.http.routers.qa-base-backend.rule=Host(`api.mvp-fra.x.qola.top`)"
-      - "traefik.http.routers.qa-base-backend.entrypoints=websecure"
-      - "traefik.http.routers.qa-base-backend.tls.certResolver=letsencrypt"
-      - "traefik.http.services.qa-base-backend.loadbalancer.server.port=8000"
+    # Traefik labels are managed by Dokploy UI via the Domains tab
+    # Do NOT add manual labels here - use Dokploy's domain management instead
 
   # ============================================
   # Celery Worker - Async Task Processing
