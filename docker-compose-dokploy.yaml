@@ -1,32 +1,28 @@
 # ============================================
-# QA Base - Docker Compose for Dokploy
+# QA Base - Docker Compose for Coolify Deployment
 # ============================================
+# Documentation: https://coolify.io/docs/knowledge-base/docker/compose
 
 services:
   # ============================================
   # Frontend - React/Vite served via nginx
   # ============================================
-  # DOKPLOY CONFIGURATION:
-  # 1. In "Domains" tab -> Add Domain
-  # 2. Container Port: 80 (Standard Nginx port)
-  # 3. HTTPS: On, Cert: LetsEncrypt
+  # Coolify: Set "Ports Exposes" to 80
+  # Coolify: Set domain to your frontend URL (e.g., qa-base.yourdomain.com)
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Note: If you change VITE_API_URL, you must trigger a "Rebuild" in Dokploy, not just a deploy.
         - VITE_API_URL=${VITE_API_URL}
-    # ports:
-    #   - "3006:80"  <-- Disabled. Access via your domain (app.mvp-fra...) instead.
+    ports:
+      - "3006:80"
     environment:
       - VITE_API_URL=${VITE_API_URL}
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
-    networks:
-      - default
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
       interval: 10s
@@ -37,45 +33,44 @@ services:
   # ============================================
   # Backend - FastAPI Application
   # ============================================
-  # DOKPLOY CONFIGURATION:
-  # 1. In "Domains" tab -> Add Domain
-  # 2. CRITICAL: Set "Container Port" to 8000
-  # 3. HTTPS: On, Cert: LetsEncrypt
+  # Coolify: Set "Ports Exposes" to 8000
+  # Coolify: Set domain to your backend URL (e.g., api.qa-base.yourdomain.com)
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    # ports:
-    #   - "8006:8000" <-- Disabled. Access via your domain (api.mvp-fra...) instead.
+    ports:
+      - "8006:8000"
     environment:
+      # Application Settings
       - DEBUG=${DEBUG:-false}
       - APP_NAME=${APP_NAME:-QA Base API}
-      # Database
+      # Database Settings
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
-      # Auth
+      # Authentication Settings
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
       - JWT_EXPIRY_HOURS=${JWT_EXPIRY_HOURS:-24}
-      # Admin User
+      # Default Admin User (created on first run)
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xitester.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
       - ADMIN_NAME=${ADMIN_NAME:-Admin User}
-      # Organization
+      # Default Organization
       - DEFAULT_ORG_NAME=${DEFAULT_ORG_NAME:-XiTester}
       - DEFAULT_ORG_DESCRIPTION=${DEFAULT_ORG_DESCRIPTION:-Default organization}
-      # External APIs
+      # LLM API Keys (set in Coolify UI)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_API_SECRET=${GEMINI_API_SECRET}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
       - GOOGLE_SPEECH_API_KEY=${GOOGLE_SPEECH_API_KEY}
-      # Celery / Redis
+      # Celery Settings - use internal Redis port (6379)
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
     volumes:
       - backend_data:/app/data
       - screenshots:/app/data/screenshots
       - videos:/app/data/videos
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for browser orchestration
     networks:
       - default
       - qa-browser-network
@@ -91,16 +86,17 @@ services:
       start_period: 40s
 
   # ============================================
-  # Celery Worker
+  # Celery Worker - Async Task Processing
   # ============================================
-  # No Domain needed (Internal worker)
   celery:
     build:
       context: .
       dockerfile: backend/Dockerfile
     command: celery -A app.celery_app worker --loglevel=info
     environment:
+      # Database Settings
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      # Authentication Settings (needed for user context in tasks)
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xitester.com}
@@ -108,15 +104,17 @@ services:
       - ADMIN_NAME=${ADMIN_NAME:-Admin User}
       - DEFAULT_ORG_NAME=${DEFAULT_ORG_NAME:-XiTester}
       - DEFAULT_ORG_DESCRIPTION=${DEFAULT_ORG_DESCRIPTION:-Default organization}
+      # LLM API Keys (set in Coolify UI)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
+      # Celery Settings - use internal Redis port (6379)
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
     volumes:
       - backend_data:/app/data
       - screenshots:/app/data/screenshots
       - videos:/app/data/videos
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for browser orchestration
     networks:
       - default
       - qa-browser-network
@@ -126,16 +124,15 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
-    # Simplified healthcheck using internal ping
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.celery_app inspect ping -d celery@$HOSTNAME || exit 1"]
+      test: ["CMD", "celery", "-A", "app.celery_app", "inspect", "ping", "-d", "celery@$$HOSTNAME"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
   # ============================================
-  # Redis
+  # Redis - Message Broker & Result Backend
   # ============================================
   redis:
     image: redis:7-alpine
@@ -149,8 +146,10 @@ services:
       retries: 3
     command: redis-server --appendonly yes
 
+
+
 # ============================================
-# Volumes & Networks
+# Volumes
 # ============================================
 volumes:
   backend_data:
@@ -162,6 +161,9 @@ volumes:
   videos:
     driver: local
 
+# ============================================
+# Networks
+# ============================================
 networks:
   default:
     driver: bridge
