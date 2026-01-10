@@ -1,0 +1,170 @@
+# ============================================
+# QA Base - Docker Compose for Dokploy
+# ============================================
+
+services:
+  # ============================================
+  # Frontend - React/Vite served via nginx
+  # ============================================
+  # DOKPLOY CONFIGURATION:
+  # 1. In "Domains" tab -> Add Domain
+  # 2. Container Port: 80 (Standard Nginx port)
+  # 3. HTTPS: On, Cert: LetsEncrypt
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Note: If you change VITE_API_URL, you must trigger a "Rebuild" in Dokploy, not just a deploy.
+        - VITE_API_URL=${VITE_API_URL}
+    # ports:
+    #   - "3006:80"  <-- Disabled. Access via your domain (app.mvp-fra...) instead.
+    environment:
+      - VITE_API_URL=${VITE_API_URL}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ============================================
+  # Backend - FastAPI Application
+  # ============================================
+  # DOKPLOY CONFIGURATION:
+  # 1. In "Domains" tab -> Add Domain
+  # 2. CRITICAL: Set "Container Port" to 8000
+  # 3. HTTPS: On, Cert: LetsEncrypt
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    # ports:
+    #   - "8006:8000" <-- Disabled. Access via your domain (api.mvp-fra...) instead.
+    environment:
+      - DEBUG=${DEBUG:-false}
+      - APP_NAME=${APP_NAME:-QA Base API}
+      # Database
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      # Auth
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - JWT_EXPIRY_HOURS=${JWT_EXPIRY_HOURS:-24}
+      # Admin User
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xitester.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
+      - ADMIN_NAME=${ADMIN_NAME:-Admin User}
+      # Organization
+      - DEFAULT_ORG_NAME=${DEFAULT_ORG_NAME:-XiTester}
+      - DEFAULT_ORG_DESCRIPTION=${DEFAULT_ORG_DESCRIPTION:-Default organization}
+      # External APIs
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_SECRET=${GEMINI_API_SECRET}
+      - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
+      - GOOGLE_SPEECH_API_KEY=${GOOGLE_SPEECH_API_KEY}
+      # Celery / Redis
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    volumes:
+      - backend_data:/app/data
+      - screenshots:/app/data/screenshots
+      - videos:/app/data/videos
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - qa-browser-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================
+  # Celery Worker
+  # ============================================
+  # No Domain needed (Internal worker)
+  celery:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: celery -A app.celery_app worker --loglevel=info
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xitester.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin12345}
+      - ADMIN_NAME=${ADMIN_NAME:-Admin User}
+      - DEFAULT_ORG_NAME=${DEFAULT_ORG_NAME:-XiTester}
+      - DEFAULT_ORG_DESCRIPTION=${DEFAULT_ORG_DESCRIPTION:-Default organization}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    volumes:
+      - backend_data:/app/data
+      - screenshots:/app/data/screenshots
+      - videos:/app/data/videos
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - qa-browser-network
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    # Simplified healthcheck using internal ping
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app inspect ping -d celery@$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================
+  # Redis
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command: redis-server --appendonly yes
+
+# ============================================
+# Volumes & Networks
+# ============================================
+volumes:
+  backend_data:
+    driver: local
+  redis_data:
+    driver: local
+  screenshots:
+    driver: local
+  videos:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
+  qa-browser-network:
+    driver: bridge
+    name: qa-browser-network
